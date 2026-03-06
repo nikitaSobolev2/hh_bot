@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Numeric, String, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from src.db.base import Base
+
+if TYPE_CHECKING:
+    from src.models.balance import BalanceTransaction
+    from src.models.blacklist import VacancyBlacklist
+    from src.models.parsing import ParsingCompany
+    from src.models.referral import ReferralEvent
+    from src.models.role import Role
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
+    username: Mapped[str | None] = mapped_column(String(255))
+    first_name: Mapped[str] = mapped_column(String(255), default="")
+    last_name: Mapped[str | None] = mapped_column(String(255))
+    language_code: Mapped[str] = mapped_column(String(10), default="ru")
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    referred_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    referral_code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+
+    notification_settings: Mapped[dict | None] = mapped_column(JSONB, default=None)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    role: Mapped[Role] = relationship(back_populates="users", lazy="selectin")
+    referred_by: Mapped[User | None] = relationship(remote_side="User.id")
+
+    parsing_companies: Mapped[list[ParsingCompany]] = relationship(back_populates="user")
+    blacklist_entries: Mapped[list[VacancyBlacklist]] = relationship(back_populates="user")
+    balance_transactions: Mapped[list[BalanceTransaction]] = relationship(back_populates="user")
+    referral_events: Mapped[list[ReferralEvent]] = relationship(
+        back_populates="referrer",
+        foreign_keys="ReferralEvent.referrer_id",
+    )
+
+    @property
+    def is_admin(self) -> bool:
+        from src.config import settings
+
+        return self.role.name == "admin" or self.telegram_id in settings.admin_ids
+
+    def has_permission(self, permission: str) -> bool:
+        return self.role.has_permission(permission)
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} tg={self.telegram_id} name={self.username!r}>"

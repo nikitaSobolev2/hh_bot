@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hh_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hh_bot_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-hh_bot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hh_bot}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m src
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A src.worker.app worker --loglevel=info --concurrency=4
+
+volumes:
+  pg_data:
+  redis_data:
