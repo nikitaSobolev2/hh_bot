@@ -1,11 +1,10 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from src.core.i18n import I18nContext
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.keyboards.pagination import build_paginated_keyboard
 from src.bot.modules.admin.callbacks import AdminCallback, AdminSettingCallback, AdminUserCallback
 from src.models.user import User
-
-_BACK = "◀️ Back"
 
 MANAGED_SETTINGS = [
     ("openai_base_url", "OpenAI Base URL", "text"),
@@ -26,30 +25,30 @@ MANAGED_SETTINGS = [
 ]
 
 
-def admin_menu_keyboard() -> InlineKeyboardMarkup:
+def admin_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="👥 Users",
+                    text=i18n.get("btn-users"),
                     callback_data=AdminCallback(action="users").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="⚙️ App Settings",
+                    text=i18n.get("btn-app-settings"),
                     callback_data=AdminCallback(action="settings").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="📬 Support Inbox",
+                    text=i18n.get("btn-support"),
                     callback_data=AdminCallback(action="support").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=_BACK,
+                    text=i18n.get("btn-back"),
                     callback_data=MenuCallback(action="main").pack(),
                 )
             ],
@@ -57,7 +56,9 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def user_list_keyboard(users: list[User], page: int, has_more: bool) -> InlineKeyboardMarkup:
+def user_list_keyboard(
+    users: list[User], page: int, has_more: bool, i18n: I18nContext
+) -> InlineKeyboardMarkup:
     def _user_button(u: User) -> InlineKeyboardButton:
         status = "🚫" if u.is_banned else "✅"
         return InlineKeyboardButton(
@@ -71,16 +72,17 @@ def user_list_keyboard(users: list[User], page: int, has_more: bool) -> InlineKe
         page=page,
         has_more=has_more,
         page_callback_factory=lambda p: AdminUserCallback(action="list", page=p).pack(),
+        i18n=i18n,
         extra_rows=[
             [
                 InlineKeyboardButton(
-                    text="🔍 Search",
+                    text=i18n.get("btn-search"),
                     callback_data=AdminUserCallback(action="search").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=_BACK,
+                    text=i18n.get("btn-back"),
                     callback_data=AdminCallback(action="back").pack(),
                 )
             ],
@@ -88,8 +90,8 @@ def user_list_keyboard(users: list[User], page: int, has_more: bool) -> InlineKe
     )
 
 
-def user_detail_keyboard(target_user: User) -> InlineKeyboardMarkup:
-    ban_text = "✅ Unban" if target_user.is_banned else "🚫 Ban"
+def user_detail_keyboard(target_user: User, i18n: I18nContext) -> InlineKeyboardMarkup:
+    ban_text = i18n.get("btn-unban") if target_user.is_banned else i18n.get("btn-ban")
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -102,7 +104,7 @@ def user_detail_keyboard(target_user: User) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="💰 Adjust Balance",
+                    text=i18n.get("btn-adjust-balance"),
                     callback_data=AdminUserCallback(
                         action="balance", user_id=target_user.id
                     ).pack(),
@@ -110,7 +112,7 @@ def user_detail_keyboard(target_user: User) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="✉️ Send Message",
+                    text=i18n.get("btn-send-message"),
                     callback_data=AdminUserCallback(
                         action="message", user_id=target_user.id
                     ).pack(),
@@ -118,7 +120,7 @@ def user_detail_keyboard(target_user: User) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="◀️ Back to Users",
+                    text=i18n.get("btn-back-users"),
                     callback_data=AdminUserCallback(action="list", page=0).pack(),
                 )
             ],
@@ -126,7 +128,7 @@ def user_detail_keyboard(target_user: User) -> InlineKeyboardMarkup:
     )
 
 
-def settings_list_keyboard() -> InlineKeyboardMarkup:
+def settings_list_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for key, label, _stype in MANAGED_SETTINGS:
         rows.append(
@@ -140,7 +142,7 @@ def settings_list_keyboard() -> InlineKeyboardMarkup:
     rows.append(
         [
             InlineKeyboardButton(
-                text=_BACK,
+                text=i18n.get("btn-back"),
                 callback_data=AdminCallback(action="back").pack(),
             )
         ]
@@ -148,12 +150,12 @@ def settings_list_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def back_to_settings_keyboard() -> InlineKeyboardMarkup:
+def back_to_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="◀️ Back to Settings",
+                    text=i18n.get("btn-back-settings"),
                     callback_data=AdminSettingCallback(action="list").pack(),
                 )
             ]
@@ -161,13 +163,13 @@ def back_to_settings_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def setting_detail_keyboard(key: str, stype: str) -> InlineKeyboardMarkup:
+def setting_detail_keyboard(key: str, stype: str, i18n: I18nContext) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if stype == "toggle":
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="🔄 Toggle",
+                    text=i18n.get("btn-toggle"),
                     callback_data=AdminSettingCallback(action="toggle", key=key).pack(),
                 )
             ]
@@ -176,7 +178,7 @@ def setting_detail_keyboard(key: str, stype: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="✏️ Edit",
+                    text=i18n.get("btn-edit"),
                     callback_data=AdminSettingCallback(action="edit", key=key).pack(),
                 )
             ]
@@ -184,7 +186,7 @@ def setting_detail_keyboard(key: str, stype: str) -> InlineKeyboardMarkup:
     rows.append(
         [
             InlineKeyboardButton(
-                text="◀️ Back to Settings",
+                text=i18n.get("btn-back-settings"),
                 callback_data=AdminSettingCallback(action="list").pack(),
             )
         ]

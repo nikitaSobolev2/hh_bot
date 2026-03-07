@@ -1,6 +1,7 @@
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
+from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.callbacks.common import MenuCallback
@@ -10,64 +11,63 @@ from src.models.user import User
 
 router = Router(name="start")
 
-WELCOME_TEXT = (
-    "<b>HH Bot</b> — your HeadHunter vacancy parser\n\n"
-    "Analyze vacancies, extract keywords, and build better resumes."
-)
-
 _HANDLED_IN_START = {"main", "profile", "settings", "my_parsings", "admin"}
 
 
-def _menu_keyboard(user: User) -> object:
-    return main_menu_admin_keyboard() if user.is_admin else main_menu_keyboard()
+def _menu_keyboard(user: User, i18n: I18nContext) -> object:
+    return main_menu_admin_keyboard(i18n) if user.is_admin else main_menu_keyboard(i18n)
 
 
 @router.message(CommandStart(deep_link=True))
-async def cmd_start_deep_link(message: Message, user: User, session: AsyncSession) -> None:
+async def cmd_start_deep_link(
+    message: Message, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
     args = message.text.split(maxsplit=1)
     deep_link = args[1] if len(args) > 1 else ""
 
     if deep_link.startswith("ref_"):
         await process_referral(session, user, deep_link[4:])
 
-    await message.answer(WELCOME_TEXT, reply_markup=_menu_keyboard(user))
+    await message.answer(i18n.get("welcome"), reply_markup=_menu_keyboard(user, i18n))
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, user: User) -> None:
-    await message.answer(WELCOME_TEXT, reply_markup=_menu_keyboard(user))
+async def cmd_start(message: Message, user: User, i18n: I18nContext) -> None:
+    await message.answer(i18n.get("welcome"), reply_markup=_menu_keyboard(user, i18n))
 
 
 @router.callback_query(MenuCallback.filter(F.action.in_(_HANDLED_IN_START)))
 async def menu_navigation(
-    callback: CallbackQuery, callback_data: MenuCallback, user: User
+    callback: CallbackQuery, callback_data: MenuCallback, user: User, i18n: I18nContext
 ) -> None:
     action = callback_data.action
 
     if action == "main":
-        await callback.message.edit_text(WELCOME_TEXT, reply_markup=_menu_keyboard(user))
+        await callback.message.edit_text(
+            i18n.get("welcome"), reply_markup=_menu_keyboard(user, i18n)
+        )
 
     elif action == "profile":
         from src.bot.modules.profile.handlers import show_profile
 
-        await show_profile(callback, user)
+        await show_profile(callback, user, i18n)
 
     elif action == "settings":
         from src.bot.modules.user_settings.handlers import show_settings
 
-        await show_settings(callback)
+        await show_settings(callback, i18n)
 
     elif action == "my_parsings":
         from src.bot.modules.parsing.handlers import show_parsing_list
 
-        await show_parsing_list(callback, user)
+        await show_parsing_list(callback, user, i18n)
 
     elif action == "admin":
         if not user.is_admin:
-            await callback.answer("Access denied", show_alert=True)
+            await callback.answer(i18n.get("access-denied"), show_alert=True)
             return
         from src.bot.modules.admin.handlers import show_admin_panel
 
-        await show_admin_panel(callback)
+        await show_admin_panel(callback, i18n)
 
     await callback.answer()

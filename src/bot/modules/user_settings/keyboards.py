@@ -1,47 +1,46 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from src.core.i18n import I18nContext
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.modules.user_settings.callbacks import BlacklistCallback, SettingsCallback
 
-_BACK = "◀️ Back"
 
-
-def settings_keyboard() -> InlineKeyboardMarkup:
+def settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🌐 Language",
+                    text=i18n.get("btn-language"),
                     callback_data=SettingsCallback(action="language").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🗑 Clear Blacklist",
+                    text=i18n.get("btn-clear-blacklist"),
                     callback_data=SettingsCallback(action="clear_blacklist").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🔔 Notifications",
+                    text=i18n.get("btn-notifications"),
                     callback_data=SettingsCallback(action="notifications").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💰 Top Up Balance",
+                    text=i18n.get("btn-topup"),
                     callback_data=SettingsCallback(action="topup").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="⚠️ Delete My Data",
+                    text=i18n.get("btn-delete-data"),
                     callback_data=SettingsCallback(action="delete_data").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=_BACK,
+                    text=i18n.get("btn-back"),
                     callback_data=MenuCallback(action="main").pack(),
                 )
             ],
@@ -49,7 +48,7 @@ def settings_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def language_keyboard() -> InlineKeyboardMarkup:
+def language_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -64,7 +63,7 @@ def language_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text=_BACK,
+                    text=i18n.get("btn-back"),
                     callback_data=MenuCallback(action="settings").pack(),
                 )
             ],
@@ -74,13 +73,14 @@ def language_keyboard() -> InlineKeyboardMarkup:
 
 def blacklist_management_keyboard(
     contexts: list[tuple[str, int]],
+    i18n: I18nContext,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for ctx_name, _count in contexts:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"🗑 Clear: {ctx_name[:30]}",
+                    text=i18n.get("btn-clear-context", context=ctx_name[:30]),
                     callback_data=BlacklistCallback(
                         action="clear_ctx", context=ctx_name[:50]
                     ).pack(),
@@ -90,7 +90,7 @@ def blacklist_management_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text="🗑 Clear All",
+                text=i18n.get("btn-clear-all"),
                 callback_data=BlacklistCallback(action="clear_all").pack(),
             )
         ]
@@ -98,7 +98,7 @@ def blacklist_management_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=_BACK,
+                text=i18n.get("btn-back"),
                 callback_data=SettingsCallback(action="back").pack(),
             )
         ]

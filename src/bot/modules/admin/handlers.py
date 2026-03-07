@@ -1,6 +1,7 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import AdminFilter
@@ -28,10 +29,10 @@ router.callback_query.filter(AdminFilter())
 router.message.filter(AdminFilter())
 
 
-async def show_admin_panel(callback: CallbackQuery) -> None:
+async def show_admin_panel(callback: CallbackQuery, i18n: I18nContext) -> None:
     await callback.message.edit_text(
-        "<b>🛠 Admin Panel</b>\n\nManage users, settings, and tasks.",
-        reply_markup=admin_menu_keyboard(),
+        f"{i18n.get('admin-title')}\n\n{i18n.get('admin-subtitle')}",
+        reply_markup=admin_menu_keyboard(i18n),
     )
 
 
@@ -40,25 +41,29 @@ async def show_admin_panel(callback: CallbackQuery) -> None:
 
 @router.callback_query(AdminCallback.filter())
 async def admin_panel_actions(
-    callback: CallbackQuery, callback_data: AdminCallback, session: AsyncSession
+    callback: CallbackQuery,
+    callback_data: AdminCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     action = callback_data.action
 
     if action == "users":
-        await _show_user_list(callback, session)
+        await _show_user_list(callback, session, i18n)
     elif action == "settings":
         await callback.message.edit_text(
-            "<b>⚙️ App Settings</b>\n\nSelect a setting to view or edit:",
-            reply_markup=settings_list_keyboard(),
+            i18n.get("admin-setting-select"),
+            reply_markup=settings_list_keyboard(i18n),
         )
     elif action == "support":
         await callback.message.edit_text(
-            "<b>📬 Support Inbox</b>\n\nNo messages yet.\n\n"
-            "Users can send support messages which will appear here.",
-            reply_markup=back_to_menu_keyboard(),
+            f"{i18n.get('admin-support-title')}\n\n"
+            f"{i18n.get('admin-support-empty')}\n\n"
+            f"{i18n.get('admin-support-description')}",
+            reply_markup=back_to_menu_keyboard(i18n),
         )
     elif action == "back":
-        await show_admin_panel(callback)
+        await show_admin_panel(callback, i18n)
 
     await callback.answer()
 
@@ -67,38 +72,41 @@ async def admin_panel_actions(
 
 
 async def _show_user_list(
-    callback: CallbackQuery, session: AsyncSession, page: int = 0
+    callback: CallbackQuery, session: AsyncSession, i18n: I18nContext, page: int = 0
 ) -> None:
     users, has_more = await admin_service.get_user_page(session, page)
 
     if not users:
         await callback.message.edit_text(
-            "<b>👥 Users</b>\n\nNo users found.",
-            reply_markup=back_to_menu_keyboard(),
+            i18n.get("admin-users-empty"),
+            reply_markup=back_to_menu_keyboard(i18n),
         )
         return
 
     await callback.message.edit_text(
-        f"<b>👥 Users</b> (page {page + 1})",
-        reply_markup=user_list_keyboard(users, page, has_more),
+        i18n.get("admin-users-page", page=str(page + 1)),
+        reply_markup=user_list_keyboard(users, page, has_more, i18n),
     )
 
 
 @router.callback_query(AdminUserCallback.filter(F.action == "list"))
 async def user_list_page(
-    callback: CallbackQuery, callback_data: AdminUserCallback, session: AsyncSession
+    callback: CallbackQuery,
+    callback_data: AdminUserCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
-    await _show_user_list(callback, session, callback_data.page)
+    await _show_user_list(callback, session, i18n, callback_data.page)
     await callback.answer()
 
 
 @router.callback_query(AdminUserCallback.filter(F.action == "search"))
 async def user_search_prompt(
-    callback: CallbackQuery, state: FSMContext
+    callback: CallbackQuery, state: FSMContext, i18n: I18nContext
 ) -> None:
     await callback.message.edit_text(
-        "<b>🔍 Search Users</b>\n\nEnter username, name, or Telegram ID:",
-        reply_markup=back_to_menu_keyboard(),
+        i18n.get("admin-search-prompt"),
+        reply_markup=back_to_menu_keyboard(i18n),
     )
     await state.set_state(AdminUserSearchForm.waiting_query)
     await callback.answer()
@@ -106,59 +114,71 @@ async def user_search_prompt(
 
 @router.callback_query(AdminUserCallback.filter(F.action == "detail"))
 async def user_detail(
-    callback: CallbackQuery, callback_data: AdminUserCallback, session: AsyncSession
+    callback: CallbackQuery,
+    callback_data: AdminUserCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     target = await admin_service.get_user_by_id(session, callback_data.user_id)
     if not target:
-        await callback.answer("User not found", show_alert=True)
+        await callback.answer(i18n.get("admin-user-not-found"), show_alert=True)
         return
-    text = admin_service.format_user_detail(target)
-    await callback.message.edit_text(text, reply_markup=user_detail_keyboard(target))
+    text = admin_service.format_user_detail(target, i18n)
+    await callback.message.edit_text(text, reply_markup=user_detail_keyboard(target, i18n))
     await callback.answer()
 
 
 @router.callback_query(AdminUserCallback.filter(F.action == "toggle_ban"))
 async def user_toggle_ban(
-    callback: CallbackQuery, callback_data: AdminUserCallback, session: AsyncSession
+    callback: CallbackQuery,
+    callback_data: AdminUserCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     target = await admin_service.toggle_user_ban(session, callback_data.user_id)
     if target:
-        status = "banned" if target.is_banned else "unbanned"
-        await callback.answer(f"User {status}", show_alert=True)
-        await callback.message.edit_reply_markup(reply_markup=user_detail_keyboard(target))
+        status_key = "admin-user-banned" if target.is_banned else "admin-user-unbanned"
+        await callback.answer(i18n.get(status_key), show_alert=True)
+        await callback.message.edit_reply_markup(reply_markup=user_detail_keyboard(target, i18n))
     else:
         await callback.answer()
 
 
 @router.callback_query(AdminUserCallback.filter(F.action == "balance"))
 async def user_balance_prompt(
-    callback: CallbackQuery, callback_data: AdminUserCallback, state: FSMContext
+    callback: CallbackQuery,
+    callback_data: AdminUserCallback,
+    state: FSMContext,
+    i18n: I18nContext,
 ) -> None:
     await state.update_data(target_user_id=callback_data.user_id)
     await state.set_state(AdminBalanceForm.waiting_amount)
     await callback.message.edit_text(
-        "<b>💰 Adjust Balance</b>\n\nEnter amount (positive to add, negative to deduct):",
-        reply_markup=back_to_menu_keyboard(),
+        i18n.get("admin-balance-prompt"),
+        reply_markup=back_to_menu_keyboard(i18n),
     )
     await callback.answer()
 
 
 @router.callback_query(AdminUserCallback.filter(F.action == "message"))
 async def user_message_prompt(
-    callback: CallbackQuery, callback_data: AdminUserCallback, state: FSMContext
+    callback: CallbackQuery,
+    callback_data: AdminUserCallback,
+    state: FSMContext,
+    i18n: I18nContext,
 ) -> None:
     await state.update_data(target_user_id=callback_data.user_id)
     await state.set_state(AdminMessageForm.waiting_message)
     await callback.message.edit_text(
-        "<b>✉️ Send Message</b>\n\nType the message to send to this user:",
-        reply_markup=back_to_menu_keyboard(),
+        i18n.get("admin-send-message-prompt"),
+        reply_markup=back_to_menu_keyboard(i18n),
     )
     await callback.answer()
 
 
 @router.message(AdminUserSearchForm.waiting_query)
 async def handle_user_search(
-    message: Message, user: User, state: FSMContext, session: AsyncSession
+    message: Message, user: User, state: FSMContext, session: AsyncSession, i18n: I18nContext
 ) -> None:
     query = message.text.strip()
     await state.clear()
@@ -166,20 +186,20 @@ async def handle_user_search(
     users = await admin_service.search_users(session, query)
     if not users:
         await message.answer(
-            f"No users found for <b>{query}</b>",
-            reply_markup=back_to_menu_keyboard(),
+            i18n.get("admin-search-empty", query=query),
+            reply_markup=back_to_menu_keyboard(i18n),
         )
         return
 
     await message.answer(
-        f"<b>🔍 Results for «{query}»</b>",
-        reply_markup=user_list_keyboard(users, 0, False),
+        i18n.get("admin-search-results", query=query),
+        reply_markup=user_list_keyboard(users, 0, False, i18n),
     )
 
 
 @router.message(AdminBalanceForm.waiting_amount)
 async def handle_balance_adjust(
-    message: Message, user: User, state: FSMContext, session: AsyncSession
+    message: Message, user: User, state: FSMContext, session: AsyncSession, i18n: I18nContext
 ) -> None:
     from decimal import Decimal, InvalidOperation
 
@@ -190,25 +210,30 @@ async def handle_balance_adjust(
         amount = Decimal(message.text.strip()).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):
         await message.answer(
-            "Invalid amount. Enter a number.", reply_markup=back_to_menu_keyboard()
+            i18n.get("admin-invalid-amount"), reply_markup=back_to_menu_keyboard(i18n)
         )
         return
 
     target_user_id = data.get("target_user_id")
-    target = await admin_service.adjust_balance(session, target_user_id, amount, user.id)
+    locale = user.language_code or "ru"
+    target = await admin_service.adjust_balance(
+        session, target_user_id, amount, user.id, locale=locale
+    )
     if not target:
-        await message.answer("User not found.", reply_markup=back_to_menu_keyboard())
+        await message.answer(
+            i18n.get("admin-user-not-found-short"), reply_markup=back_to_menu_keyboard(i18n)
+        )
         return
 
     await message.answer(
-        f"Balance adjusted by <b>{amount}</b> for user #{target_user_id}.",
-        reply_markup=back_to_menu_keyboard(),
+        i18n.get("admin-balance-adjusted", amount=str(amount), user_id=str(target_user_id)),
+        reply_markup=back_to_menu_keyboard(i18n),
     )
 
 
 @router.message(AdminMessageForm.waiting_message)
 async def handle_send_message(
-    message: Message, user: User, state: FSMContext, session: AsyncSession
+    message: Message, user: User, state: FSMContext, session: AsyncSession, i18n: I18nContext
 ) -> None:
     data = await state.get_data()
     await state.clear()
@@ -218,17 +243,23 @@ async def handle_send_message(
 
     target = await admin_service.get_user_by_id(session, target_user_id)
     if not target:
-        await message.answer("User not found.", reply_markup=back_to_menu_keyboard())
+        await message.answer(
+            i18n.get("admin-user-not-found-short"), reply_markup=back_to_menu_keyboard(i18n)
+        )
         return
 
     try:
         await message.bot.send_message(
             target.telegram_id,
-            f"<b>📢 Message from Admin</b>\n\n{text}",
+            f"{i18n.get('admin-message-from-admin')}\n\n{text}",
         )
-        await message.answer("Message sent.", reply_markup=back_to_menu_keyboard())
+        await message.answer(
+            i18n.get("admin-message-sent"), reply_markup=back_to_menu_keyboard(i18n)
+        )
     except Exception:
-        await message.answer("Failed to send message.", reply_markup=back_to_menu_keyboard())
+        await message.answer(
+            i18n.get("admin-message-failed"), reply_markup=back_to_menu_keyboard(i18n)
+        )
 
 
 # --------------- app settings ---------------
@@ -241,38 +272,42 @@ async def admin_setting_actions(
     user: User,
     state: FSMContext,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     action = callback_data.action
+    locale = user.language_code or "ru"
 
     if action == "list":
         await callback.message.edit_text(
-            "<b>⚙️ App Settings</b>\n\nSelect a setting to view or edit:",
-            reply_markup=settings_list_keyboard(),
+            i18n.get("admin-setting-select"),
+            reply_markup=settings_list_keyboard(i18n),
         )
 
     elif action == "view":
         meta = admin_service.find_setting_meta(callback_data.key)
         if not meta:
-            await callback.answer("Unknown setting", show_alert=True)
+            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
             return
 
         key, label, stype = meta
-        current = await admin_service.get_setting_value(session, key)
+        current = await admin_service.get_setting_value(session, key, locale=locale)
         display = admin_service.mask_if_sensitive(key, str(current))
         await callback.message.edit_text(
-            f"<b>⚙️ {label}</b>\n\nCurrent value: <code>{display}</code>",
-            reply_markup=setting_detail_keyboard(key, stype),
+            i18n.get("admin-setting-current", label=label, value=display),
+            reply_markup=setting_detail_keyboard(key, stype, i18n),
         )
 
     elif action == "toggle":
         new_val = await admin_service.toggle_setting(session, callback_data.key, user.id)
-        await callback.answer(f"Set to {new_val}", show_alert=True)
+        await callback.answer(
+            i18n.get("admin-setting-set", value=str(new_val)), show_alert=True
+        )
 
         meta = admin_service.find_setting_meta(callback_data.key)
         if meta:
             await callback.message.edit_text(
-                f"<b>⚙️ {meta[1]}</b>\n\nCurrent value: <code>{new_val}</code>",
-                reply_markup=setting_detail_keyboard(meta[0], meta[2]),
+                i18n.get("admin-setting-current", label=meta[1], value=str(new_val)),
+                reply_markup=setting_detail_keyboard(meta[0], meta[2], i18n),
             )
         return
 
@@ -282,8 +317,8 @@ async def admin_setting_actions(
         meta = admin_service.find_setting_meta(callback_data.key)
         label = meta[1] if meta else callback_data.key
         await callback.message.edit_text(
-            f"<b>✏️ Edit {label}</b>\n\nEnter new value:",
-            reply_markup=back_to_settings_keyboard(),
+            i18n.get("admin-setting-edit", label=label),
+            reply_markup=back_to_settings_keyboard(i18n),
         )
 
     await callback.answer()
@@ -291,7 +326,7 @@ async def admin_setting_actions(
 
 @router.message(AdminSettingForm.waiting_value)
 async def handle_setting_value(
-    message: Message, user: User, state: FSMContext, session: AsyncSession
+    message: Message, user: User, state: FSMContext, session: AsyncSession, i18n: I18nContext
 ) -> None:
     data = await state.get_data()
     await state.clear()
@@ -302,8 +337,6 @@ async def handle_setting_value(
     meta = admin_service.find_setting_meta(key)
     label = meta[1] if meta else key
     await message.answer(
-        f"<b>⚙️ {label}</b> updated.",
-        reply_markup=back_to_settings_keyboard(),
+        i18n.get("admin-setting-updated", label=label),
+        reply_markup=back_to_settings_keyboard(i18n),
     )
-
-

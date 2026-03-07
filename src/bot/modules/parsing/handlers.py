@@ -1,6 +1,7 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.callbacks.common import MenuCallback
@@ -14,8 +15,11 @@ from src.bot.modules.parsing.callbacks import (
 from src.bot.modules.parsing.keyboards import (
     blacklist_choice_keyboard,
     cancel_keyboard,
+    count_input_keyboard,
     format_choice_keyboard,
+    language_selection_keyboard,
     parsing_list_keyboard,
+    retry_keyboard,
     style_selection_keyboard,
 )
 from src.bot.modules.parsing.states import ParsingForm
@@ -25,26 +29,29 @@ router = Router(name="parsing")
 
 
 async def show_parsing_list(
-    callback: CallbackQuery, user: User, session: AsyncSession | None = None
+    callback: CallbackQuery,
+    user: User,
+    i18n: I18nContext,
+    session: AsyncSession | None = None,
 ) -> None:
     if session is None:
         from src.db.engine import async_session_factory
 
         async with async_session_factory() as session:
-            return await show_parsing_list(callback, user, session)
+            return await show_parsing_list(callback, user, i18n, session)
 
     companies = await parsing_service.get_user_companies(session, user.id)
 
     if not companies:
         await callback.message.edit_text(
-            "<b>📋 My Parsings</b>\n\nNo parsings yet. Start a new one!",
-            reply_markup=back_to_menu_keyboard(),
+            i18n.get("parsing-empty"),
+            reply_markup=back_to_menu_keyboard(i18n),
         )
         return
 
     await callback.message.edit_text(
-        "<b>📋 My Parsings</b>",
-        reply_markup=parsing_list_keyboard(companies),
+        i18n.get("parsing-list-title"),
+        reply_markup=parsing_list_keyboard(companies, i18n),
     )
 
 
@@ -53,84 +60,81 @@ async def show_parsing_list(
 
 @router.callback_query(MenuCallback.filter(F.action == "new_parsing"))
 async def fsm_start_parsing(
-    callback: CallbackQuery, callback_data: MenuCallback, user: User, state: FSMContext
+    callback: CallbackQuery,
+    callback_data: MenuCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
 ) -> None:
     await state.set_state(ParsingForm.vacancy_title)
     await callback.message.edit_text(
-        "<b>🔍 New Parsing</b>\n\n"
-        "Enter the vacancy title for your resume\n"
-        "(e.g. Frontend Developer, Маркетолог):",
-        reply_markup=cancel_keyboard(),
+        f"{i18n.get('parsing-new-title')}\n\n{i18n.get('parsing-enter-title')}",
+        reply_markup=cancel_keyboard(i18n),
     )
     await callback.answer()
 
 
 @router.message(ParsingForm.vacancy_title)
-async def fsm_vacancy_title(message: Message, user: User, state: FSMContext) -> None:
+async def fsm_vacancy_title(
+    message: Message, user: User, state: FSMContext, i18n: I18nContext
+) -> None:
     title = message.text.strip()
     if not title:
-        await message.answer("Title cannot be empty. Please try again:")
+        await message.answer(i18n.get("parsing-title-empty"))
         return
 
     await state.update_data(vacancy_title=title)
     await state.set_state(ParsingForm.search_url)
-    await message.answer(
-        "<b>Step 2/4</b>\n\n"
-        "Enter the HH.ru search page URL\n"
-        "(e.g. <code>https://hh.ru/search/vacancy?text=Frontend</code>):",
-    )
+    await message.answer(i18n.get("parsing-step2"))
 
 
 @router.message(ParsingForm.search_url)
-async def fsm_search_url(message: Message, user: User, state: FSMContext) -> None:
+async def fsm_search_url(
+    message: Message, user: User, state: FSMContext, i18n: I18nContext
+) -> None:
     from urllib.parse import urlparse
 
     url = message.text.strip()
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()
     if parsed.scheme not in ("http", "https") or not hostname.endswith("hh.ru"):
-        await message.answer(
-            "Please enter a valid HH.ru URL\n"
-            "(e.g. <code>https://hh.ru/search/vacancy?text=Python</code>)",
-        )
+        await message.answer(i18n.get("parsing-invalid-url"))
         return
 
     await state.update_data(search_url=url)
     await state.set_state(ParsingForm.keyword_filter)
-    await message.answer(
-        "<b>Step 3/4</b>\n\n"
-        "Enter keyword filter for vacancy titles\n"
-        '("<code>|</code>" = OR, "<code>,</code>" = AND)\n'
-        "Example: <code>frontend|backend,fullstack</code>\n\n"
-        "Send <code>-</code> to skip filtering:",
-    )
+    await message.answer(i18n.get("parsing-step3"))
 
 
 @router.message(ParsingForm.keyword_filter)
-async def fsm_keyword_filter(message: Message, user: User, state: FSMContext) -> None:
+async def fsm_keyword_filter(
+    message: Message, user: User, state: FSMContext, i18n: I18nContext
+) -> None:
     keyword = message.text.strip()
     if keyword == "-":
         keyword = ""
 
     await state.update_data(keyword_filter=keyword)
     await state.set_state(ParsingForm.target_count)
-    await message.answer(
-        "<b>Step 4/4</b>\n\nHow many vacancies to process?\n(e.g. 30):",
-    )
+    await message.answer(i18n.get("parsing-step4"))
 
 
 @router.message(ParsingForm.target_count)
 async def fsm_target_count(
-    message: Message, user: User, state: FSMContext, session: AsyncSession
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     text = message.text.strip()
     if not text.isdigit() or int(text) <= 0:
-        await message.answer("Please enter a positive number:")
+        await message.answer(i18n.get("parsing-positive-number"))
         return
 
     count = int(text)
     if count > 200:
-        await message.answer("Maximum is 200 vacancies. Please enter a smaller number:")
+        await message.answer(i18n.get("parsing-max-200"))
         return
 
     await state.update_data(target_count=count)
@@ -143,14 +147,15 @@ async def fsm_target_count(
     if blacklisted_count > 0:
         await state.set_state(ParsingForm.blacklist_check)
         await message.answer(
-            f"<b>⚠️ Blacklist Check</b>\n\n"
-            f"You have <b>{blacklisted_count}</b> blacklisted vacancies "
-            f"for <b>{data['vacancy_title']}</b>.\n\n"
-            f"Include previously parsed vacancies?",
-            reply_markup=blacklist_choice_keyboard(),
+            i18n.get(
+                "parsing-blacklist-check",
+                count=str(blacklisted_count),
+                title=data["vacancy_title"],
+            ),
+            reply_markup=blacklist_choice_keyboard(i18n),
         )
     else:
-        await _confirm_and_launch(message, user, state, session, include_blacklisted=False)
+        await _confirm_and_launch(message, user, state, session, i18n, include_blacklisted=False)
 
 
 @router.callback_query(ParsingCallback.filter(F.action.in_({"bl_skip", "bl_include"})))
@@ -160,10 +165,11 @@ async def fsm_blacklist_choice(
     user: User,
     state: FSMContext,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     include = callback_data.action == "bl_include"
     await _confirm_and_launch(
-        callback.message, user, state, session, include_blacklisted=include
+        callback.message, user, state, session, i18n, include_blacklisted=include
     )
     await callback.answer()
 
@@ -173,6 +179,7 @@ async def _confirm_and_launch(
     user: User,
     state: FSMContext,
     session: AsyncSession,
+    i18n: I18nContext,
     *,
     include_blacklisted: bool,
 ) -> None:
@@ -190,8 +197,8 @@ async def _confirm_and_launch(
 
     parsing_service.dispatch_parsing_task(company_id, user.id, include_blacklisted)
 
-    text = parsing_service.format_confirmation(data, include_blacklisted)
-    await message.answer(text, reply_markup=back_to_menu_keyboard())
+    text = parsing_service.format_confirmation(data, include_blacklisted, i18n)
+    await message.answer(text, reply_markup=back_to_menu_keyboard(i18n))
 
 
 # --------------- parsing detail & format delivery ---------------
@@ -203,20 +210,52 @@ async def parsing_detail(
     callback_data: ParsingCallback,
     user: User,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     company = await parsing_service.get_company_with_details(session, callback_data.company_id)
 
     if not company or company.user_id != user.id:
-        await callback.answer("Not found", show_alert=True)
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
-    text = parsing_service.format_company_detail(company)
-    kb = (
-        format_choice_keyboard(company.id)
-        if company.status == "completed"
-        else back_to_menu_keyboard()
-    )
+    text = parsing_service.format_company_detail(company, i18n)
+    if company.status == "completed":
+        kb = format_choice_keyboard(company.id, i18n)
+    elif company.status == "failed":
+        kb = retry_keyboard(company.id, i18n)
+    else:
+        kb = back_to_menu_keyboard(i18n)
     await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "retry"))
+async def parsing_retry(
+    callback: CallbackQuery,
+    callback_data: ParsingCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
+
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+
+    new_company_id = await parsing_service.clone_and_dispatch(session, company.id, user.id)
+
+    filter_val = company.keyword_filter or i18n.get("detail-filter-none")
+    await callback.message.edit_text(
+        i18n.get(
+            "parsing-restarted",
+            title=company.vacancy_title,
+            count=str(company.target_count),
+            filter=filter_val,
+            new_id=str(new_company_id),
+        ),
+        reply_markup=back_to_menu_keyboard(i18n),
+    )
     await callback.answer()
 
 
@@ -226,25 +265,27 @@ async def format_selection(
     callback_data: FormatCallback,
     user: User,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     company = await parsing_service.get_company_by_id(session, callback_data.company_id)
     if not company or company.user_id != user.id:
-        await callback.answer("Not found", show_alert=True)
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
     agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
     if not agg:
-        await callback.answer("No results available yet", show_alert=True)
+        await callback.answer(i18n.get("parsing-no-results"), show_alert=True)
         return
 
-    report = parsing_service.build_report(company, agg)
+    locale = user.language_code or "ru"
+    report = parsing_service.build_report(company, agg, locale=locale)
     fmt = callback_data.format
 
     if fmt == "message":
         text = report.generate_message()
         if len(text) > 4000:
-            text = text[:3950] + "\n\n<i>...truncated. Download full report.</i>"
-        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard())
+            text = text[:3950] + "\n\n" + i18n.get("parsing-truncated")
+        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard(i18n))
 
     elif fmt in ("md", "txt"):
         content = report.generate_md() if fmt == "md" else report.generate_txt()
@@ -252,7 +293,7 @@ async def format_selection(
             content, f"report_{company.vacancy_title}_{company.id}.{fmt}"
         )
         await callback.message.answer_document(doc)
-        await callback.answer("File sent")
+        await callback.answer(i18n.get("parsing-file-sent"))
         return
 
     await callback.answer()
@@ -261,43 +302,105 @@ async def format_selection(
 # --------------- key phrases streaming ---------------
 
 
-@router.callback_query(KeyPhrasesCallback.filter())
-async def key_phrases_actions(
+@router.callback_query(KeyPhrasesCallback.filter(F.action == "start"))
+async def key_phrases_start(
+    callback: CallbackQuery,
+    callback_data: KeyPhrasesCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.set_state(ParsingForm.key_phrases_count)
+    await state.update_data(kp_company_id=callback_data.company_id)
+    await callback.message.edit_text(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-count-prompt')}",
+        reply_markup=count_input_keyboard(callback_data.company_id, i18n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(KeyPhrasesCallback.filter(F.action == "skip_count"))
+async def key_phrases_skip_count(
+    callback: CallbackQuery,
+    callback_data: KeyPhrasesCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await callback.message.edit_text(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-lang')}",
+        reply_markup=language_selection_keyboard(callback_data.company_id, 0, i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.key_phrases_count)
+async def fsm_key_phrases_count(
+    message: Message, user: User, state: FSMContext, i18n: I18nContext
+) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 1:
+        await message.answer(i18n.get("keyphrase-enter-number"))
+        return
+
+    count = int(text)
+    if count > 30:
+        await message.answer(i18n.get("keyphrase-max-30"))
+        return
+
+    data = await state.get_data()
+    company_id = data["kp_company_id"]
+    await state.clear()
+
+    await message.answer(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-lang')}",
+        reply_markup=language_selection_keyboard(company_id, count, i18n),
+    )
+
+
+@router.callback_query(KeyPhrasesCallback.filter(F.action == "select_lang"))
+async def key_phrases_select_lang(
+    callback: CallbackQuery,
+    callback_data: KeyPhrasesCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    await callback.message.edit_text(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-style')}",
+        reply_markup=style_selection_keyboard(
+            callback_data.company_id, i18n, callback_data.count, callback_data.lang
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(KeyPhrasesCallback.filter(F.action == "select_style"))
+async def key_phrases_select_style(
     callback: CallbackQuery,
     callback_data: KeyPhrasesCallback,
     user: User,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
-    if callback_data.action == "start":
+    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
+    agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
+
+    if not company or not agg or not agg.top_keywords:
         await callback.message.edit_text(
-            "<b>✨ Generate Key Phrases</b>\n\nSelect a style:",
-            reply_markup=style_selection_keyboard(callback_data.company_id),
+            i18n.get("keyphrase-no-keywords"),
+            reply_markup=back_to_menu_keyboard(i18n),
         )
-
-    elif callback_data.action == "select_style":
-        await callback.answer("Generating with AI streaming...")
-
-        company = await parsing_service.get_company_by_id(session, callback_data.company_id)
-        agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
-
-        if not company or not agg or not agg.top_keywords:
-            await callback.message.edit_text(
-                "No keywords available. Run parsing first.",
-                reply_markup=back_to_menu_keyboard(),
-            )
-            return
-
-        await parsing_service.generate_key_phrases_stream(
-            bot=callback.bot,
-            session=session,
-            company=company,
-            agg=agg,
-            style_key=callback_data.style,
-            count=callback_data.count,
-            chat_id=callback.message.chat.id,
-        )
+        await callback.answer()
         return
 
+    parsing_service.dispatch_key_phrases_task(
+        company_id=callback_data.company_id,
+        user_id=user.id,
+        style_key=callback_data.style,
+        count=callback_data.count,
+        lang=callback_data.lang,
+        chat_id=callback.message.chat.id,
+    )
+    await callback.message.edit_text(i18n.get("keyphrase-generating"))
     await callback.answer()
-
-

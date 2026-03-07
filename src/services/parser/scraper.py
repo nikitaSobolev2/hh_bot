@@ -108,6 +108,28 @@ class HHScraper:
 
         return found
 
+    @staticmethod
+    def _collect_new_from_page(
+        page_results: list[dict[str, str]],
+        seen_urls: set[str],
+        blacklisted: set[str],
+        collected: list[dict[str, str]],
+        target_count: int,
+    ) -> int:
+        """Filter and append new vacancies from a single page."""
+        new_count = 0
+        for item in page_results:
+            if item["url"] in seen_urls:
+                continue
+            if item["hh_vacancy_id"] in blacklisted:
+                continue
+            seen_urls.add(item["url"])
+            collected.append(item)
+            new_count += 1
+            if len(collected) >= target_count:
+                break
+        return new_count
+
     async def collect_vacancy_urls(
         self,
         base_url: str,
@@ -134,17 +156,13 @@ class HHScraper:
                     break
 
                 page_results = self._extract_vacancies_from_page(soup, keyword)
-                new_count = 0
-                for item in page_results:
-                    if item["url"] in seen_urls:
-                        continue
-                    if item["hh_vacancy_id"] in blacklisted:
-                        continue
-                    seen_urls.add(item["url"])
-                    collected.append(item)
-                    new_count += 1
-                    if len(collected) >= target_count:
-                        break
+                new_count = self._collect_new_from_page(
+                    page_results,
+                    seen_urls,
+                    blacklisted,
+                    collected,
+                    target_count,
+                )
 
                 zero_pages = zero_pages + 1 if new_count == 0 else 0
                 logger.info(

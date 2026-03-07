@@ -1,6 +1,7 @@
 """Celery task for the full parsing pipeline."""
 
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -35,8 +36,6 @@ async def _run_parsing_company_async(
     include_blacklisted: bool = False,
 ) -> dict:
     from src.db.engine import async_session_factory
-    from src.models.blacklist import VacancyBlacklist
-    from src.models.parsing import AggregatedResult, ParsedVacancy
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.blacklist import BlacklistRepository
     from src.repositories.parsing import ParsingCompanyRepository
@@ -90,97 +89,23 @@ async def _run_parsing_company_async(
                 )
 
         extractor = ParsingExtractor()
-
-        async def on_progress(current: int, total: int):
-            async with async_session_factory() as s:
-                repo = ParsingCompanyRepository(s)
-                c = await repo.get_by_id(parsing_company_id)
-                if c:
-                    await repo.update(c, vacancies_processed=current)
-                    await s.commit()
-
         result = await extractor.run_pipeline(
             search_url=company.search_url,
             keyword_filter=company.keyword_filter,
             target_count=company.target_count,
             blacklisted_ids=blacklisted_ids,
-            on_vacancy_processed=on_progress,
+            on_vacancy_processed=partial(_report_progress, parsing_company_id),
         )
 
-        async with async_session_factory() as session:
-            company_repo = ParsingCompanyRepository(session)
-            company = await company_repo.get_by_id(parsing_company_id)
-
-            for vac_data in result["vacancies"]:
-                vacancy = ParsedVacancy(
-                    parsing_company_id=parsing_company_id,
-                    hh_vacancy_id=vac_data["hh_vacancy_id"],
-                    url=vac_data["url"],
-                    title=vac_data["title"],
-                    description=vac_data.get("description", ""),
-                    raw_skills=vac_data.get("raw_skills"),
-                    ai_keywords=vac_data.get("ai_keywords"),
-                )
-                session.add(vacancy)
-
-            aggregated = AggregatedResult(
-                parsing_company_id=parsing_company_id,
-                top_keywords=result["keywords"],
-                top_skills=result["skills"],
-            )
-            session.add(aggregated)
-
-            if company:
-                company.status = "completed"
-                company.vacancies_processed = len(result["vacancies"])
-                company.completed_at = datetime.now(UTC).replace(tzinfo=None)
-
-            # Auto-blacklist (upsert to handle re-parsed vacancies)
-            settings_repo = AppSettingRepository(session)
-            bl_days = await settings_repo.get_value("blacklist_days", default=30)
-            bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
-            vacancy_title = company.vacancy_title if company else ""
-
-            for vac_data in result["vacancies"]:
-                stmt = (
-                    pg_insert(VacancyBlacklist)
-                    .values(
-                        user_id=user_id,
-                        vacancy_title_context=vacancy_title,
-                        hh_vacancy_id=vac_data["hh_vacancy_id"],
-                        vacancy_url=vac_data["url"],
-                        vacancy_name=vac_data["title"],
-                        blacklisted_until=bl_until,
-                    )
-                    .on_conflict_do_update(
-                        constraint="uq_user_vacancy_context",
-                        set_={
-                            "vacancy_url": vac_data["url"],
-                            "vacancy_name": vac_data["title"],
-                            "blacklisted_until": bl_until,
-                        },
-                    )
-                )
-                await session.execute(stmt)
-
-            # Record task completion
-            from src.models.task import BaseCeleryTask
-
-            task_record = BaseCeleryTask(
-                celery_task_id=task.request.id if task.request else None,
-                task_type="parse_company",
-                user_id=user_id,
-                status="completed",
-                idempotency_key=idempotency_key,
-                result_data={"vacancies_count": len(result["vacancies"])},
-            )
-            session.add(task_record)
-
-            await session.commit()
-
+        await _save_parsing_results(
+            parsing_company_id,
+            user_id,
+            task,
+            result,
+            idempotency_key,
+        )
         cb.record_success()
 
-        # Notify user via Telegram
         try:
             await _notify_user(user_id, parsing_company_id)
         except Exception as exc:
@@ -195,17 +120,138 @@ async def _run_parsing_company_async(
 
     except Exception as exc:
         cb.record_failure()
+        await _mark_parsing_failed(
+            parsing_company_id,
+            user_id,
+            task,
+            idempotency_key,
+            exc,
+        )
+        logger.error("Parsing task failed", error=str(exc), company_id=parsing_company_id)
+        raise
 
-        async with async_session_factory() as session:
-            company_repo = ParsingCompanyRepository(session)
-            company = await company_repo.get_by_id(parsing_company_id)
-            if company:
-                company.status = "failed"
-                await session.commit()
 
-            from src.models.task import BaseCeleryTask
+async def _report_progress(
+    parsing_company_id: int,
+    current: int,
+    _total: int,
+) -> None:
+    from src.db.engine import async_session_factory
+    from src.repositories.parsing import ParsingCompanyRepository
 
-            task_record = BaseCeleryTask(
+    async with async_session_factory() as session:
+        repo = ParsingCompanyRepository(session)
+        company = await repo.get_by_id(parsing_company_id)
+        if company:
+            await repo.update(company, vacancies_processed=current)
+            await session.commit()
+
+
+async def _save_parsing_results(
+    parsing_company_id: int,
+    user_id: int,
+    task,
+    result: dict,
+    idempotency_key: str,
+) -> None:
+    from src.db.engine import async_session_factory
+    from src.models.blacklist import VacancyBlacklist
+    from src.models.parsing import AggregatedResult, ParsedVacancy
+    from src.models.task import BaseCeleryTask
+    from src.repositories.app_settings import AppSettingRepository
+    from src.repositories.parsing import ParsingCompanyRepository
+
+    async with async_session_factory() as session:
+        company_repo = ParsingCompanyRepository(session)
+        company = await company_repo.get_by_id(parsing_company_id)
+
+        for vac_data in result["vacancies"]:
+            session.add(
+                ParsedVacancy(
+                    parsing_company_id=parsing_company_id,
+                    hh_vacancy_id=vac_data["hh_vacancy_id"],
+                    url=vac_data["url"],
+                    title=vac_data["title"],
+                    description=vac_data.get("description", ""),
+                    raw_skills=vac_data.get("raw_skills"),
+                    ai_keywords=vac_data.get("ai_keywords"),
+                )
+            )
+
+        session.add(
+            AggregatedResult(
+                parsing_company_id=parsing_company_id,
+                top_keywords=result["keywords"],
+                top_skills=result["skills"],
+            )
+        )
+
+        if company:
+            company.status = "completed"
+            company.vacancies_processed = len(result["vacancies"])
+            company.completed_at = datetime.now(UTC).replace(tzinfo=None)
+
+        settings_repo = AppSettingRepository(session)
+        bl_days = await settings_repo.get_value("blacklist_days", default=30)
+        bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
+        vacancy_title = company.vacancy_title if company else ""
+
+        for vac_data in result["vacancies"]:
+            stmt = (
+                pg_insert(VacancyBlacklist)
+                .values(
+                    user_id=user_id,
+                    vacancy_title_context=vacancy_title,
+                    hh_vacancy_id=vac_data["hh_vacancy_id"],
+                    vacancy_url=vac_data["url"],
+                    vacancy_name=vac_data["title"],
+                    blacklisted_until=bl_until,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_user_vacancy_context",
+                    set_={
+                        "vacancy_url": vac_data["url"],
+                        "vacancy_name": vac_data["title"],
+                        "blacklisted_until": bl_until,
+                    },
+                )
+            )
+            await session.execute(stmt)
+
+        session.add(
+            BaseCeleryTask(
+                celery_task_id=task.request.id if task.request else None,
+                task_type="parse_company",
+                user_id=user_id,
+                status="completed",
+                idempotency_key=idempotency_key,
+                result_data={"vacancies_count": len(result["vacancies"])},
+            )
+        )
+
+        await session.commit()
+
+
+async def _mark_parsing_failed(
+    parsing_company_id: int,
+    user_id: int,
+    task,
+    idempotency_key: str,
+    exc: Exception,
+) -> None:
+    from src.db.engine import async_session_factory
+    from src.models.task import BaseCeleryTask
+    from src.repositories.parsing import ParsingCompanyRepository
+
+    async with async_session_factory() as session:
+        company_repo = ParsingCompanyRepository(session)
+        company = await company_repo.get_by_id(parsing_company_id)
+        if company:
+            company.status = "failed"
+            await session.commit()
+
+        session.add(
+            BaseCeleryTask(
                 celery_task_id=task.request.id if task.request else None,
                 task_type="parse_company",
                 user_id=user_id,
@@ -213,16 +259,13 @@ async def _run_parsing_company_async(
                 idempotency_key=idempotency_key,
                 error_message=str(exc),
             )
-            session.add(task_record)
-            await session.commit()
-
-        logger.error("Parsing task failed", error=str(exc), company_id=parsing_company_id)
-        raise
+        )
+        await session.commit()
 
 
 async def _notify_user(user_id: int, parsing_company_id: int) -> None:
-    from src.bot.modules.parsing.keyboards import format_choice_keyboard
     from src.config import settings as app_settings
+    from src.core.i18n import get_text
     from src.db.engine import async_session_factory
     from src.repositories.user import UserRepository
 
@@ -232,21 +275,21 @@ async def _notify_user(user_id: int, parsing_company_id: int) -> None:
         if not user:
             return
 
+    locale = user.language_code or "ru"
+
     from aiogram import Bot
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
+
+    from src.bot.modules.parsing.keyboards import format_choice_keyboard
 
     bot = Bot(
         token=app_settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     try:
-        await bot.send_message(
-            user.telegram_id,
-            f"<b>✅ Parsing completed!</b>\n\n"
-            f"Your parsing #{parsing_company_id} is ready.\n"
-            f"Choose how to view the results:",
-            reply_markup=format_choice_keyboard(parsing_company_id),
-        )
+        text = get_text("parsing-completed", locale, id=str(parsing_company_id))
+        kb = format_choice_keyboard(parsing_company_id, locale=locale)
+        await bot.send_message(user.telegram_id, text, reply_markup=kb)
     finally:
         await bot.session.close()

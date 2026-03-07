@@ -17,3 +17,4 @@ class KeyPhrasesCallback(CallbackData, prefix="kp"):
     action: str
     style: str = ""
     count: int = 0
+    lang: str = ""

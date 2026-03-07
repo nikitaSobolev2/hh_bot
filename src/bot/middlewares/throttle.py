@@ -49,9 +49,7 @@ class ThrottleMiddleware(BaseMiddleware):
 
         if len(self._last_request) > _CLEANUP_THRESHOLD:
             self._last_request = {
-                uid: ts
-                for uid, ts in self._last_request.items()
-                if now - ts < _STALE_SECONDS
+                uid: ts for uid, ts in self._last_request.items() if now - ts < _STALE_SECONDS
             }
 
         return await handler(event, data)

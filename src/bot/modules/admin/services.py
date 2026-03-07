@@ -1,8 +1,10 @@
 from decimal import Decimal
 
+from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.admin.keyboards import MANAGED_SETTINGS
+from src.core.i18n import get_text
 from src.models.balance import BalanceTransaction
 from src.models.user import User
 from src.repositories.app_settings import AppSettingRepository
@@ -26,23 +28,24 @@ def mask_if_sensitive(key: str, value: str) -> str:
     return value
 
 
-def format_user_detail(target: User) -> str:
-    return (
-        f"<b>👤 User #{target.id}</b>\n\n"
-        f"<b>Name:</b> {target.first_name} {target.last_name or ''}\n"
-        f"<b>Username:</b> @{target.username or '—'}\n"
-        f"<b>Telegram ID:</b> <code>{target.telegram_id}</code>\n"
-        f"<b>Role:</b> {target.role.name}\n"
-        f"<b>Balance:</b> {target.balance}\n"
-        f"<b>Banned:</b> {'Yes' if target.is_banned else 'No'}\n"
-        f"<b>Language:</b> {target.language_code}\n"
-        f"<b>Joined:</b> {target.created_at.strftime('%Y-%m-%d %H:%M')}"
-    )
+def format_user_detail(target: User, i18n: I18nContext) -> str:
+    banned_text = i18n.get("yes") if target.is_banned else i18n.get("no")
+    lines = [
+        i18n.get("admin-user-detail-title", id=str(target.id)),
+        "",
+        i18n.get("admin-user-detail-name", name=f"{target.first_name} {target.last_name or ''}"),
+        i18n.get("admin-user-detail-username", username=target.username or "—"),
+        i18n.get("admin-user-detail-telegram-id", telegram_id=str(target.telegram_id)),
+        i18n.get("admin-user-detail-role", role=target.role.name),
+        i18n.get("admin-user-detail-balance", balance=str(target.balance)),
+        i18n.get("admin-user-detail-banned", banned=banned_text),
+        i18n.get("admin-user-detail-language", language=target.language_code),
+        i18n.get("admin-user-detail-joined", date=target.created_at.strftime("%Y-%m-%d %H:%M")),
+    ]
+    return "\n".join(lines)
 
 
-async def get_user_page(
-    session: AsyncSession, page: int
-) -> tuple[list[User], bool]:
+async def get_user_page(session: AsyncSession, page: int) -> tuple[list[User], bool]:
     repo = UserRepository(session)
     users = await repo.search(offset=page * USERS_PER_PAGE, limit=USERS_PER_PAGE + 1)
     has_more = len(users) > USERS_PER_PAGE
@@ -69,7 +72,8 @@ async def toggle_user_ban(session: AsyncSession, user_id: int) -> User | None:
 
 
 async def adjust_balance(
-    session: AsyncSession, target_user_id: int, amount: Decimal, admin_id: int
+    session: AsyncSession, target_user_id: int, amount: Decimal, admin_id: int,
+    locale: str = "ru",
 ) -> User | None:
     repo = UserRepository(session)
     target = await repo.get_by_id(target_user_id)
@@ -81,21 +85,19 @@ async def adjust_balance(
         user_id=target.id,
         amount=amount,
         transaction_type="admin_adjust",
-        description=f"Adjusted by admin #{admin_id}",
+        description=get_text("admin-balance-description", locale, admin_id=str(admin_id)),
     )
     session.add(tx)
     await session.commit()
     return target
 
 
-async def get_setting_value(session: AsyncSession, key: str) -> object:
+async def get_setting_value(session: AsyncSession, key: str, locale: str = "ru") -> object:
     repo = AppSettingRepository(session)
-    return await repo.get_value(key, default="(not set)")
+    return await repo.get_value(key, default=get_text("admin-not-set", locale))
 
 
-async def toggle_setting(
-    session: AsyncSession, key: str, user_id: int
-) -> bool:
+async def toggle_setting(session: AsyncSession, key: str, user_id: int) -> bool:
     repo = AppSettingRepository(session)
     current = await repo.get_value(key, default=False)
     new_val = not bool(current)
@@ -104,9 +106,7 @@ async def toggle_setting(
     return new_val
 
 
-async def update_setting(
-    session: AsyncSession, key: str, raw_value: str, user_id: int
-) -> None:
+async def update_setting(session: AsyncSession, key: str, raw_value: str, user_id: int) -> None:
     parsed_value: str | int | float
     if raw_value.isdigit():
         parsed_value = int(raw_value)

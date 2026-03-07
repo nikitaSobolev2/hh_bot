@@ -8,3 +8,4 @@ class ParsingForm(StatesGroup):
     target_count = State()
     blacklist_check = State()
     confirm = State()
+    key_phrases_count = State()

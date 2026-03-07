@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from src.core.i18n import I18nContext
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,9 +17,7 @@ async def set_language(session: AsyncSession, user_id: int, lang: str) -> None:
         await session.commit()
 
 
-async def get_blacklist_contexts(
-    session: AsyncSession, user_id: int
-) -> list[tuple[str, int]]:
+async def get_blacklist_contexts(session: AsyncSession, user_id: int) -> list[tuple[str, int]]:
     now = datetime.now(UTC).replace(tzinfo=None)
     stmt = (
         select(
@@ -35,10 +34,10 @@ async def get_blacklist_contexts(
     return [(row[0], row[1]) for row in result.all()]
 
 
-def format_blacklist_text(contexts: list[tuple[str, int]]) -> str:
-    lines = ["<b>🗑 Blacklist Management</b>\n"]
+def format_blacklist_text(contexts: list[tuple[str, int]], i18n: I18nContext) -> str:
+    lines = [i18n.get("blacklist-management-title"), ""]
     for ctx_name, count in contexts:
-        lines.append(f"• <b>{ctx_name}</b> — {count} vacancies")
+        lines.append(f"• <b>{ctx_name}</b> — {i18n.get('blacklist-vacancies', count=str(count))}")
     return "\n".join(lines)
 
 
@@ -49,9 +48,7 @@ async def clear_all_blacklist(session: AsyncSession, user_id: int) -> int:
     return count
 
 
-async def clear_blacklist_by_context(
-    session: AsyncSession, user_id: int, context: str
-) -> int:
+async def clear_blacklist_by_context(session: AsyncSession, user_id: int, context: str) -> int:
     repo = BlacklistRepository(session)
     count = await repo.clear_by_context(user_id, context)
     await session.commit()

@@ -25,10 +25,12 @@ def _register_middlewares(dp: Dispatcher) -> None:
     from src.bot.middlewares.auth import AuthMiddleware
     from src.bot.middlewares.i18n import LocaleMiddleware
     from src.bot.middlewares.throttle import ThrottleMiddleware
+    from src.core.i18n import setup_i18n
 
     dp.update.middleware(ThrottleMiddleware())
     dp.update.middleware(AuthMiddleware())
     dp.update.middleware(LocaleMiddleware())
+    setup_i18n(dp)
 
 
 def _register_routers(dp: Dispatcher) -> None:

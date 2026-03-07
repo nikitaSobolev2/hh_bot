@@ -5,6 +5,7 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Update
 
+from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.db.engine import async_session_factory
 from src.models.user import User
@@ -65,12 +66,12 @@ class AuthMiddleware(BaseMiddleware):
 
             if user.is_banned:
                 logger.info("Blocked request from banned user", telegram_id=tg_user.id)
+                locale = user.language_code or "ru"
+                msg = get_text("account-suspended", locale)
                 if event.message:
-                    await event.message.answer("Your account has been suspended.")
+                    await event.message.answer(msg)
                 elif event.callback_query:
-                    await event.callback_query.answer(
-                        "Your account has been suspended.", show_alert=True
-                    )
+                    await event.callback_query.answer(msg, show_alert=True)
                 return None
 
             data["user"] = user

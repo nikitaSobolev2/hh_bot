@@ -1,5 +1,6 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery
+from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards.common import back_to_menu_keyboard
@@ -15,10 +16,10 @@ from src.models.user import User
 router = Router(name="user_settings")
 
 
-async def show_settings(callback: CallbackQuery) -> None:
+async def show_settings(callback: CallbackQuery, i18n: I18nContext) -> None:
     await callback.message.edit_text(
-        "<b>⚙️ Settings</b>\n\nManage your preferences.",
-        reply_markup=settings_keyboard(),
+        f"{i18n.get('settings-title')}\n\n{i18n.get('settings-subtitle')}",
+        reply_markup=settings_keyboard(i18n),
     )
 
 
@@ -28,67 +29,67 @@ async def settings_actions(
     callback_data: SettingsCallback,
     user: User,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     action = callback_data.action
 
     if action == "language":
         await callback.message.edit_text(
-            "<b>🌐 Language</b>\n\nSelect your language:",
-            reply_markup=language_keyboard(),
+            f"{i18n.get('language-title')}\n\n{i18n.get('language-subtitle')}",
+            reply_markup=language_keyboard(i18n),
         )
 
     elif action == "set_lang":
         lang = callback_data.value
         await settings_service.set_language(session, user.id, lang)
+        lang_name = "Русский" if lang == "ru" else "English"
         await callback.message.edit_text(
-            f"Language set to <b>{'Русский' if lang == 'ru' else 'English'}</b>",
-            reply_markup=settings_keyboard(),
+            i18n.get("language-set", language=lang_name),
+            reply_markup=settings_keyboard(i18n),
         )
 
     elif action == "back":
-        await show_settings(callback)
+        await show_settings(callback, i18n)
 
     elif action == "clear_blacklist":
-        await _show_blacklist_management(callback, user, session)
+        await _show_blacklist_management(callback, user, session, i18n)
 
     elif action == "notifications":
         await callback.message.edit_text(
-            "<b>🔔 Notifications</b>\n\nComing soon.",
-            reply_markup=back_to_menu_keyboard(),
+            f"{i18n.get('notifications-title')}\n\n{i18n.get('notifications-soon')}",
+            reply_markup=back_to_menu_keyboard(i18n),
         )
 
     elif action == "topup":
         await callback.message.edit_text(
-            "<b>💰 Top Up Balance</b>\n\nPayment methods coming soon.",
-            reply_markup=back_to_menu_keyboard(),
+            f"{i18n.get('topup-title')}\n\n{i18n.get('topup-soon')}",
+            reply_markup=back_to_menu_keyboard(i18n),
         )
 
     elif action == "delete_data":
         await callback.message.edit_text(
-            "<b>⚠️ Delete My Data</b>\n\n"
-            "This feature will permanently delete all your data. "
-            "Implementation details to be confirmed.",
-            reply_markup=back_to_menu_keyboard(),
+            f"{i18n.get('delete-data-title')}\n\n{i18n.get('delete-data-warning')}",
+            reply_markup=back_to_menu_keyboard(i18n),
         )
 
     await callback.answer()
 
 
 async def _show_blacklist_management(
-    callback: CallbackQuery, user: User, session: AsyncSession
+    callback: CallbackQuery, user: User, session: AsyncSession, i18n: I18nContext
 ) -> None:
     contexts = await settings_service.get_blacklist_contexts(session, user.id)
 
     if not contexts:
         await callback.message.edit_text(
-            "<b>🗑 Blacklist</b>\n\nNo active blacklist entries.",
-            reply_markup=settings_keyboard(),
+            i18n.get("blacklist-empty"),
+            reply_markup=settings_keyboard(i18n),
         )
         return
 
-    text = settings_service.format_blacklist_text(contexts)
+    text = settings_service.format_blacklist_text(contexts, i18n)
     await callback.message.edit_text(
-        text, reply_markup=blacklist_management_keyboard(contexts)
+        text, reply_markup=blacklist_management_keyboard(contexts, i18n)
     )
 
 
@@ -98,14 +99,15 @@ async def blacklist_actions(
     callback_data: BlacklistCallback,
     user: User,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     action = callback_data.action
 
     if action == "clear_all":
         count = await settings_service.clear_all_blacklist(session, user.id)
         await callback.message.edit_text(
-            f"Cleared <b>{count}</b> blacklist entries.",
-            reply_markup=settings_keyboard(),
+            i18n.get("blacklist-cleared", count=str(count)),
+            reply_markup=settings_keyboard(i18n),
         )
 
     elif action == "clear_ctx":
@@ -113,8 +115,8 @@ async def blacklist_actions(
             session, user.id, callback_data.context
         )
         await callback.message.edit_text(
-            f"Cleared <b>{count}</b> entries for <b>{callback_data.context}</b>.",
-            reply_markup=settings_keyboard(),
+            i18n.get("blacklist-cleared-ctx", count=str(count), context=callback_data.context),
+            reply_markup=settings_keyboard(i18n),
         )
 
     await callback.answer()

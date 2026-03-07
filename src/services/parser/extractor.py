@@ -1,7 +1,6 @@
 """Orchestrates the keyword extraction pipeline for a parsing company."""
 
 import asyncio
-import random
 from collections import Counter
 from collections.abc import Awaitable, Callable
 
@@ -14,6 +13,8 @@ from src.services.parser.scraper import HHScraper
 logger = get_logger(__name__)
 
 OnVacancyProcessed = Callable[[int, int], Awaitable[None]]
+
+_DEFAULT_CONCURRENCY = 5
 
 
 class ParsingExtractor:
@@ -35,6 +36,7 @@ class ParsingExtractor:
         *,
         blacklisted_ids: set[str] | None = None,
         on_vacancy_processed: OnVacancyProcessed | None = None,
+        concurrency: int = _DEFAULT_CONCURRENCY,
     ) -> dict:
         vacancies = await self._scraper.collect_vacancy_urls(
             search_url,
@@ -47,48 +49,67 @@ class ParsingExtractor:
             logger.warning("No vacancies found")
             return {"vacancies": [], "keywords": {}, "skills": {}}
 
-        keywords_counter: Counter = Counter()
-        skills_counter: Counter = Counter()
-        processed_vacancies: list[dict] = []
+        total = len(vacancies)
+        sem = asyncio.Semaphore(concurrency)
+        lock = asyncio.Lock()
+        completed = [0]
 
-        async with httpx.AsyncClient() as client:
-            for idx, vac in enumerate(vacancies, 1):
+        async def _process_vacancy(
+            client: httpx.AsyncClient,
+            vac: dict,
+        ) -> tuple[dict, list[str], list[str]]:
+            async with sem:
                 description, skills = await self._scraper.parse_vacancy_page(
                     client,
                     vac["url"],
                 )
 
-                for skill in skills:
-                    skills_counter[skill.strip()] += 1
-
                 ai_keywords: list[str] = []
                 if description:
                     ai_keywords = await self._ai.extract_keywords(description)
-                    for kw in ai_keywords:
-                        keywords_counter[kw.strip()] += 1
 
-                processed_vacancies.append(
-                    {
-                        **vac,
-                        "description": description,
-                        "raw_skills": skills,
-                        "ai_keywords": ai_keywords,
-                    }
-                )
+                async with lock:
+                    completed[0] += 1
+                    current = completed[0]
 
                 logger.info(
                     "Vacancy processed",
-                    index=idx,
-                    total=len(vacancies),
+                    index=current,
+                    total=total,
                     title=vac["title"][:60],
                     keywords_found=len(ai_keywords),
                     skills_found=len(skills),
                 )
 
                 if on_vacancy_processed:
-                    await on_vacancy_processed(idx, len(vacancies))
+                    await on_vacancy_processed(current, total)
 
-                await asyncio.sleep(random.uniform(1.0, 2.5))
+                return (
+                    {
+                        **vac,
+                        "description": description,
+                        "raw_skills": skills,
+                        "ai_keywords": ai_keywords,
+                    },
+                    skills,
+                    ai_keywords,
+                )
+
+        async with httpx.AsyncClient() as client:
+            results = await asyncio.gather(
+                *[_process_vacancy(client, vac) for vac in vacancies]
+            )
+
+        keywords_counter: Counter = Counter()
+        skills_counter: Counter = Counter()
+        processed_vacancies: list[dict] = []
+
+        for vac_dict, skills, ai_keywords in results:
+            processed_vacancies.append(vac_dict)
+            for skill in skills:
+                skills_counter[skill.strip()] += 1
+            for kw in ai_keywords:
+                keywords_counter[kw.strip()] += 1
 
         return {
             "vacancies": processed_vacancies,

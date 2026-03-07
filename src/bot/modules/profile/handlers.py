@@ -1,5 +1,6 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery
+from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards.common import back_to_menu_keyboard
@@ -11,9 +12,9 @@ from src.models.user import User
 router = Router(name="profile")
 
 
-async def show_profile(callback: CallbackQuery, user: User) -> None:
-    text = profile_service.format_profile(user)
-    await callback.message.edit_text(text, reply_markup=profile_keyboard())
+async def show_profile(callback: CallbackQuery, user: User, i18n: I18nContext) -> None:
+    text = profile_service.format_profile(user, i18n)
+    await callback.message.edit_text(text, reply_markup=profile_keyboard(i18n))
 
 
 @router.callback_query(ProfileCallback.filter())
@@ -22,15 +23,16 @@ async def profile_actions(
     callback_data: ProfileCallback,
     user: User,
     session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     action = callback_data.action
 
     if action == "stats":
-        text = await profile_service.get_stats(session, user.id)
-        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard())
+        text = await profile_service.get_stats(session, user.id, i18n)
+        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard(i18n))
 
     elif action == "referral":
-        text = profile_service.format_referral_link(user)
-        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard())
+        text = profile_service.format_referral_link(user, i18n)
+        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard(i18n))
 
     await callback.answer()

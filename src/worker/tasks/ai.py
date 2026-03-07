@@ -1,4 +1,4 @@
-"""Celery task for AI key phrases generation."""
+"""Celery task for AI key phrases generation with streaming to Telegram."""
 
 from src.core.logging import get_logger
 from src.worker.app import celery_app
@@ -19,9 +19,14 @@ def generate_key_phrases_task(
     user_id: int,
     style: str,
     keyword_count: int,
+    telegram_chat_id: int,
+    lang: str,
 ) -> dict:
     return run_async(
-        _generate_key_phrases_async(self, parsing_company_id, user_id, style, keyword_count)
+        _generate_key_phrases_async(
+            self, parsing_company_id, user_id, style, keyword_count,
+            telegram_chat_id, lang,
+        )
     )
 
 
@@ -31,13 +36,24 @@ async def _generate_key_phrases_async(
     user_id: int,
     style: str,
     keyword_count: int,
+    telegram_chat_id: int,
+    lang: str,
 ) -> dict:
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    from src.bot.modules.parsing.keyboards import KEY_PHRASES_LANGUAGES
+    from src.config import settings as app_settings
+    from src.core.i18n import get_text
     from src.db.engine import async_session_factory
     from src.models.task import CompanyCreateKeyPhrasesTask
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.parsing import AggregatedResultRepository, ParsingCompanyRepository
     from src.repositories.task import CeleryTaskRepository
+    from src.repositories.user import UserRepository
     from src.services.ai.client import AIClient
+    from src.services.ai.streaming import stream_to_telegram
     from src.worker.circuit_breaker import CircuitBreaker
 
     cb = CircuitBreaker("keyphrase")
@@ -55,13 +71,26 @@ async def _generate_key_phrases_async(
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
-    idempotency_key = f"keyphrase:{parsing_company_id}:{style}:{keyword_count}"
+    from datetime import UTC, datetime
+
+    time_bucket = int(datetime.now(UTC).timestamp()) // 300
+    idempotency_key = (
+        f"keyphrase:{parsing_company_id}:{style}:{keyword_count}:{lang}:{time_bucket}"
+    )
 
     async with async_session_factory() as session:
         task_repo = CeleryTaskRepository(session)
         existing = await task_repo.get_by_idempotency_key(idempotency_key)
         if existing and existing.status == "completed":
             return {"status": "already_completed"}
+
+    # Resolve user locale for translated header
+    locale = "ru"
+    async with async_session_factory() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if user:
+            locale = user.language_code or "ru"
 
     try:
         async with async_session_factory() as session:
@@ -77,17 +106,42 @@ async def _generate_key_phrases_async(
                 return {"status": "error", "message": "No aggregated keywords"}
 
             sorted_kw = sorted(agg.top_keywords.items(), key=lambda x: -x[1])
-            top_keywords = [kw for kw, _ in sorted_kw[:keyword_count]]
+            kw_limit = keyword_count if keyword_count > 0 else 30
+            top_keywords = [kw for kw, _ in sorted_kw[:kw_limit]]
+
+        style_label = get_text(f"style-{style}", locale)
+        lang_label = KEY_PHRASES_LANGUAGES.get(lang, lang)
 
         ai = AIClient()
-        phrases = await ai.generate_key_phrases(company.vacancy_title, top_keywords, style)
+        bot = Bot(
+            token=app_settings.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        try:
+            header = (
+                get_text("keyphrase-header", locale, title=company.vacancy_title) + "\n"
+                + get_text("keyphrase-style-label", locale, style=style_label, lang=lang_label)
+                + "\n\n"
+            )
+            phrases = await stream_to_telegram(
+                bot=bot,
+                chat_id=telegram_chat_id,
+                token_stream=ai.stream_key_phrases(
+                    company.vacancy_title, top_keywords, style_label,
+                    keyword_count, lang,
+                ),
+                initial_text=header,
+                parse_mode="HTML",
+            )
+        finally:
+            await bot.session.close()
 
         async with async_session_factory() as session:
             agg_repo = AggregatedResultRepository(session)
             agg = await agg_repo.get_by_company(parsing_company_id)
             if agg:
                 agg.key_phrases = phrases
-                agg.key_phrases_style = style
+                agg.key_phrases_style = style_label
 
             task_record = CompanyCreateKeyPhrasesTask(
                 celery_task_id=task.request.id if task.request else None,

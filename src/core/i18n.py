@@ -1,41 +1,79 @@
-"""Internationalization setup using aiogram-i18n with Fluent.
+"""Internationalization built on fluent.runtime (no aiogram-i18n dependency)."""
 
-STATUS: Infrastructure is ready (Fluent .ftl files for ru/en, locale middleware,
-FluentRuntimeCore). Handlers currently use hardcoded strings. To complete i18n,
-handlers need to accept an ``i18n`` parameter and call ``i18n.gettext("key")``.
-"""
+from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
-from aiogram_i18n import I18nMiddleware
-from aiogram_i18n.cores.fluent_runtime_core import FluentRuntimeCore
+from aiogram import BaseMiddleware, Dispatcher
+from aiogram.types import TelegramObject
+from fluent.runtime import FluentLocalization, FluentResourceLoader
 
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 LOCALES_DIR = Path(__file__).resolve().parent.parent / "locales"
+_DEFAULT_LOCALE = "ru"
+_SUPPORTED_LOCALES = ("ru", "en")
+
+_loader = FluentResourceLoader(
+    str(LOCALES_DIR / "{locale}" / "LC_MESSAGES")
+)
+
+_localizations: dict[str, FluentLocalization] = {}
 
 
-class UserLocaleManager:
-    """Resolves the locale for the current user from the DB user object."""
+def _get_localization(locale: str) -> FluentLocalization:
+    if locale not in _localizations:
+        _localizations[locale] = FluentLocalization(
+            locales=[locale, _DEFAULT_LOCALE],
+            resource_ids=["messages.ftl"],
+            resource_loader=_loader,
+        )
+    return _localizations[locale]
 
-    async def get_locale(self, event_from_user=None, user=None, **kwargs) -> str:
-        if user is not None:
-            return getattr(user, "language_code", "ru") or "ru"
-        if event_from_user is not None:
-            return getattr(event_from_user, "language_code", "ru") or "ru"
-        return "ru"
+
+class I18nContext:
+    """Minimal i18n context injected into handler data by the middleware."""
+
+    def __init__(self, locale: str = _DEFAULT_LOCALE) -> None:
+        self._locale = locale
+        self._loc = _get_localization(locale)
+
+    @property
+    def locale(self) -> str:
+        return self._locale
+
+    def get(self, key: str, **kwargs: Any) -> str:
+        result = self._loc.format_value(key, kwargs or None)
+        return result or key
 
 
-def create_i18n_middleware() -> I18nMiddleware:
-    core = FluentRuntimeCore(
-        path=str(LOCALES_DIR / "{locale}" / "LC_MESSAGES"),
-        default_locale="ru",
-    )
-    return I18nMiddleware(
-        core=core,
-        locale_key="locale",
-        middleware_key="i18n",
-        default_locale="ru",
-    )
+class I18nMiddleware(BaseMiddleware):
+    """Reads ``data["locale"]`` and injects an ``I18nContext`` as ``data["i18n"]``."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        locale = data.get("locale", _DEFAULT_LOCALE)
+        if locale not in _SUPPORTED_LOCALES:
+            locale = _DEFAULT_LOCALE
+        data["i18n"] = I18nContext(locale)
+        return await handler(event, data)
+
+
+def setup_i18n(dp: Dispatcher) -> None:
+    """Register the i18n middleware on the dispatcher."""
+    dp.update.middleware(I18nMiddleware())
+
+
+def get_text(key: str, locale: str = _DEFAULT_LOCALE, **kwargs: Any) -> str:
+    """Resolve a Fluent key outside the middleware context."""
+    loc = _get_localization(locale)
+    result = loc.format_value(key, kwargs or None)
+    return result or key

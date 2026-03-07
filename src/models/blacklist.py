@@ -16,7 +16,9 @@ class VacancyBlacklist(Base):
     __tablename__ = "vacancy_blacklist"
     __table_args__ = (
         UniqueConstraint(
-            "user_id", "hh_vacancy_id", "vacancy_title_context",
+            "user_id",
+            "hh_vacancy_id",
+            "vacancy_title_context",
             name="uq_user_vacancy_context",
         ),
     )

@@ -1,32 +1,33 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from src.core.i18n import I18nContext
 
 from src.bot.callbacks.common import MenuCallback
 
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
+def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🔍 New Parsing",
+                    text=i18n.get("btn-new-parsing"),
                     callback_data=MenuCallback(action="new_parsing").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="📋 My Parsings",
+                    text=i18n.get("btn-my-parsings"),
                     callback_data=MenuCallback(action="my_parsings").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="👤 Profile",
+                    text=i18n.get("btn-profile"),
                     callback_data=MenuCallback(action="profile").pack(),
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="⚙️ Settings",
+                    text=i18n.get("btn-settings"),
                     callback_data=MenuCallback(action="settings").pack(),
                 )
             ],
@@ -34,12 +35,12 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def main_menu_admin_keyboard() -> InlineKeyboardMarkup:
-    kb = main_menu_keyboard()
+def main_menu_admin_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    kb = main_menu_keyboard(i18n)
     kb.inline_keyboard.append(
         [
             InlineKeyboardButton(
-                text="🛠 Admin Panel",
+                text=i18n.get("btn-admin"),
                 callback_data=MenuCallback(action="admin").pack(),
             )
         ]
@@ -47,12 +48,12 @@ def main_menu_admin_keyboard() -> InlineKeyboardMarkup:
     return kb
 
 
-def back_to_menu_keyboard() -> InlineKeyboardMarkup:
+def back_to_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="◀️ Back to Menu",
+                    text=i18n.get("btn-back-menu"),
                     callback_data=MenuCallback(action="main").pack(),
                 )
             ],
