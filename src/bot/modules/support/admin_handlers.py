@@ -2,7 +2,7 @@ import contextlib
 import re
 from datetime import UTC, datetime, timedelta
 
-from aiogram import F, Router
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -207,6 +207,8 @@ async def take_ticket(
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
+    dispatcher: Dispatcher,
+    bot: Bot,
 ) -> None:
     ticket = await support_svc.take_ticket(
         session,
@@ -223,32 +225,36 @@ async def take_ticket(
         title=ticket.title,
         description=ticket.description[:500],
     )
-    reply_chat_id = callback.message.chat.id
     await callback.bot.send_message(
-        reply_chat_id,
+        user.telegram_id,
         text,
         reply_markup=admin_conversation_keyboard(i18n),
     )
 
     attachments = await support_svc.get_ticket_attachments(session, ticket.id)
     for att in attachments:
-        await support_svc._send_attachment(callback.bot, reply_chat_id, att)
+        await support_svc._send_attachment(callback.bot, user.telegram_id, att)
 
     unseen_count = await support_svc.deliver_unseen_to_admin(
         session,
         callback.bot,
         ticket.id,
-        reply_chat_id,
+        user.telegram_id,
         locale=user.language_code or "ru",
     )
     if unseen_count:
         await callback.bot.send_message(
-            reply_chat_id,
+            user.telegram_id,
             i18n.get("support-unseen-delivered", count=str(unseen_count)),
         )
 
-    await state.set_state(AdminConversation.chatting)
-    await state.update_data(
+    dm_state = await dispatcher.fsm.get_context(
+        bot=bot,
+        chat_id=user.telegram_id,
+        user_id=user.telegram_id,
+    )
+    await dm_state.set_state(AdminConversation.chatting)
+    await dm_state.update_data(
         ticket_id=ticket.id,
         target_user_id=ticket.user_id,
     )
