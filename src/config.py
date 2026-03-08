@@ -72,4 +72,6 @@ def sync_setting_to_runtime(key: str, value: object) -> None:
     """Push a single DB-managed setting value into the runtime settings object."""
     if not hasattr(settings, key):
         return
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
     setattr(settings, key, str(value) if not isinstance(value, str) else value)

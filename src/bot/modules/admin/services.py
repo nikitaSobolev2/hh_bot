@@ -112,9 +112,9 @@ async def toggle_setting(session: AsyncSession, key: str, user_id: int) -> bool:
 
 async def update_setting(session: AsyncSession, key: str, raw_value: str, user_id: int) -> None:
     parsed_value: str | int | float
-    if raw_value.isdigit():
+    try:
         parsed_value = int(raw_value)
-    else:
+    except ValueError:
         try:
             parsed_value = float(raw_value)
         except ValueError:
