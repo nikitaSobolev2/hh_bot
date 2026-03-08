@@ -16,7 +16,6 @@ from src.bot.modules.support.keyboards import (
     user_ticket_list_keyboard,
 )
 from src.bot.modules.support.states import TicketForm, UserConversation
-from src.config import settings
 from src.core.i18n import I18nContext
 from src.models.user import User
 
@@ -308,6 +307,36 @@ async def enter_conversation(
     await callback.answer()
 
 
+# ── Close from ticket detail ─────────────────────────────────
+
+
+@router.callback_query(SupportCallback.filter(F.action == "close_user"))
+async def close_ticket_from_detail(
+    callback: CallbackQuery,
+    callback_data: SupportCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    ticket = await support_svc.get_ticket(session, callback_data.ticket_id)
+    if not ticket or ticket.user_id != user.id or ticket.status == "closed":
+        await callback.answer(i18n.get("support-ticket-already-closed"), show_alert=True)
+        return
+
+    ticket = await support_svc.close_ticket_by_user(session, ticket.id)
+    if ticket and ticket.admin_id and ticket.admin:
+        with contextlib.suppress(Exception):
+            await callback.bot.send_message(
+                ticket.admin.telegram_id,
+                i18n.get("support-ticket-closed-notify-admin", id=str(ticket.id)),
+            )
+
+    await callback.message.edit_text(
+        i18n.get("support-ticket-closed-user", id=str(callback_data.ticket_id)),
+    )
+    await callback.answer()
+
+
 # ── Conversation mode ────────────────────────────────────────
 
 
@@ -381,29 +410,17 @@ async def _save_and_relay(
                 mime_type=mime_type,
             )
 
-    sender_name = user.first_name or i18n.get("support-user-label")
-
     if ticket.admin_id and ticket.admin:
         try:
             await support_svc.relay_to_admin(
                 message.bot,
                 ticket.admin.telegram_id,
                 message,
-                sender_name=sender_name,
+                sender_name=user.first_name or i18n.get("support-user-label"),
             )
             await support_svc.mark_messages_seen(session, ticket_id, for_admin=True)
         except Exception:
             pass
-
-    channel_id = settings.support_chat_id
-    if channel_id:
-        with contextlib.suppress(Exception):
-            await support_svc.relay_to_admin(
-                message.bot,
-                int(channel_id),
-                message,
-                sender_name=f"{sender_name} (#{ticket_id})",
-            )
 
 
 @router.message(UserConversation.chatting)

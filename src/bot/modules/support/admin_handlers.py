@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bot.filters.admin import AdminFilter
 from src.bot.keyboards.common import back_to_menu_keyboard
 from src.bot.keyboards.pagination import build_paginated_keyboard
+from src.bot.modules.parsing import services as parsing_svc
 from src.bot.modules.support import services as support_svc
 from src.bot.modules.support.callbacks import (
     TicketAdminCallback,
@@ -21,6 +22,7 @@ from src.bot.modules.support.keyboards import (
     admin_conversation_keyboard,
     admin_inbox_keyboard,
     admin_ticket_detail_keyboard,
+    ban_cancel_keyboard,
     close_status_keyboard,
 )
 from src.bot.modules.support.states import AdminConversation, AdminTicketSearch
@@ -368,9 +370,10 @@ async def view_user_companies(
         return InlineKeyboardButton(
             text=f"📋 {c.vacancy_title} ({c.status})",
             callback_data=TicketAdminCallback(
-                action="noop",
+                action="company_detail",
                 ticket_id=callback_data.ticket_id,
                 user_id=callback_data.user_id,
+                page=c.id,
             ).pack(),
         )
 
@@ -426,8 +429,8 @@ async def view_user_tickets(
         return InlineKeyboardButton(
             text=f"{icon} {t.title[:40]}",
             callback_data=TicketAdminCallback(
-                action="noop",
-                ticket_id=callback_data.ticket_id,
+                action="view",
+                ticket_id=t.id,
                 user_id=callback_data.user_id,
             ).pack(),
         )
@@ -471,6 +474,87 @@ async def noop_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+# ── Company detail (from company list) ───────────────────────
+
+
+def _company_format_keyboard(
+    company_id: int,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=i18n.get("btn-view-message"),
+                callback_data=TicketAdminCallback(action="fmt_msg", page=company_id).pack(),
+            )],
+            [InlineKeyboardButton(
+                text=i18n.get("btn-download-md"),
+                callback_data=TicketAdminCallback(action="fmt_md", page=company_id).pack(),
+            )],
+            [InlineKeyboardButton(
+                text=i18n.get("btn-download-txt"),
+                callback_data=TicketAdminCallback(action="fmt_txt", page=company_id).pack(),
+            )],
+        ]
+    )
+
+
+@router.callback_query(TicketAdminCallback.filter(F.action == "company_detail"))
+async def view_company_detail(
+    callback: CallbackQuery,
+    callback_data: TicketAdminCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    company = await parsing_svc.get_company_with_details(session, callback_data.page)
+    if not company:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+
+    text = parsing_svc.format_company_detail(company, i18n)
+    kb = _company_format_keyboard(company.id, i18n) if company.status == "completed" else None
+    await callback.bot.send_message(callback.message.chat.id, text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(TicketAdminCallback.filter(F.action.in_({"fmt_msg", "fmt_md", "fmt_txt"})))
+async def admin_format_selection(
+    callback: CallbackQuery,
+    callback_data: TicketAdminCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    company_id = callback_data.page
+    company = await parsing_svc.get_company_by_id(session, company_id)
+    if not company:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+
+    agg = await parsing_svc.get_aggregated_result(session, company_id)
+    if not agg:
+        await callback.answer(i18n.get("parsing-no-results"), show_alert=True)
+        return
+
+    locale = user.language_code or "ru"
+    report = parsing_svc.build_report(company, agg, locale=locale)
+    fmt = callback_data.action.removeprefix("fmt_")
+
+    if fmt == "msg":
+        text = report.generate_message()
+        if len(text) > 4000:
+            text = text[:3950] + "\n\n" + i18n.get("parsing-truncated")
+        await callback.bot.send_message(callback.message.chat.id, text)
+    elif fmt in ("md", "txt"):
+        content = report.generate_md() if fmt == "md" else report.generate_txt()
+        doc = parsing_svc.generate_document(
+            content, f"report_{company.vacancy_title}_{company.id}.{fmt}"
+        )
+        await callback.message.answer_document(doc)
+
+    await callback.answer()
+
+
 # ── Ban from channel/inline buttons ──────────────────────────
 
 
@@ -487,10 +571,42 @@ async def ban_prompt(
         ticket_id=callback_data.ticket_id,
         target_user_id=callback_data.user_id,
     )
+    if callback.message.chat.id != user.telegram_id:
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            i18n.get("support-ban-started-channel"),
+        )
     await callback.bot.send_message(
         user.telegram_id,
         i18n.get("support-ban-enter-period"),
+        reply_markup=ban_cancel_keyboard(i18n),
     )
+    await callback.answer()
+
+
+@router.callback_query(TicketAdminCallback.filter(F.action == "cancel_ban"))
+async def cancel_ban(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    was_in_conversation = data.get("from_conversation", False)
+    ticket_id = data.get("ticket_id")
+    target_user_id = data.get("target_user_id")
+
+    if was_in_conversation:
+        await state.set_state(AdminConversation.chatting)
+        await state.update_data(ticket_id=ticket_id, target_user_id=target_user_id)
+        await callback.message.edit_text(i18n.get("support-ban-cancelled"))
+        await callback.message.answer(
+            i18n.get("support-ban-cancelled"),
+            reply_markup=admin_conversation_keyboard(i18n),
+        )
+    else:
+        await state.clear()
+        await callback.message.edit_text(i18n.get("support-ban-cancelled"))
+
     await callback.answer()
 
 
@@ -510,6 +626,11 @@ async def close_prompt(
         ticket_id=callback_data.ticket_id,
         target_user_id=callback_data.user_id,
     )
+    if callback.message.chat.id != user.telegram_id:
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            i18n.get("support-close-started-channel"),
+        )
     await callback.bot.send_message(
         user.telegram_id,
         i18n.get("support-close-enter-result"),
@@ -609,12 +730,18 @@ async def ban_period_entered(
     if raw == "0":
         await state.update_data(ban_until=None, ban_period_label="∞")
         await state.set_state(AdminConversation.ban_reason)
-        await message.answer(i18n.get("support-ban-enter-reason"))
+        await message.answer(
+            i18n.get("support-ban-enter-reason"),
+            reply_markup=ban_cancel_keyboard(i18n),
+        )
         return
 
     match = _PERIOD_RE.match(raw)
     if not match:
-        await message.answer(i18n.get("support-ban-invalid-period"))
+        await message.answer(
+            i18n.get("support-ban-invalid-period"),
+            reply_markup=ban_cancel_keyboard(i18n),
+        )
         return
 
     amount, unit = int(match.group(1)), match.group(2).lower()
@@ -625,7 +752,10 @@ async def ban_period_entered(
     }
     delta = delta_map.get(unit)
     if not delta:
-        await message.answer(i18n.get("support-ban-invalid-period"))
+        await message.answer(
+            i18n.get("support-ban-invalid-period"),
+            reply_markup=ban_cancel_keyboard(i18n),
+        )
         return
 
     ban_until = datetime.now(UTC) + delta
@@ -634,7 +764,10 @@ async def ban_period_entered(
         ban_period_label=raw,
     )
     await state.set_state(AdminConversation.ban_reason)
-    await message.answer(i18n.get("support-ban-enter-reason"))
+    await message.answer(
+        i18n.get("support-ban-enter-reason"),
+        reply_markup=ban_cancel_keyboard(i18n),
+    )
 
 
 @router.message(AdminConversation.ban_reason)
@@ -647,7 +780,10 @@ async def ban_reason_entered(
 ) -> None:
     reason = (message.text or "").strip()
     if not reason:
-        await message.answer(i18n.get("support-ban-enter-reason"))
+        await message.answer(
+            i18n.get("support-ban-enter-reason"),
+            reply_markup=ban_cancel_keyboard(i18n),
+        )
         return
 
     data = await state.get_data()
@@ -703,9 +839,10 @@ async def _conv_show_companies(
         return InlineKeyboardButton(
             text=f"📋 {c.vacancy_title} ({c.status})",
             callback_data=TicketAdminCallback(
-                action="noop",
+                action="company_detail",
                 ticket_id=ticket_id,
                 user_id=target_user_id,
+                page=c.id,
             ).pack(),
         )
 
@@ -747,8 +884,8 @@ async def _conv_show_tickets(
         return InlineKeyboardButton(
             text=f"{icon} {t.title[:40]}",
             callback_data=TicketAdminCallback(
-                action="noop",
-                ticket_id=ticket_id,
+                action="view",
+                ticket_id=t.id,
                 user_id=target_user_id,
             ).pack(),
         )
@@ -871,7 +1008,10 @@ async def admin_conversation_message(
     if action == "ban":
         await state.set_state(AdminConversation.ban_period)
         await state.update_data(from_conversation=True)
-        await message.answer(i18n.get("support-ban-enter-period"), reply_markup=REMOVE_KEYBOARD)
+        await message.answer(
+            i18n.get("support-ban-enter-period"),
+            reply_markup=ban_cancel_keyboard(i18n),
+        )
         return
     if action == "history":
         count = await support_svc.send_message_history(

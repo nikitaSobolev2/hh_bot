@@ -84,6 +84,17 @@ def ticket_detail_keyboard(
                 )
             ]
         )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-close-ticket"),
+                    callback_data=SupportCallback(
+                        action="close_user",
+                        ticket_id=ticket.id,
+                    ).pack(),
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(
@@ -317,32 +328,45 @@ def admin_ticket_detail_keyboard(
             ]
         )
 
-    rows.extend(
+    rows.append(
         [
+            InlineKeyboardButton(
+                text=i18n.get("btn-view-profile"),
+                callback_data=TicketAdminCallback(
+                    action="profile",
+                    ticket_id=tid,
+                    user_id=uid,
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("btn-check-companies"),
+                callback_data=TicketAdminCallback(
+                    action="companies",
+                    ticket_id=tid,
+                    user_id=uid,
+                ).pack(),
+            ),
+        ]
+    )
+    if ticket.status != "closed":
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("btn-view-profile"),
+                    text=i18n.get("btn-close-ticket-admin"),
                     callback_data=TicketAdminCallback(
-                        action="profile",
+                        action="close",
                         ticket_id=tid,
                         user_id=uid,
                     ).pack(),
-                ),
-                InlineKeyboardButton(
-                    text=i18n.get("btn-check-companies"),
-                    callback_data=TicketAdminCallback(
-                        action="companies",
-                        ticket_id=tid,
-                        user_id=uid,
-                    ).pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-back"),
-                    callback_data=TicketFilterCallback(status="", page=0).pack(),
                 )
-            ],
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=TicketFilterCallback(status="", page=0).pack(),
+            )
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -372,6 +396,22 @@ def admin_conversation_keyboard(i18n: I18nContext) -> ReplyKeyboardMarkup:
             ],
         ],
         resize_keyboard=True,
+    )
+
+
+# ── Ban flow keyboards ────────────────────────────────────────
+
+
+def ban_cancel_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=TicketAdminCallback(action="cancel_ban").pack(),
+                )
+            ],
+        ]
     )
 
 

@@ -424,13 +424,13 @@ support-no-messages = No messages in this ticket.
 
 support-taken =
     <b>📌 Ticket #{ $id } taken into work</b>
-support-taken-popup = Ticket #{ $id } taken into work
 
     <b>Subject:</b> { $title }
     <b>Description:</b>
     { $description }
 
     <b>Status:</b> 🔄 In Progress
+support-taken-popup = Ticket #{ $id } taken into work
 support-already-taken = Ticket is already taken.
 support-close-enter-result = Enter the result / closing comment for this ticket:
 support-close-select-status = Select the closing status:
@@ -444,6 +444,9 @@ support-ban-applied =
     <b>Period:</b> { $period }
     <b>Reason:</b> { $reason }
 support-ban-invalid-period = Invalid format. Use: 1d, 7d, 30d, 1h or 0.
+support-ban-cancelled = ❌ Ban cancelled.
+support-ban-started-channel = 🚫 Admin started ban process for the user.
+support-close-started-channel = 🔒 Admin started closing the ticket.
 support-notifications-soon = 🔔 Notifications — coming soon.
 support-companies-empty = User has no companies.
 support-tickets-empty = User has no tickets.

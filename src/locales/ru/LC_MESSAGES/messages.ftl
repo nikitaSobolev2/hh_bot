@@ -424,13 +424,13 @@ support-no-messages = Нет сообщений в этом тикете.
 
 support-taken =
     <b>📌 Тикет #{ $id } взят в работу</b>
-support-taken-popup = Тикет #{ $id } взят в работу
 
     <b>Тема:</b> { $title }
     <b>Описание:</b>
     { $description }
 
     <b>Статус:</b> 🔄 В работе
+support-taken-popup = Тикет #{ $id } взят в работу
 support-already-taken = Тикет уже взят в работу.
 support-close-enter-result = Введите результат / комментарий к закрытию тикета:
 support-close-select-status = Выберите статус закрытия:
@@ -444,6 +444,9 @@ support-ban-applied =
     <b>Срок:</b> { $period }
     <b>Причина:</b> { $reason }
 support-ban-invalid-period = Некорректный формат. Используйте: 1d, 7d, 30d, 1h или 0.
+support-ban-cancelled = ❌ Бан отменён.
+support-ban-started-channel = 🚫 Админ начал процесс бана для пользователя.
+support-close-started-channel = 🔒 Админ начал закрытие тикета.
 support-notifications-soon = 🔔 Уведомления — будет реализовано позже.
 support-companies-empty = У пользователя нет компаний.
 support-tickets-empty = У пользователя нет тикетов.
