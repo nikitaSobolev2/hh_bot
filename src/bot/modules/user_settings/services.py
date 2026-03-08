@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 
-from src.core.i18n import I18nContext
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.i18n import I18nContext
 from src.models.blacklist import VacancyBlacklist
 from src.repositories.blacklist import BlacklistRepository
 from src.repositories.user import UserRepository

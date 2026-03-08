@@ -1,7 +1,6 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import AdminFilter
@@ -22,6 +21,7 @@ from src.bot.modules.admin.states import (
     AdminSettingForm,
     AdminUserSearchForm,
 )
+from src.core.i18n import I18nContext
 from src.models.user import User
 
 router = Router(name="admin")
@@ -101,9 +101,7 @@ async def user_list_page(
 
 
 @router.callback_query(AdminUserCallback.filter(F.action == "search"))
-async def user_search_prompt(
-    callback: CallbackQuery, state: FSMContext, i18n: I18nContext
-) -> None:
+async def user_search_prompt(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
     await callback.message.edit_text(
         i18n.get("admin-search-prompt"),
         reply_markup=back_to_menu_keyboard(i18n),
@@ -299,9 +297,7 @@ async def admin_setting_actions(
 
     elif action == "toggle":
         new_val = await admin_service.toggle_setting(session, callback_data.key, user.id)
-        await callback.answer(
-            i18n.get("admin-setting-set", value=str(new_val)), show_alert=True
-        )
+        await callback.answer(i18n.get("admin-setting-set", value=str(new_val)), show_alert=True)
 
         meta = admin_service.find_setting_meta(callback_data.key)
         if meta:

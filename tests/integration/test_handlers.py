@@ -4,6 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.core.i18n import I18nContext
+
+
+def _make_i18n() -> I18nContext:
+    return I18nContext(locale="en")
+
 
 class TestStartHandler:
     @pytest.mark.asyncio
@@ -14,7 +20,7 @@ class TestStartHandler:
         user = MagicMock()
         user.is_admin = False
 
-        await cmd_start(message, user)
+        await cmd_start(message, user, _make_i18n())
 
         message.answer.assert_called_once()
         call_args = message.answer.call_args
@@ -28,7 +34,7 @@ class TestStartHandler:
         user = MagicMock()
         user.is_admin = True
 
-        await cmd_start(message, user)
+        await cmd_start(message, user, _make_i18n())
 
         call_args = message.answer.call_args
         kb = call_args.kwargs.get("reply_markup")
@@ -44,7 +50,7 @@ class TestStartHandler:
         user = MagicMock()
         user.is_admin = False
 
-        await cmd_start(message, user)
+        await cmd_start(message, user, _make_i18n())
 
         call_args = message.answer.call_args
         kb = call_args.kwargs.get("reply_markup")
@@ -69,7 +75,7 @@ class TestProfileHandler:
         user.language_code = "en"
         user.created_at.strftime.return_value = "2024-01-01"
 
-        await show_profile(callback, user)
+        await show_profile(callback, user, _make_i18n())
 
         call_args = callback.message.edit_text.call_args
         text = call_args.args[0]

@@ -1,9 +1,9 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from src.core.i18n import I18nContext
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.keyboards.pagination import build_paginated_keyboard
 from src.bot.modules.admin.callbacks import AdminCallback, AdminSettingCallback, AdminUserCallback
+from src.core.i18n import I18nContext
 from src.models.user import User
 
 MANAGED_SETTINGS = [

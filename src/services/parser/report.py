@@ -43,7 +43,7 @@ class ReportGenerator:
                 1,
             ):
                 pct = f"{count / total * 100:.1f}%" if total else "—"
-                lines.append(f"  {rank}. {kw} — {count} ({pct})")
+                lines.append(f"  {rank}. <code>{kw}</code> — {count} ({pct})")
 
         if self._skills:
             lines.append(f"\n{self._t('report-top-skills', n=str(top_n))}")
@@ -53,7 +53,7 @@ class ReportGenerator:
                 1,
             ):
                 pct = f"{count / total * 100:.1f}%" if total else "—"
-                lines.append(f"  {rank}. {sk} — {count} ({pct})")
+                lines.append(f"  {rank}. <code>{sk}</code> — {count} ({pct})")
 
         if self._key_phrases:
             style = self._key_phrases_style or "default"

@@ -182,6 +182,9 @@ keyphrase-count-prompt =
 keyphrase-select-lang = Выберите язык вывода:
 keyphrase-enter-number = Введите число от 1 до 30:
 keyphrase-max-30 = Максимум 30 фраз. Введите число поменьше:
+keyphrase-max-8 = Максимум 8 фраз на компанию. Введите число поменьше:
+keyphrase-per-company-count =
+    Сколько фраз сгенерировать на каждую компанию? (1-8):
 keyphrase-select-style = Выберите стиль:
 keyphrase-no-keywords = Нет ключевых слов. Сначала запустите парсинг.
 keyphrase-generating =
@@ -189,6 +192,22 @@ keyphrase-generating =
     Результат появится в ближайшее время.
 keyphrase-header = <b>✨ Ключевые фразы для { $title }</b>
 keyphrase-style-label = Стиль: { $style } | { $lang }
+
+# ── Work experience ─────────────────────────────────────
+work-exp-prompt =
+    Укажите предыдущий опыт работы (компании и стек).
+    Это поможет создать более релевантные фразы.
+work-exp-enter-name = Введите название компании:
+work-exp-enter-stack =
+    Введите стек технологий для <b>{ $company }</b>
+    (через запятую, например: Python, Django, PostgreSQL):
+work-exp-name-invalid = Название компании не может быть пустым (макс. 255 символов).
+work-exp-stack-invalid = Стек технологий не может быть пустым.
+work-exp-max-reached = Максимум 6 компаний. Удалите одну, чтобы добавить новую.
+btn-add-company = ➕ Добавить компанию
+btn-remove = Удалить
+btn-skip = ⏭ Пропустить
+btn-continue = ▶️ Продолжить
 
 # ── Key phrases styles ──────────────────────────────────
 style-formal = формальный / деловой

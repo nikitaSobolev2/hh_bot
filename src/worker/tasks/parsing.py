@@ -109,7 +109,11 @@ def run_parsing_company(
 ) -> dict:
     return run_async(
         lambda sf: _run_parsing_company_async(
-            sf, self, parsing_company_id, user_id, include_blacklisted,
+            sf,
+            self,
+            parsing_company_id,
+            user_id,
+            include_blacklisted,
             telegram_chat_id,
         )
     )
@@ -157,7 +161,9 @@ async def _run_parsing_company_async(
             return {"status": "already_completed", "task_id": existing.id}
 
     bot, locale = await _init_bot_and_locale(
-        session_factory, user_id, telegram_chat_id,
+        session_factory,
+        user_id,
+        telegram_chat_id,
     )
     try:
         async with session_factory() as session:
@@ -205,7 +211,10 @@ async def _run_parsing_company_async(
 
         try:
             await _notify_user(
-                session_factory, user_id, parsing_company_id, bot=bot,
+                session_factory,
+                user_id,
+                parsing_company_id,
+                bot=bot,
             )
         except Exception as exc:
             logger.error("Failed to notify user", error=str(exc))
@@ -442,7 +451,11 @@ async def _notify_user(
         text = get_text("parsing-completed", locale, id=str(parsing_company_id))
         kb = format_choice_keyboard(parsing_company_id, locale=locale)
         await _send_with_retry(
-            bot, user.telegram_id, text=text, parse_mode="HTML", reply_markup=kb,
+            bot,
+            user.telegram_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=kb,
         )
     finally:
         if owns_bot:

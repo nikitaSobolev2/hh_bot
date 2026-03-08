@@ -18,3 +18,10 @@ class KeyPhrasesCallback(CallbackData, prefix="kp"):
     style: str = ""
     count: int = 0
     lang: str = ""
+    mode: str = ""
+
+
+class WorkExperienceCallback(CallbackData, prefix="we"):
+    action: str
+    company_id: int = 0
+    work_exp_id: int = 0

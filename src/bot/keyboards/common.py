@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from src.core.i18n import I18nContext
 
 from src.bot.callbacks.common import MenuCallback
+from src.core.i18n import I18nContext
 
 
 def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:

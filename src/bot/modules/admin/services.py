@@ -1,10 +1,9 @@
 from decimal import Decimal
 
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.admin.keyboards import MANAGED_SETTINGS
-from src.core.i18n import get_text
+from src.core.i18n import I18nContext, get_text
 from src.models.balance import BalanceTransaction
 from src.models.user import User
 from src.repositories.app_settings import AppSettingRepository
@@ -72,7 +71,10 @@ async def toggle_user_ban(session: AsyncSession, user_id: int) -> User | None:
 
 
 async def adjust_balance(
-    session: AsyncSession, target_user_id: int, amount: Decimal, admin_id: int,
+    session: AsyncSession,
+    target_user_id: int,
+    amount: Decimal,
+    admin_id: int,
     locale: str = "ru",
 ) -> User | None:
     repo = UserRepository(session)

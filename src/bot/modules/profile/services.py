@@ -1,6 +1,6 @@
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.blacklist import BlacklistRepository
 from src.repositories.parsing import ParsingCompanyRepository

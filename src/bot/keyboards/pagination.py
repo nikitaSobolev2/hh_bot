@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
 from src.core.i18n import I18nContext
 
 

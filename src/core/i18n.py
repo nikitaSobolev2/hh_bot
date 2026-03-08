@@ -18,9 +18,7 @@ LOCALES_DIR = Path(__file__).resolve().parent.parent / "locales"
 _DEFAULT_LOCALE = "ru"
 _SUPPORTED_LOCALES = ("ru", "en")
 
-_loader = FluentResourceLoader(
-    str(LOCALES_DIR / "{locale}" / "LC_MESSAGES")
-)
+_loader = FluentResourceLoader(str(LOCALES_DIR / "{locale}" / "LC_MESSAGES"))
 
 _localizations: dict[str, FluentLocalization] = {}
 

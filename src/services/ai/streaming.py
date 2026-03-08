@@ -88,7 +88,9 @@ async def _edit_with_retry(
     for attempt in range(_FLOOD_MAX_RETRIES):
         try:
             await bot.edit_message_text(
-                text=text, chat_id=chat_id, message_id=message_id,
+                text=text,
+                chat_id=chat_id,
+                message_id=message_id,
                 parse_mode=parse_mode,
             )
             return
@@ -216,7 +218,11 @@ async def _stream_via_edits(
 
     with contextlib.suppress(TelegramBadRequest):
         await _edit_with_retry(
-            bot, chat_id, message_id, text=final_text, parse_mode=parse_mode,
+            bot,
+            chat_id,
+            message_id,
+            text=final_text,
+            parse_mode=parse_mode,
         )
 
     logger.info("Edit streaming complete", edits=edit_count, chars=len(accumulated))

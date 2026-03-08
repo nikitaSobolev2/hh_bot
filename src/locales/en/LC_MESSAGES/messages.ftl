@@ -182,6 +182,9 @@ keyphrase-count-prompt =
 keyphrase-select-lang = Select output language:
 keyphrase-enter-number = Please enter a number from 1 to 30:
 keyphrase-max-30 = Maximum is 30 phrases. Please enter a smaller number:
+keyphrase-max-8 = Maximum is 8 phrases per company. Please enter a smaller number:
+keyphrase-per-company-count =
+    How many phrases per company? (1-8):
 keyphrase-select-style = Select a style:
 keyphrase-no-keywords = No keywords available. Run parsing first.
 keyphrase-generating =
@@ -189,6 +192,22 @@ keyphrase-generating =
     You will see the result appear shortly.
 keyphrase-header = <b>✨ Key Phrases for { $title }</b>
 keyphrase-style-label = Style: { $style } | { $lang }
+
+# ── Work experience ─────────────────────────────────────
+work-exp-prompt =
+    Add your previous work experience (companies and tech stack).
+    This helps generate more relevant phrases.
+work-exp-enter-name = Enter the company name:
+work-exp-enter-stack =
+    Enter the tech stack for <b>{ $company }</b>
+    (comma-separated, e.g. Python, Django, PostgreSQL):
+work-exp-name-invalid = Company name cannot be empty (max 255 characters).
+work-exp-stack-invalid = Tech stack cannot be empty.
+work-exp-max-reached = Maximum 6 companies. Remove one to add another.
+btn-add-company = ➕ Add Company
+btn-remove = Remove
+btn-skip = ⏭ Skip
+btn-continue = ▶️ Continue
 
 # ── Key phrases styles ──────────────────────────────────
 style-formal = formal / business

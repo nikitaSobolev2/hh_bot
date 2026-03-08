@@ -9,3 +9,6 @@ class ParsingForm(StatesGroup):
     blacklist_check = State()
     confirm = State()
     key_phrases_count = State()
+    work_exp_company_name = State()
+    work_exp_stack = State()
+    key_phrases_per_company_count = State()

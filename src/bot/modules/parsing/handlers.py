@@ -1,7 +1,6 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.callbacks.common import MenuCallback
@@ -11,19 +10,25 @@ from src.bot.modules.parsing.callbacks import (
     FormatCallback,
     KeyPhrasesCallback,
     ParsingCallback,
+    WorkExperienceCallback,
 )
 from src.bot.modules.parsing.keyboards import (
+    MAX_WORK_EXPERIENCES,
     back_to_company_keyboard,
     blacklist_choice_keyboard,
+    cancel_add_company_keyboard,
     cancel_keyboard,
     count_input_keyboard,
     format_choice_keyboard,
     language_selection_keyboard,
     parsing_list_keyboard,
+    per_company_count_keyboard,
     retry_keyboard,
     style_selection_keyboard,
+    work_experience_keyboard,
 )
 from src.bot.modules.parsing.states import ParsingForm
+from src.core.i18n import I18nContext
 from src.models.user import User
 
 router = Router(name="parsing")
@@ -197,7 +202,10 @@ async def _confirm_and_launch(
     )
 
     parsing_service.dispatch_parsing_task(
-        company_id, user.id, include_blacklisted, telegram_chat_id=message.chat.id,
+        company_id,
+        user.id,
+        include_blacklisted,
+        telegram_chat_id=message.chat.id,
     )
 
     text = parsing_service.format_confirmation(data, include_blacklisted, i18n)
@@ -247,7 +255,10 @@ async def parsing_retry(
         return
 
     new_company_id = await parsing_service.clone_and_dispatch(
-        session, company.id, user.id, telegram_chat_id=callback.message.chat.id,
+        session,
+        company.id,
+        user.id,
+        telegram_chat_id=callback.message.chat.id,
     )
 
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
@@ -290,7 +301,9 @@ async def format_selection(
         text = report.generate_message()
         if len(text) > 4000:
             text = text[:3950] + "\n\n" + i18n.get("parsing-truncated")
-        await callback.message.edit_text(text, reply_markup=back_to_company_keyboard(callback_data.company_id, i18n))
+        await callback.message.edit_text(
+            text, reply_markup=back_to_company_keyboard(callback_data.company_id, i18n)
+        )
 
     elif fmt in ("md", "txt"):
         content = report.generate_md() if fmt == "md" else report.generate_txt()
@@ -304,13 +317,155 @@ async def format_selection(
     await callback.answer()
 
 
-# --------------- key phrases streaming ---------------
+# --------------- work experience ---------------
+
+
+async def _show_work_experience_step(
+    message,
+    user: User,
+    company_id: int,
+    session: AsyncSession,
+    i18n: I18nContext,
+    *,
+    edit: bool = True,
+) -> None:
+    experiences = await parsing_service.get_active_work_experiences(session, user.id)
+
+    text = f"{i18n.get('keyphrase-title')}\n\n{i18n.get('work-exp-prompt')}"
+    if experiences:
+        lines = [f"  \u2022 <b>{e.company_name}</b> \u2014 {e.stack}" for e in experiences]
+        text += "\n\n" + "\n".join(lines)
+
+    kb = work_experience_keyboard(company_id, experiences, i18n)
+    if edit:
+        await message.edit_text(text, reply_markup=kb)
+    else:
+        await message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(KeyPhrasesCallback.filter(F.action == "start"))
 async def key_phrases_start(
     callback: CallbackQuery,
     callback_data: KeyPhrasesCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await _show_work_experience_step(
+        callback.message, user, callback_data.company_id, session, i18n
+    )
+    await callback.answer()
+
+
+@router.callback_query(WorkExperienceCallback.filter(F.action == "add"))
+async def work_exp_add(
+    callback: CallbackQuery,
+    callback_data: WorkExperienceCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    active_count = await parsing_service.count_active_work_experiences(session, user.id)
+    if active_count >= MAX_WORK_EXPERIENCES:
+        await callback.answer(i18n.get("work-exp-max-reached"), show_alert=True)
+        return
+
+    await state.set_state(ParsingForm.work_exp_company_name)
+    await state.update_data(we_company_id=callback_data.company_id)
+    await callback.message.edit_text(
+        i18n.get("work-exp-enter-name"),
+        reply_markup=cancel_add_company_keyboard(callback_data.company_id, i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.work_exp_company_name)
+async def fsm_work_exp_company_name(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    name = message.text.strip()
+    if not name or len(name) > 255:
+        await message.answer(i18n.get("work-exp-name-invalid"))
+        return
+
+    data = await state.get_data()
+    await state.update_data(we_company_name=name)
+    await state.set_state(ParsingForm.work_exp_stack)
+    await message.answer(
+        i18n.get("work-exp-enter-stack", company=name),
+        reply_markup=cancel_add_company_keyboard(data["we_company_id"], i18n),
+    )
+
+
+@router.message(ParsingForm.work_exp_stack)
+async def fsm_work_exp_stack(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    stack = message.text.strip()
+    if not stack:
+        await message.answer(i18n.get("work-exp-stack-invalid"))
+        return
+
+    data = await state.get_data()
+    company_id = data["we_company_id"]
+    company_name = data["we_company_name"]
+    await state.clear()
+
+    await parsing_service.add_work_experience(session, user.id, company_name, stack)
+
+    await _show_work_experience_step(message, user, company_id, session, i18n, edit=False)
+
+
+@router.callback_query(WorkExperienceCallback.filter(F.action == "cancel_add"))
+async def work_exp_cancel_add(
+    callback: CallbackQuery,
+    callback_data: WorkExperienceCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await _show_work_experience_step(
+        callback.message, user, callback_data.company_id, session, i18n
+    )
+    await callback.answer()
+
+
+@router.callback_query(WorkExperienceCallback.filter(F.action == "remove"))
+async def work_exp_remove(
+    callback: CallbackQuery,
+    callback_data: WorkExperienceCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    deactivated = await parsing_service.deactivate_work_experience(
+        session, callback_data.work_exp_id, user.id
+    )
+    if not deactivated:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+    await _show_work_experience_step(
+        callback.message, user, callback_data.company_id, session, i18n
+    )
+    await callback.answer()
+
+
+@router.callback_query(WorkExperienceCallback.filter(F.action == "skip"))
+async def work_exp_skip(
+    callback: CallbackQuery,
+    callback_data: WorkExperienceCallback,
     user: User,
     state: FSMContext,
     i18n: I18nContext,
@@ -322,6 +477,53 @@ async def key_phrases_start(
         reply_markup=count_input_keyboard(callback_data.company_id, i18n),
     )
     await callback.answer()
+
+
+@router.callback_query(WorkExperienceCallback.filter(F.action == "continue"))
+async def work_exp_continue(
+    callback: CallbackQuery,
+    callback_data: WorkExperienceCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.set_state(ParsingForm.key_phrases_per_company_count)
+    await state.update_data(kp_company_id=callback_data.company_id)
+    await callback.message.edit_text(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-per-company-count')}",
+        reply_markup=per_company_count_keyboard(callback_data.company_id, i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.key_phrases_per_company_count)
+async def fsm_per_company_count(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 1:
+        await message.answer(i18n.get("keyphrase-enter-number"))
+        return
+
+    count = int(text)
+    if count > 8:
+        await message.answer(i18n.get("keyphrase-max-8"))
+        return
+
+    data = await state.get_data()
+    company_id = data["kp_company_id"]
+    await state.clear()
+
+    await message.answer(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-lang')}",
+        reply_markup=language_selection_keyboard(company_id, count, i18n, mode="w"),
+    )
+
+
+# --------------- key phrases: count / language / style / dispatch ---------------
 
 
 @router.callback_query(KeyPhrasesCallback.filter(F.action == "skip_count"))
@@ -374,7 +576,11 @@ async def key_phrases_select_lang(
     await callback.message.edit_text(
         f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-style')}",
         reply_markup=style_selection_keyboard(
-            callback_data.company_id, i18n, callback_data.count, callback_data.lang
+            callback_data.company_id,
+            i18n,
+            callback_data.count,
+            callback_data.lang,
+            mode=callback_data.mode,
         ),
     )
     await callback.answer()
@@ -406,6 +612,7 @@ async def key_phrases_select_style(
         count=callback_data.count,
         lang=callback_data.lang,
         chat_id=callback.message.chat.id,
+        mode=callback_data.mode,
     )
     await callback.message.edit_text(i18n.get("keyphrase-generating"))
     await callback.answer()

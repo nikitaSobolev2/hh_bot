@@ -100,9 +100,7 @@ class ParsingExtractor:
                 )
 
         async with httpx.AsyncClient() as client:
-            results = await asyncio.gather(
-                *[_process_vacancy(client, vac) for vac in vacancies]
-            )
+            results = await asyncio.gather(*[_process_vacancy(client, vac) for vac in vacancies])
 
         keywords_counter: Counter = Counter()
         skills_counter: Counter = Counter()

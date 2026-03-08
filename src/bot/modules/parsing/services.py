@@ -1,13 +1,15 @@
 from aiogram.types import BufferedInputFile
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.i18n import I18nContext
 from src.models.parsing import AggregatedResult, ParsingCompany
+from src.models.work_experience import UserWorkExperience
 from src.repositories.blacklist import BlacklistRepository
 from src.repositories.parsing import (
     AggregatedResultRepository,
     ParsingCompanyRepository,
 )
+from src.repositories.work_experience import WorkExperienceRepository
 from src.services.parser.report import ReportGenerator
 
 
@@ -76,7 +78,10 @@ async def clone_and_dispatch(
         target_count=source.target_count,
     )
     dispatch_parsing_task(
-        new_id, user_id, include_blacklisted=False, telegram_chat_id=telegram_chat_id,
+        new_id,
+        user_id,
+        include_blacklisted=False,
+        telegram_chat_id=telegram_chat_id,
     )
     return new_id
 
@@ -91,9 +96,7 @@ async def get_company_by_id(session: AsyncSession, company_id: int) -> ParsingCo
     return await repo.get_by_id(company_id)
 
 
-def format_company_detail(
-    company: ParsingCompany, i18n: I18nContext
-) -> str:
+def format_company_detail(company: ParsingCompany, i18n: I18nContext) -> str:
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
     processed = str(company.vacancies_processed)
     total = str(company.target_count)
@@ -152,6 +155,40 @@ def format_confirmation(data: dict, include_blacklisted: bool, i18n: I18nContext
     )
 
 
+async def get_active_work_experiences(
+    session: AsyncSession, user_id: int
+) -> list[UserWorkExperience]:
+    repo = WorkExperienceRepository(session)
+    return await repo.get_active_by_user(user_id)
+
+
+async def count_active_work_experiences(session: AsyncSession, user_id: int) -> int:
+    repo = WorkExperienceRepository(session)
+    return await repo.count_active_by_user(user_id)
+
+
+async def add_work_experience(
+    session: AsyncSession,
+    user_id: int,
+    company_name: str,
+    stack: str,
+) -> UserWorkExperience:
+    repo = WorkExperienceRepository(session)
+    experience = await repo.create(user_id=user_id, company_name=company_name, stack=stack)
+    await session.commit()
+    return experience
+
+
+async def deactivate_work_experience(
+    session: AsyncSession, work_exp_id: int, user_id: int
+) -> bool:
+    repo = WorkExperienceRepository(session)
+    deactivated = await repo.deactivate(work_exp_id, user_id)
+    if deactivated:
+        await session.commit()
+    return deactivated
+
+
 def dispatch_key_phrases_task(
     company_id: int,
     user_id: int,
@@ -159,9 +196,16 @@ def dispatch_key_phrases_task(
     count: int,
     lang: str,
     chat_id: int,
+    mode: str = "",
 ) -> None:
     from src.worker.tasks.ai import generate_key_phrases_task
 
     generate_key_phrases_task.delay(
-        company_id, user_id, style_key, count, chat_id, lang,
+        company_id,
+        user_id,
+        style_key,
+        count,
+        chat_id,
+        lang,
+        mode,
     )

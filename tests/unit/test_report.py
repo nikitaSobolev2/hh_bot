@@ -1,5 +1,7 @@
 from src.services.parser.report import ReportGenerator
 
+_LOCALE = "en"
+
 
 class TestReportGenerator:
     def setup_method(self):
@@ -10,6 +12,7 @@ class TestReportGenerator:
             vacancies_processed=30,
             key_phrases="• Developed React applications\n• Used TypeScript",
             key_phrases_style="formal",
+            locale=_LOCALE,
         )
 
     def test_generate_message_contains_title(self):
@@ -53,6 +56,7 @@ class TestReportGenerator:
             top_keywords={},
             top_skills={},
             vacancies_processed=0,
+            locale=_LOCALE,
         )
         msg = gen.generate_message()
         assert "Test" in msg
@@ -69,6 +73,7 @@ class TestReportGenerator:
             top_keywords={"Python": 5},
             top_skills={},
             vacancies_processed=10,
+            locale=_LOCALE,
         )
         msg = gen.generate_message()
         assert "Key Phrases" not in msg

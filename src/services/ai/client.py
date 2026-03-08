@@ -10,6 +10,8 @@ from src.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+MAX_DESCRIPTION_LENGTH = 8000
+
 
 class AIClient:
     def __init__(
@@ -32,7 +34,7 @@ class AIClient:
         if not description.strip():
             return []
 
-        truncated = description[:8000]
+        truncated = description[:MAX_DESCRIPTION_LENGTH]
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -77,45 +79,8 @@ class AIClient:
 
     async def generate_key_phrases(
         self,
-        resume_title: str,
-        main_keywords: list[str],
-        secondary_keywords: list[str],
-        style: str,
-        count: int = 10,
-        language: str = "ru",
+        prompt: str,
     ) -> str | None:
-        main_joined = ", ".join(main_keywords)
-        secondary_joined = ", ".join(secondary_keywords)
-        count_instruction = (
-            f"ненумерованный список из ровно {count} должностных обязанностей, "
-            if count > 0
-            else "ненумерованный список не более чем из 30 должностных обязанностей, "
-        )
-        prompt = (
-            f"Ты — опытный карьерный консультант. "
-            f"Составь для резюме на позицию '{resume_title}' "
-            f"{count_instruction}"
-            f"который естественно включает ключевые слова из двух групп.\n\n"
-            f'Основные ключевые слова (каждое должно появиться хотя бы раз): [{main_joined}].\n'
-            f'Дополнительные ключевые слова (используй уместные): [{secondary_joined}].\n\n'
-            f"[ТРЕБОВАНИЯ К КАЧЕСТВУ]\n"
-            f"- Каждый пункт должен описывать конкретную задачу или зону ответственности, "
-            f"а не абстрактное достижение.\n"
-            f"- ЗАПРЕЩЕНО выдумывать цифры, проценты, метрики и статистику. "
-            f"Не пиши 'сократил на 30%', 'ускорил на 45%', 'до 99.9% аптайма' и подобное.\n"
-            f"- Ключевые слова должны быть вплетены в текст естественно. "
-            f"Плохо: 'Оформлял стили с помощью CSS'. "
-            f"Хорошо: 'Вёрстка адаптивных интерфейсов (HTML, CSS, responsive design)'.\n"
-            f"- Пиши разнообразно: чередуй структуру фраз, не начинай каждый пункт одинаково.\n"
-            f"- Пункты должны звучать как реальный опыт специалиста, "
-            f"а не как шаблонная генерация.\n"
-            f"- Допускается объединять несколько связанных ключевых слов в одном пункте.\n\n"
-            f"[ФОРМАТ]\n"
-            f"- Каждый пункт начинай с дефиса (-).\n"
-            f"- Никакого форматирования: без **, *, >, +, номеров.\n"
-            f"- Стиль описания: {style}\n"
-            f"- Язык: {language}"
-        )
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -131,45 +96,8 @@ class AIClient:
 
     async def stream_key_phrases(
         self,
-        resume_title: str,
-        main_keywords: list[str],
-        secondary_keywords: list[str],
-        style: str,
-        count: int = 10,
-        language: str = "ru",
+        prompt: str,
     ) -> AsyncGenerator[str, None]:
-        main_joined = ", ".join(main_keywords)
-        secondary_joined = ", ".join(secondary_keywords)
-        count_instruction = (
-            f"ненумерованный список из ровно {count} должностных обязанностей, "
-            if count > 0
-            else "ненумерованный список не более чем из 30 должностных обязанностей, "
-        )
-        prompt = (
-            f"Ты — опытный карьерный консультант. "
-            f"Составь для резюме на позицию '{resume_title}' "
-            f"{count_instruction}"
-            f"который естественно включает ключевые слова из двух групп.\n\n"
-            f'Основные ключевые слова (каждое должно появиться хотя бы раз): [{main_joined}].\n'
-            f'Дополнительные ключевые слова (используй уместные): [{secondary_joined}].\n\n'
-            f"[ТРЕБОВАНИЯ К КАЧЕСТВУ]\n"
-            f"- Каждый пункт должен описывать конкретную задачу или зону ответственности, "
-            f"а не абстрактное достижение.\n"
-            f"- ЗАПРЕЩЕНО выдумывать цифры, проценты, метрики и статистику. "
-            f"Не пиши 'сократил на 30%', 'ускорил на 45%', 'до 99.9% аптайма' и подобное.\n"
-            f"- Ключевые слова должны быть вплетены в текст естественно. "
-            f"Плохо: 'Оформлял стили с помощью CSS'. "
-            f"Хорошо: 'Вёрстка адаптивных интерфейсов (HTML, CSS, responsive design)'.\n"
-            f"- Пиши разнообразно: чередуй структуру фраз, не начинай каждый пункт одинаково.\n"
-            f"- Пункты должны звучать как реальный опыт специалиста, "
-            f"а не как шаблонная генерация.\n"
-            f"- Допускается объединять несколько связанных ключевых слов в одном пункте.\n\n"
-            f"[ФОРМАТ]\n"
-            f"- Каждый пункт начинай с дефиса (-).\n"
-            f"- Никакого форматирования: без **, *, >, +, номеров.\n"
-            f"- Стиль описания: {style}\n"
-            f"- Язык: {language}"
-        )
         chunk_count = 0
         max_chunk_len = 0
         total_chars = 0

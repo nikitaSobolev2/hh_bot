@@ -1,12 +1,12 @@
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.keyboards.common import main_menu_admin_keyboard, main_menu_keyboard
 from src.bot.modules.start.services import process_referral
+from src.core.i18n import I18nContext
 from src.models.user import User
 
 router = Router(name="start")

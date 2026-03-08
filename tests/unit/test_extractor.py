@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.services.ai.client import AIClient
+from src.services.ai.client import AIClient, MAX_DESCRIPTION_LENGTH
 
 
 class TestExtractKeywords:
@@ -52,9 +52,10 @@ class TestExtractKeywords:
             client._client.chat.completions, "create", new_callable=AsyncMock
         ) as mock_create:
             mock_create.return_value = mock_openai_response
-            long_desc = "x" * 10000
+            long_desc = "x" * (MAX_DESCRIPTION_LENGTH + 2000)
             await client.extract_keywords(long_desc)
 
             call_args = mock_create.call_args
             user_content = call_args.kwargs["messages"][1]["content"]
-            assert len(user_content) < 5000
+            assert len(user_content) < len(long_desc)
+            assert len(user_content) <= MAX_DESCRIPTION_LENGTH + 200

@@ -9,8 +9,10 @@ from src.bot.modules.parsing.callbacks import (
     FormatCallback,
     KeyPhrasesCallback,
     ParsingCallback,
+    WorkExperienceCallback,
 )
 from src.models.parsing import ParsingCompany
+from src.models.work_experience import UserWorkExperience
 
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
@@ -23,6 +25,8 @@ _STATUS_ICONS = {
 }
 
 KEY_PHRASES_STYLE_KEYS = ["formal", "results", "brief", "detailed", "expert"]
+
+MAX_WORK_EXPERIENCES = 6
 
 KEY_PHRASES_LANGUAGES = {
     "ru": "🇷🇺 Русский",
@@ -43,6 +47,7 @@ def _t(key: str, i18n: I18nContext | None = None, locale: str = "ru", **kwargs: 
     if i18n is not None:
         return i18n.get(key, **kwargs)
     from src.core.i18n import get_text
+
     return get_text(key, locale, **kwargs)
 
 
@@ -212,7 +217,10 @@ def retry_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
 
 
 def language_selection_keyboard(
-    company_id: int, count: int, i18n: I18nContext
+    company_id: int,
+    count: int,
+    i18n: I18nContext,
+    mode: str = "",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     items = list(KEY_PHRASES_LANGUAGES.items())
@@ -226,6 +234,7 @@ def language_selection_keyboard(
                     action="select_lang",
                     count=count,
                     lang=key,
+                    mode=mode,
                 ).pack(),
             )
             for key, label in pair
@@ -243,7 +252,11 @@ def language_selection_keyboard(
 
 
 def style_selection_keyboard(
-    company_id: int, i18n: I18nContext, count: int = 10, lang: str = "ru"
+    company_id: int,
+    i18n: I18nContext,
+    count: int = 10,
+    lang: str = "ru",
+    mode: str = "",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for key in KEY_PHRASES_STYLE_KEYS:
@@ -258,6 +271,7 @@ def style_selection_keyboard(
                         style=key,
                         count=count,
                         lang=lang,
+                        mode=mode,
                     ).pack(),
                 )
             ]
@@ -271,3 +285,99 @@ def style_selection_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def work_experience_keyboard(
+    company_id: int,
+    experiences: list[UserWorkExperience],
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for exp in experiences:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"\u274c {i18n.get('btn-remove')} {exp.company_name}",
+                    callback_data=WorkExperienceCallback(
+                        action="remove",
+                        company_id=company_id,
+                        work_exp_id=exp.id,
+                    ).pack(),
+                )
+            ]
+        )
+
+    if len(experiences) < MAX_WORK_EXPERIENCES:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-add-company"),
+                    callback_data=WorkExperienceCallback(
+                        action="add", company_id=company_id
+                    ).pack(),
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-skip"),
+                callback_data=WorkExperienceCallback(action="skip", company_id=company_id).pack(),
+            )
+        ]
+    )
+
+    if experiences:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-continue"),
+                    callback_data=WorkExperienceCallback(
+                        action="continue", company_id=company_id
+                    ).pack(),
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=ParsingCallback(action="detail", company_id=company_id).pack(),
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cancel_add_company_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=WorkExperienceCallback(
+                        action="cancel_add", company_id=company_id
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
+def per_company_count_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=WorkExperienceCallback(
+                        action="cancel_add", company_id=company_id
+                    ).pack(),
+                )
+            ],
+        ]
+    )

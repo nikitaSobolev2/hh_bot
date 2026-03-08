@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from src.models.parsing import ParsingCompany
     from src.models.referral import ReferralEvent
     from src.models.role import Role
+    from src.models.work_experience import UserWorkExperience
 
 
 class User(Base):
@@ -49,6 +50,10 @@ class User(Base):
     referral_events: Mapped[list[ReferralEvent]] = relationship(
         back_populates="referrer",
         foreign_keys="ReferralEvent.referrer_id",
+    )
+    work_experiences: Mapped[list[UserWorkExperience]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
     @property

@@ -1,6 +1,5 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery
-from src.core.i18n import I18nContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards.common import back_to_menu_keyboard
@@ -11,6 +10,7 @@ from src.bot.modules.user_settings.keyboards import (
     language_keyboard,
     settings_keyboard,
 )
+from src.core.i18n import I18nContext
 from src.models.user import User
 
 router = Router(name="user_settings")

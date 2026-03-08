@@ -25,20 +25,32 @@ def generate_key_phrases_task(
     keyword_count: int,
     telegram_chat_id: int,
     lang: str,
+    mode: str = "",
 ) -> dict:
     return run_async(
         lambda sf: _generate_key_phrases_async(
-            sf, self, parsing_company_id, user_id, style, keyword_count,
-            telegram_chat_id, lang,
+            sf,
+            self,
+            parsing_company_id,
+            user_id,
+            style,
+            keyword_count,
+            telegram_chat_id,
+            lang,
+            mode,
         )
     )
 
 
 def _build_idempotency_key(
-    parsing_company_id: int, style: str, keyword_count: int, lang: str,
+    parsing_company_id: int,
+    style: str,
+    keyword_count: int,
+    lang: str,
+    mode: str = "",
 ) -> str:
     time_bucket = int(datetime.now(UTC).timestamp()) // 300
-    return f"keyphrase:{parsing_company_id}:{style}:{keyword_count}:{lang}:{time_bucket}"
+    return f"keyphrase:{parsing_company_id}:{style}:{keyword_count}:{lang}:{mode}:{time_bucket}"
 
 
 async def _save_task_record(
@@ -90,12 +102,7 @@ async def _stream_with_fallback(
     bot,
     chat_id: int,
     header: str,
-    vacancy_title: str,
-    main_keywords: list[str],
-    secondary_keywords: list[str],
-    style_label: str,
-    keyword_count: int,
-    lang: str,
+    prompt: str,
 ) -> str:
     from src.services.ai.streaming import _send_with_retry, stream_to_telegram
 
@@ -103,19 +110,15 @@ async def _stream_with_fallback(
         return await stream_to_telegram(
             bot=bot,
             chat_id=chat_id,
-            token_stream=ai.stream_key_phrases(
-                vacancy_title, main_keywords, secondary_keywords,
-                style_label, keyword_count, lang,
-            ),
+            token_stream=ai.stream_key_phrases(prompt),
             initial_text=header,
             parse_mode="HTML",
         )
-    except Exception as stream_exc:
-        logger.warning("Streaming failed, falling back to non-streaming API", error=str(stream_exc))
-        phrases = await ai.generate_key_phrases(
-            vacancy_title, main_keywords, secondary_keywords,
-            style_label, keyword_count, lang,
+    except Exception:
+        logger.warning(
+            "Streaming failed, falling back to non-streaming API",
         )
+        phrases = await ai.generate_key_phrases(prompt)
         if not phrases:
             raise
         final_header = header.replace("\u23f3", "\u2705").replace("...", "")
@@ -124,6 +127,59 @@ async def _stream_with_fallback(
             final_text = final_text[-4000:]
         await _send_with_retry(bot, chat_id, text=final_text, parse_mode="HTML")
         return phrases
+
+
+def _build_prompt(
+    vacancy_title: str,
+    main_keywords: list[str],
+    secondary_keywords: list[str],
+    style_label: str,
+    keyword_count: int,
+    lang: str,
+    mode: str,
+    work_experiences: list | None,
+) -> str:
+    from src.services.ai.prompts import (
+        WorkExperienceEntry,
+        build_key_phrases_prompt,
+        build_per_company_key_phrases_prompt,
+    )
+
+    if mode == "w" and work_experiences:
+        entries = [
+            WorkExperienceEntry(company_name=we["company_name"], stack=we["stack"])
+            for we in work_experiences
+        ]
+        return build_per_company_key_phrases_prompt(
+            resume_title=vacancy_title,
+            main_keywords=main_keywords,
+            secondary_keywords=secondary_keywords,
+            style=style_label,
+            per_company_count=keyword_count,
+            language=lang,
+            work_experiences=entries,
+        )
+
+    return build_key_phrases_prompt(
+        resume_title=vacancy_title,
+        main_keywords=main_keywords,
+        secondary_keywords=secondary_keywords,
+        style=style_label,
+        count=keyword_count,
+        language=lang,
+    )
+
+
+async def _load_work_experiences(
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+) -> list[dict]:
+    from src.repositories.work_experience import WorkExperienceRepository
+
+    async with session_factory() as session:
+        repo = WorkExperienceRepository(session)
+        entries = await repo.get_active_by_user(user_id)
+        return [{"company_name": e.company_name, "stack": e.stack} for e in entries]
 
 
 async def _generate_key_phrases_async(
@@ -135,6 +191,7 @@ async def _generate_key_phrases_async(
     keyword_count: int,
     telegram_chat_id: int,
     lang: str,
+    mode: str = "",
 ) -> dict:
     from aiogram import Bot
     from aiogram.client.default import DefaultBotProperties
@@ -144,7 +201,10 @@ async def _generate_key_phrases_async(
     from src.config import settings as app_settings
     from src.core.i18n import get_text
     from src.repositories.app_settings import AppSettingRepository
-    from src.repositories.parsing import AggregatedResultRepository, ParsingCompanyRepository
+    from src.repositories.parsing import (
+        AggregatedResultRepository,
+        ParsingCompanyRepository,
+    )
     from src.repositories.task import CeleryTaskRepository
     from src.repositories.user import UserRepository
     from src.services.ai.client import AIClient
@@ -160,12 +220,15 @@ async def _generate_key_phrases_async(
 
         cb_threshold = await settings_repo.get_value("cb_keyphrase_failure_threshold", default=5)
         cb_timeout = await settings_repo.get_value("cb_keyphrase_recovery_timeout", default=60)
-        cb.update_config(failure_threshold=int(cb_threshold), recovery_timeout=int(cb_timeout))
+        cb.update_config(
+            failure_threshold=int(cb_threshold),
+            recovery_timeout=int(cb_timeout),
+        )
 
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
-    idempotency_key = _build_idempotency_key(parsing_company_id, style, keyword_count, lang)
+    idempotency_key = _build_idempotency_key(parsing_company_id, style, keyword_count, lang, mode)
 
     async with session_factory() as session:
         task_repo = CeleryTaskRepository(session)
@@ -179,6 +242,10 @@ async def _generate_key_phrases_async(
         user = await user_repo.get_by_id(user_id)
         if user:
             locale = user.language_code or "ru"
+
+    work_experiences: list[dict] | None = None
+    if mode == "w":
+        work_experiences = await _load_work_experiences(session_factory, user_id)
 
     try:
         async with session_factory() as session:
@@ -200,6 +267,17 @@ async def _generate_key_phrases_async(
         style_label = get_text(f"style-{style}", locale)
         lang_label = KEY_PHRASES_LANGUAGES.get(lang, lang)
 
+        prompt = _build_prompt(
+            company.vacancy_title,
+            main_keywords,
+            secondary_keywords,
+            style_label,
+            keyword_count,
+            lang,
+            mode,
+            work_experiences,
+        )
+
         ai = AIClient()
         bot = Bot(
             token=app_settings.bot_token,
@@ -207,15 +285,21 @@ async def _generate_key_phrases_async(
         )
         try:
             header = (
-                get_text("keyphrase-header", locale, title=company.vacancy_title) + "\n"
-                + get_text("keyphrase-style-label", locale, style=style_label, lang=lang_label)
+                get_text(
+                    "keyphrase-header",
+                    locale,
+                    title=company.vacancy_title,
+                )
+                + "\n"
+                + get_text(
+                    "keyphrase-style-label",
+                    locale,
+                    style=style_label,
+                    lang=lang_label,
+                )
                 + "\n\n"
             )
-            phrases = await _stream_with_fallback(
-                ai, bot, telegram_chat_id, header,
-                company.vacancy_title, main_keywords, secondary_keywords,
-                style_label, keyword_count, lang,
-            )
+            phrases = await _stream_with_fallback(ai, bot, telegram_chat_id, header, prompt)
         finally:
             await bot.session.close()
 

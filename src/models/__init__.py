@@ -10,11 +10,13 @@ from src.models.task import (
     CompanyParseKeywordsFromDescriptionTask,
 )
 from src.models.user import User
+from src.models.work_experience import UserWorkExperience
 
 __all__ = [
     "Role",
     "RolePermission",
     "User",
+    "UserWorkExperience",
     "ParsingCompany",
     "ParsedVacancy",
     "AggregatedResult",
