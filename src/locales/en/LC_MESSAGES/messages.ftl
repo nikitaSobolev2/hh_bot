@@ -382,6 +382,7 @@ support-enter-description =
 support-enter-attachments =
     Attach files (photos: webp/png/jpg/jpeg, txt, mp4)
     or press Skip / Done:
+support-session-expired = ⚠️ Session expired. Please create a new ticket.
 support-title-empty = Subject cannot be empty. Please try again:
 support-desc-empty = Description cannot be empty. Please try again:
 support-attachment-saved = ✅ File attached ({ $count })

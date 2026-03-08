@@ -382,6 +382,7 @@ support-enter-description =
 support-enter-attachments =
     Прикрепите файлы (фото: webp/png/jpg/jpeg, txt, mp4)
     или нажмите «Пропустить» / «Готово»:
+support-session-expired = ⚠️ Сессия истекла. Пожалуйста, создайте тикет заново.
 support-title-empty = Тема не может быть пустой. Попробуйте снова:
 support-desc-empty = Описание не может быть пустым. Попробуйте снова:
 support-attachment-saved = ✅ Файл прикреплён ({ $count })

@@ -164,23 +164,32 @@ async def ticket_attachment_received(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    allowed, file_id, file_type, file_name, mime_type = support_svc.is_allowed_attachment(message)
+    if not allowed:
+        await message.answer(
+            i18n.get("support-attachment-invalid"),
+            reply_markup=skip_attachments_keyboard(i18n),
+        )
+        return
+
     data = await state.get_data()
     ticket_id = data.get("ticket_id")
 
     if not ticket_id:
+        title = data.get("title")
+        description = data.get("description")
+        if not title or not description:
+            await state.clear()
+            await message.answer(i18n.get("support-session-expired"))
+            return
         ticket = await support_svc.create_ticket(
             session,
             user_id=user.id,
-            title=data["title"],
-            description=data["description"],
+            title=title,
+            description=description,
         )
         ticket_id = ticket.id
         await state.update_data(ticket_id=ticket_id)
-
-    allowed, file_id, file_type, file_name, mime_type = support_svc.is_allowed_attachment(message)
-    if not allowed:
-        await message.answer(i18n.get("support-attachment-invalid"))
-        return
 
     await support_svc.save_ticket_attachment(
         session,
@@ -210,6 +219,7 @@ async def ticket_attachment_text(
 
 
 @router.callback_query(
+    TicketForm.attachments,
     SupportCallback.filter(F.action.in_({"skip_attach", "done_attach"})),
 )
 async def ticket_finalize(
@@ -223,11 +233,18 @@ async def ticket_finalize(
     ticket_id = data.get("ticket_id")
 
     if not ticket_id:
+        title = data.get("title")
+        description = data.get("description")
+        if not title or not description:
+            await state.clear()
+            await callback.message.edit_text(i18n.get("support-session-expired"))
+            await callback.answer()
+            return
         ticket = await support_svc.create_ticket(
             session,
             user_id=user.id,
-            title=data["title"],
-            description=data["description"],
+            title=title,
+            description=description,
         )
         ticket_id = ticket.id
     else:
