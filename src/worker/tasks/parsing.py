@@ -292,6 +292,8 @@ async def _notify_user(
 
     from src.bot.modules.parsing.keyboards import format_choice_keyboard
 
+    from src.services.ai.streaming import _send_with_retry
+
     bot = Bot(
         token=app_settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -299,6 +301,8 @@ async def _notify_user(
     try:
         text = get_text("parsing-completed", locale, id=str(parsing_company_id))
         kb = format_choice_keyboard(parsing_company_id, locale=locale)
-        await bot.send_message(user.telegram_id, text, reply_markup=kb)
+        await _send_with_retry(
+            bot, user.telegram_id, text=text, parse_mode="HTML", reply_markup=kb,
+        )
     finally:
         await bot.session.close()

@@ -10,7 +10,7 @@ import time
 from collections.abc import AsyncGenerator
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from src.core.logging import get_logger
 
@@ -18,8 +18,8 @@ logger = get_logger(__name__)
 
 _EDIT_INTERVAL_MS = 500
 _EDIT_TOKEN_BATCH = 15
-_DRAFT_INTERVAL_MS = 120
-_DRAFT_TOKEN_BATCH = 6
+_DRAFT_INTERVAL_MS = 200
+_DRAFT_TOKEN_BATCH = 10
 
 
 async def stream_to_telegram(
@@ -53,6 +53,50 @@ async def stream_to_telegram(
         initial_text=initial_text,
         parse_mode=parse_mode,
     )
+
+
+_FLOOD_MAX_RETRIES = 3
+
+
+async def _send_with_retry(
+    bot: Bot,
+    chat_id: int,
+    *,
+    text: str,
+    parse_mode: str | None = None,
+    **kwargs,
+) -> None:
+    for attempt in range(_FLOOD_MAX_RETRIES):
+        try:
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, **kwargs)
+            return
+        except TelegramRetryAfter as exc:
+            if attempt == _FLOOD_MAX_RETRIES - 1:
+                raise
+            logger.warning("send_message flood control, pausing", retry_after=exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
+
+
+async def _edit_with_retry(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    *,
+    text: str,
+    parse_mode: str | None = None,
+) -> None:
+    for attempt in range(_FLOOD_MAX_RETRIES):
+        try:
+            await bot.edit_message_text(
+                text=text, chat_id=chat_id, message_id=message_id,
+                parse_mode=parse_mode,
+            )
+            return
+        except TelegramRetryAfter as exc:
+            if attempt == _FLOOD_MAX_RETRIES - 1:
+                raise
+            logger.warning("edit_message flood control, pausing", retry_after=exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
 
 
 async def _stream_via_drafts(
@@ -91,6 +135,9 @@ async def _stream_via_drafts(
                     parse_mode=parse_mode,
                 )
                 draft_calls += 1
+            except TelegramRetryAfter as exc:
+                logger.warning("Draft flood control, pausing", retry_after=exc.retry_after)
+                await asyncio.sleep(exc.retry_after)
             except TelegramBadRequest as exc:
                 logger.warning("sendMessageDraft failed", error=str(exc))
 
@@ -101,7 +148,7 @@ async def _stream_via_drafts(
     if len(final_text) > 4096:
         final_text = final_text[-4000:]
 
-    await bot.send_message(chat_id=chat_id, text=final_text, parse_mode=parse_mode)
+    await _send_with_retry(bot, chat_id, text=final_text, parse_mode=parse_mode)
 
     logger.info("Draft streaming complete", draft_calls=draft_calls, chars=len(accumulated))
     return accumulated
@@ -148,6 +195,9 @@ async def _stream_via_edits(
                     parse_mode=parse_mode,
                 )
                 edit_count += 1
+            except TelegramRetryAfter as exc:
+                logger.warning("Edit flood control, pausing", retry_after=exc.retry_after)
+                await asyncio.sleep(exc.retry_after)
             except TelegramBadRequest:
                 pass
 
@@ -162,11 +212,8 @@ async def _stream_via_edits(
         final_text = final_text[-3950:]
 
     with contextlib.suppress(TelegramBadRequest):
-        await bot.edit_message_text(
-            text=final_text,
-            chat_id=chat_id,
-            message_id=message_id,
-            parse_mode=parse_mode,
+        await _edit_with_retry(
+            bot, chat_id, message_id, text=final_text, parse_mode=parse_mode,
         )
 
     logger.info("Edit streaming complete", edits=edit_count, chars=len(accumulated))

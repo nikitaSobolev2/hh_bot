@@ -97,7 +97,7 @@ async def _stream_with_fallback(
     keyword_count: int,
     lang: str,
 ) -> str:
-    from src.services.ai.streaming import stream_to_telegram
+    from src.services.ai.streaming import _send_with_retry, stream_to_telegram
 
     try:
         return await stream_to_telegram(
@@ -122,7 +122,7 @@ async def _stream_with_fallback(
         final_text = final_header + phrases
         if len(final_text) > 4096:
             final_text = final_text[-4000:]
-        await bot.send_message(chat_id=chat_id, text=final_text, parse_mode="HTML")
+        await _send_with_retry(bot, chat_id, text=final_text, parse_mode="HTML")
         return phrases
 
 
