@@ -18,13 +18,31 @@ _PROGRESS_BAR_WIDTH = 20
 _PROGRESS_THROTTLE_MS = 500
 
 _PROGRESS_LABELS: dict[str, dict[str, str]] = {
-    "ru": {"title": "Обработка вакансий", "vacancies": "вакансий", "of": "из"},
-    "en": {"title": "Processing vacancies", "vacancies": "vacancies", "of": "of"},
+    "ru": {
+        "title": "Обработка вакансий",
+        "vacancies": "вакансий",
+        "scraping": "Парсинг",
+        "keywords": "Ключевые слова",
+    },
+    "en": {
+        "title": "Processing vacancies",
+        "vacancies": "vacancies",
+        "scraping": "Scraping",
+        "keywords": "Keywords",
+    },
 }
 
 
+def _bar(current: int, total: int) -> str:
+    """Render a single progress bar segment: ``<code>██░░</code> 50%``."""
+    pct = round(current / total * 100) if total else 0
+    filled = round(_PROGRESS_BAR_WIDTH * current / total) if total else 0
+    blocks = "\u2588" * filled + "\u2591" * (_PROGRESS_BAR_WIDTH - filled)
+    return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{current}/{total}</i>"
+
+
 class _ProgressTracker:
-    """Sends live progress bar updates to Telegram via ``send_message_draft``."""
+    """Sends live dual-progress-bar updates to Telegram via ``send_message_draft``."""
 
     def __init__(
         self,
@@ -43,22 +61,37 @@ class _ProgressTracker:
         self._target_count = target_count
         self._keyword_filter = keyword_filter
         self._labels = _PROGRESS_LABELS.get(locale, _PROGRESS_LABELS["ru"])
+        self._scraped = 0
+        self._keywords = 0
+        self._total = 0
         self._last_send: float = 0.0
         self._lock = asyncio.Lock()
 
-    async def update(self, current: int, total: int) -> None:
+    async def update_scraped(self, current: int, total: int) -> None:
+        async with self._lock:
+            self._scraped = current
+            self._total = total
+        await self._send_draft(is_last=False)
+
+    async def update_keywords(self, current: int, total: int) -> None:
+        is_last = current >= total
+        async with self._lock:
+            self._keywords = current
+            self._total = total
+        await self._send_draft(is_last=is_last)
+
+    async def _send_draft(self, *, is_last: bool) -> None:
         from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
         now = time.monotonic()
-        is_last = current >= total
-
         async with self._lock:
             elapsed_ms = (now - self._last_send) * 1000
             if elapsed_ms < _PROGRESS_THROTTLE_MS and not is_last:
                 return
             self._last_send = time.monotonic()
+            scraped, keywords, total = self._scraped, self._keywords, self._total
 
-        text = self._build_text(current, total)
+        text = self._build_text(scraped, keywords, total)
         try:
             await self._bot.send_message_draft(
                 chat_id=self._chat_id,
@@ -72,11 +105,7 @@ class _ProgressTracker:
         except TelegramBadRequest as exc:
             logger.warning("Progress draft failed", error=str(exc))
 
-    def _build_text(self, current: int, total: int) -> str:
-        pct = round(current / total * 100) if total else 0
-        filled = round(_PROGRESS_BAR_WIDTH * current / total) if total else 0
-        bar = "\u2588" * filled + "\u2591" * (_PROGRESS_BAR_WIDTH - filled)
-
+    def _build_text(self, scraped: int, keywords: int, total: int) -> str:
         lb = self._labels
         lines = [
             f"<b>\u23f3 {lb['title']}</b>",
@@ -88,8 +117,11 @@ class _ProgressTracker:
             lines.append(f"<b>\U0001f50e</b> {self._keyword_filter}")
         lines += [
             "",
-            f"<code>{bar}</code>  <b>{pct}%</b>",
-            f"<i>{current} {lb['of']} {total}</i>",
+            f"\U0001f310 {lb['scraping']}",
+            _bar(scraped, total),
+            "",
+            f"\U0001f9e0 {lb['keywords']}",
+            _bar(keywords, total),
         ]
         return "\n".join(lines)
 
@@ -185,10 +217,14 @@ async def _run_parsing_company_async(
 
         tracker = _make_tracker(bot, telegram_chat_id, company, locale)
 
+        async def _on_page_scraped(current: int, total: int) -> None:
+            if tracker:
+                await tracker.update_scraped(current, total)
+
         async def _on_vacancy_processed(current: int, total: int) -> None:
             await _report_progress(session_factory, parsing_company_id, current, total)
             if tracker:
-                await tracker.update(current, total)
+                await tracker.update_keywords(current, total)
 
         extractor = ParsingExtractor()
         result = await extractor.run_pipeline(
@@ -196,6 +232,7 @@ async def _run_parsing_company_async(
             keyword_filter=company.keyword_filter,
             target_count=company.target_count,
             blacklisted_ids=blacklisted_ids,
+            on_page_scraped=_on_page_scraped,
             on_vacancy_processed=_on_vacancy_processed,
         )
 

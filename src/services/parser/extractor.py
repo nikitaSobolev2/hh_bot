@@ -12,7 +12,7 @@ from src.services.parser.scraper import HHScraper
 
 logger = get_logger(__name__)
 
-OnVacancyProcessed = Callable[[int, int], Awaitable[None]]
+OnProgressCallback = Callable[[int, int], Awaitable[None]]
 
 _DEFAULT_CONCURRENCY = 15
 _AI_CONCURRENCY = 3
@@ -36,7 +36,8 @@ class ParsingExtractor:
         target_count: int,
         *,
         blacklisted_ids: set[str] | None = None,
-        on_vacancy_processed: OnVacancyProcessed | None = None,
+        on_page_scraped: OnProgressCallback | None = None,
+        on_vacancy_processed: OnProgressCallback | None = None,
         concurrency: int = _DEFAULT_CONCURRENCY,
         ai_concurrency: int = _AI_CONCURRENCY,
     ) -> dict:
@@ -54,8 +55,11 @@ class ParsingExtractor:
         total = len(vacancies)
         sem = asyncio.Semaphore(concurrency)
         ai_sem = asyncio.Semaphore(ai_concurrency)
-        lock = asyncio.Lock()
-        completed = [0]
+
+        scrape_lock = asyncio.Lock()
+        scraped_count = [0]
+        kw_lock = asyncio.Lock()
+        kw_count = [0]
 
         async def _process_vacancy(
             client: httpx.AsyncClient,
@@ -67,14 +71,21 @@ class ParsingExtractor:
                     vac["url"],
                 )
 
+                async with scrape_lock:
+                    scraped_count[0] += 1
+                    scrape_current = scraped_count[0]
+
+                if on_page_scraped:
+                    await on_page_scraped(scrape_current, total)
+
                 ai_keywords: list[str] = []
                 if description:
                     async with ai_sem:
                         ai_keywords = await self._ai.extract_keywords(description)
 
-                async with lock:
-                    completed[0] += 1
-                    current = completed[0]
+                async with kw_lock:
+                    kw_count[0] += 1
+                    current = kw_count[0]
 
                 logger.info(
                     "Vacancy processed",
