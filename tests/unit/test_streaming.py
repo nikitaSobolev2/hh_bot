@@ -36,7 +36,10 @@ class TestStreamToTelegram:
     async def test_single_chunk_sends_complete_message(self):
         bot = _make_bot()
         result = await stream_to_telegram(
-            bot, 123, _async_gen("full response"), initial_text="Header: ",
+            bot,
+            123,
+            _async_gen("full response"),
+            initial_text="Header: ",
         )
 
         assert result == "full response"
@@ -61,7 +64,9 @@ class TestStreamToTelegram:
             mock_time.monotonic = advancing_monotonic
 
             result = await stream_to_telegram(
-                bot, 123, _async_gen("chunk1", "chunk2", "chunk3"),
+                bot,
+                123,
+                _async_gen("chunk1", "chunk2", "chunk3"),
             )
 
         assert result == "chunk1chunk2chunk3"
@@ -76,7 +81,9 @@ class TestStreamToTelegram:
             mock_time.monotonic = MagicMock(side_effect=[float(i) for i in range(20)])
 
             await stream_to_telegram(
-                bot, 123, _async_gen("aaa", "bbb", "ccc"),
+                bot,
+                123,
+                _async_gen("aaa", "bbb", "ccc"),
                 initial_text="H: ",
             )
 
@@ -95,7 +102,9 @@ class TestStreamToTelegram:
     async def test_draft_flood_control_sleeps_and_continues(self):
         bot = _make_bot()
         retry_exc = TelegramRetryAfter(
-            method=MagicMock(), message="Flood control", retry_after=2,
+            method=MagicMock(),
+            message="Flood control",
+            retry_after=2,
         )
         bot.send_message_draft.side_effect = [retry_exc, None, None]
 
@@ -103,7 +112,9 @@ class TestStreamToTelegram:
             mock_time.monotonic = MagicMock(side_effect=[float(i) for i in range(20)])
             with patch("src.services.ai.streaming.asyncio.sleep", new_callable=AsyncMock):
                 result = await stream_to_telegram(
-                    bot, 123, _async_gen("a", "b", "c"),
+                    bot,
+                    123,
+                    _async_gen("a", "b", "c"),
                 )
 
         assert result == "abc"
@@ -112,7 +123,9 @@ class TestStreamToTelegram:
     async def test_header_hourglass_replaced_with_checkmark(self):
         bot = _make_bot()
         await stream_to_telegram(
-            bot, 123, _async_gen("done"),
+            bot,
+            123,
+            _async_gen("done"),
             initial_text="\u23f3 Generating...",
         )
 
@@ -125,7 +138,10 @@ class TestStreamToTelegram:
     async def test_parse_mode_forwarded(self):
         bot = _make_bot()
         await stream_to_telegram(
-            bot, 42, _async_gen("text"), parse_mode="HTML",
+            bot,
+            42,
+            _async_gen("text"),
+            parse_mode="HTML",
         )
 
         call_kwargs = bot.send_message.call_args.kwargs

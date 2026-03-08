@@ -31,6 +31,12 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                     callback_data=MenuCallback(action="settings").pack(),
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-support-user"),
+                    callback_data=MenuCallback(action="support").pack(),
+                )
+            ],
         ]
     )
 

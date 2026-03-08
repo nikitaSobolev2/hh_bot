@@ -333,3 +333,134 @@ report-txt-style = Style: { $style }
 report-md-keyword-col = Keyword
 report-md-skill-col = Skill
 report-md-count-col = Count
+
+# ── Support ─────────────────────────────────────────────────
+btn-support-user = 🎫 Support
+btn-new-ticket = ➕ New Ticket
+btn-back-tickets = ◀️ Back to Tickets
+btn-enter-conversation = 💬 Enter Chat
+btn-skip-attachments = ⏭ Skip
+btn-done-attachments = ✅ Done
+btn-quit-conversation = 🚪 Quit Chat
+btn-close-ticket = 🔒 Close Ticket
+btn-close-ticket-admin = 🔒 Close Ticket
+btn-take-into-work = 📌 Take Into Work
+btn-view-profile = 👤 User Profile
+btn-check-companies = 📋 Companies
+btn-check-tickets = 🎫 Tickets
+btn-check-notifications = 🔔 Notifications
+btn-message-history = 📜 Message History
+btn-filter-all = All
+btn-filter-new = New
+btn-filter-progress = In Progress
+btn-filter-closed = Closed
+btn-status-valid = ✅ Valid
+btn-status-invalid = ❌ Invalid
+btn-status-bug = 🐛 Bug
+
+support-title = <b>🎫 Support</b>
+support-subtitle = Your support tickets.
+support-empty = No tickets yet. Create a new one!
+support-ticket-detail =
+    <b>🎫 Ticket #{ $id }</b>
+
+    <b>Subject:</b> { $title }
+    <b>Status:</b> { $status }
+    <b>Created:</b> { $date }
+support-ticket-status-new = 🆕 New
+support-ticket-status-progress = 🔄 In Progress
+support-ticket-status-closed = ✅ Closed
+
+support-enter-title =
+    <b>🎫 New Ticket</b>
+
+    Enter the ticket subject:
+support-enter-description =
+    <b>Subject:</b> { $title }
+
+    Now describe your issue in detail:
+support-enter-attachments =
+    Attach files (photos: webp/png/jpg/jpeg, txt, mp4)
+    or press Skip / Done:
+support-title-empty = Subject cannot be empty. Please try again:
+support-desc-empty = Description cannot be empty. Please try again:
+support-attachment-saved = ✅ File attached ({ $count })
+support-attachment-invalid = ❌ Invalid file type. Allowed: photos (webp/png/jpg/jpeg), txt, mp4.
+support-ticket-created =
+    <b>✅ Ticket #{ $id } created!</b>
+
+    You are in chat mode. Send messages — they will be forwarded to support.
+support-conversation-entered =
+    <b>💬 Chat Mode — Ticket #{ $id }</b>
+
+    Send messages. They will be forwarded to support.
+support-conversation-left = You left the chat mode.
+support-ticket-closed-user = <b>🔒 Ticket #{ $id } closed.</b>
+support-ticket-closed-admin =
+    <b>🔒 Ticket #{ $id } closed</b>
+
+    <b>Result:</b> { $result }
+    <b>Status:</b> { $status }
+support-ticket-already-closed = Ticket is already closed.
+support-message-saved = 💬 Message saved.
+support-no-admin = No admin has taken this ticket yet. Message saved and will be delivered later.
+
+support-channel-new-ticket = 🆕 <b>New Support Ticket</b>
+support-ticket-title-label = Subject
+support-ticket-desc-label = Description
+support-ticket-author = Author
+support-ticket-id-label = Ticket ID
+
+support-admin-reply = Support
+support-user-label = User
+support-admin-label = Admin
+support-user-profile = User Profile
+support-blacklist-count = Blacklist entries
+support-referral-code = Referral code
+support-referred-by = Referred by
+support-ban-history = Ban history
+support-no-messages = No messages in this ticket.
+
+support-taken =
+    <b>📌 Ticket #{ $id } taken into work</b>
+
+    <b>Subject:</b> { $title }
+    <b>Description:</b>
+    { $description }
+
+    <b>Status:</b> 🔄 In Progress
+support-already-taken = Ticket is already taken.
+support-close-enter-result = Enter the result / closing comment for this ticket:
+support-close-select-status = Select the closing status:
+support-ban-enter-period =
+    Enter the ban period (e.g. 1d, 7d, 30d, 1h)
+    or <code>0</code> for permanent:
+support-ban-enter-reason = Enter the ban reason:
+support-ban-applied =
+    <b>🚫 User banned</b>
+
+    <b>Period:</b> { $period }
+    <b>Reason:</b> { $reason }
+support-ban-invalid-period = Invalid format. Use: 1d, 7d, 30d, 1h or 0.
+support-notifications-soon = 🔔 Notifications — coming soon.
+support-companies-empty = User has no companies.
+support-tickets-empty = User has no tickets.
+support-history-sent = 📜 Sent { $count } messages.
+
+support-inbox-title = <b>📬 Support Inbox</b>
+support-inbox-empty = No tickets.
+support-search-prompt =
+    <b>🔍 Search Tickets</b>
+
+    Enter text to search by subject or description:
+support-search-results = <b>🔍 Results for "{ $query }"</b>
+support-search-empty = No tickets found for <b>{ $query }</b>
+
+support-ticket-closed-notify-user =
+    <b>🔒 Your ticket #{ $id } was closed by admin.</b>
+
+    <b>Result:</b> { $result }
+    <b>Status:</b> { $status }
+support-ticket-closed-notify-admin =
+    <b>🔒 Ticket #{ $id } was closed by the user.</b>
+support-unseen-delivered = 📬 Delivered { $count } unseen messages.

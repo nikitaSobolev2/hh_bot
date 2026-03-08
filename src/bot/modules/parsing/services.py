@@ -179,9 +179,7 @@ async def add_work_experience(
     return experience
 
 
-async def deactivate_work_experience(
-    session: AsyncSession, work_exp_id: int, user_id: int
-) -> bool:
+async def deactivate_work_experience(session: AsyncSession, work_exp_id: int, user_id: int) -> bool:
     repo = WorkExperienceRepository(session)
     deactivated = await repo.deactivate(work_exp_id, user_id)
     if deactivated:

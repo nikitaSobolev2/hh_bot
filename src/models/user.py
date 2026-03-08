@@ -12,10 +12,12 @@ from src.db.base import Base
 
 if TYPE_CHECKING:
     from src.models.balance import BalanceTransaction
+    from src.models.ban import UserBan
     from src.models.blacklist import VacancyBlacklist
     from src.models.parsing import ParsingCompany
     from src.models.referral import ReferralEvent
     from src.models.role import Role
+    from src.models.support import SupportTicket
     from src.models.work_experience import UserWorkExperience
 
 
@@ -54,6 +56,12 @@ class User(Base):
     work_experiences: Mapped[list[UserWorkExperience]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+    )
+    support_tickets: Mapped[list[SupportTicket]] = relationship(
+        foreign_keys="SupportTicket.user_id",
+    )
+    bans: Mapped[list[UserBan]] = relationship(
+        foreign_keys="UserBan.user_id",
     )
 
     @property

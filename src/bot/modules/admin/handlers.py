@@ -56,12 +56,9 @@ async def admin_panel_actions(
             reply_markup=settings_list_keyboard(i18n),
         )
     elif action == "support":
-        await callback.message.edit_text(
-            f"{i18n.get('admin-support-title')}\n\n"
-            f"{i18n.get('admin-support-empty')}\n\n"
-            f"{i18n.get('admin-support-description')}",
-            reply_markup=back_to_menu_keyboard(i18n),
-        )
+        from src.bot.modules.support.admin_handlers import show_admin_inbox
+
+        await show_admin_inbox(callback, session, i18n)
     elif action == "back":
         await show_admin_panel(callback, i18n)
 

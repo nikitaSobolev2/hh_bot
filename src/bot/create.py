@@ -38,10 +38,14 @@ def _register_routers(dp: Dispatcher) -> None:
     from src.bot.modules.parsing.handlers import router as parsing_router
     from src.bot.modules.profile.handlers import router as profile_router
     from src.bot.modules.start.handlers import router as start_router
+    from src.bot.modules.support.admin_handlers import router as support_admin_router
+    from src.bot.modules.support.user_handlers import router as support_user_router
     from src.bot.modules.user_settings.handlers import router as user_settings_router
 
     dp.include_router(start_router)
     dp.include_router(profile_router)
     dp.include_router(user_settings_router)
     dp.include_router(parsing_router)
+    dp.include_router(support_user_router)
+    dp.include_router(support_admin_router)
     dp.include_router(admin_router)

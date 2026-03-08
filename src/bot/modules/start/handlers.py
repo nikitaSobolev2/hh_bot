@@ -11,7 +11,7 @@ from src.models.user import User
 
 router = Router(name="start")
 
-_HANDLED_IN_START = {"main", "profile", "settings", "my_parsings", "admin"}
+_HANDLED_IN_START = {"main", "profile", "settings", "my_parsings", "admin", "support"}
 
 
 def _menu_keyboard(user: User, i18n: I18nContext) -> object:
@@ -38,7 +38,11 @@ async def cmd_start(message: Message, user: User, i18n: I18nContext) -> None:
 
 @router.callback_query(MenuCallback.filter(F.action.in_(_HANDLED_IN_START)))
 async def menu_navigation(
-    callback: CallbackQuery, callback_data: MenuCallback, user: User, i18n: I18nContext
+    callback: CallbackQuery,
+    callback_data: MenuCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
 ) -> None:
     action = callback_data.action
 
@@ -69,5 +73,10 @@ async def menu_navigation(
         from src.bot.modules.admin.handlers import show_admin_panel
 
         await show_admin_panel(callback, i18n)
+
+    elif action == "support":
+        from src.bot.modules.support.user_handlers import show_ticket_list
+
+        await show_ticket_list(callback, user, session, i18n)
 
     await callback.answer()

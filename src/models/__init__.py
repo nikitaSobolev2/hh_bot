@@ -1,9 +1,11 @@
 from src.models.app_settings import AppSetting
 from src.models.balance import BalanceTransaction
+from src.models.ban import UserBan
 from src.models.blacklist import VacancyBlacklist
 from src.models.parsing import AggregatedResult, ParsedVacancy, ParsingCompany
 from src.models.referral import ReferralEvent
 from src.models.role import Role, RolePermission
+from src.models.support import SupportAttachment, SupportMessage, SupportTicket
 from src.models.task import (
     BaseCeleryTask,
     CompanyCreateKeyPhrasesTask,
@@ -27,4 +29,8 @@ __all__ = [
     "AppSetting",
     "BalanceTransaction",
     "ReferralEvent",
+    "SupportTicket",
+    "SupportMessage",
+    "SupportAttachment",
+    "UserBan",
 ]

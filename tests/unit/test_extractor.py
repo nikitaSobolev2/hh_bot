@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.services.ai.client import AIClient, MAX_DESCRIPTION_LENGTH
+from src.services.ai.client import MAX_DESCRIPTION_LENGTH, AIClient
 
 
 class TestExtractKeywords:

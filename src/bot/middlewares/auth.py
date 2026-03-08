@@ -65,14 +65,20 @@ class AuthMiddleware(BaseMiddleware):
                     await session.commit()
 
             if user.is_banned:
-                logger.info("Blocked request from banned user", telegram_id=tg_user.id)
-                locale = user.language_code or "ru"
-                msg = get_text("account-suspended", locale)
-                if event.message:
-                    await event.message.answer(msg)
-                elif event.callback_query:
-                    await event.callback_query.answer(msg, show_alert=True)
-                return None
+                from src.bot.modules.support.services import check_ban_expiry
+
+                unbanned = await check_ban_expiry(session, user)
+                if unbanned:
+                    logger.info("Ban expired, user unbanned", telegram_id=tg_user.id)
+                else:
+                    logger.info("Blocked request from banned user", telegram_id=tg_user.id)
+                    locale = user.language_code or "ru"
+                    msg = get_text("account-suspended", locale)
+                    if event.message:
+                        await event.message.answer(msg)
+                    elif event.callback_query:
+                        await event.callback_query.answer(msg, show_alert=True)
+                    return None
 
             data["user"] = user
             data["session"] = session

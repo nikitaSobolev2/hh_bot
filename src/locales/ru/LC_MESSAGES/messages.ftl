@@ -333,3 +333,134 @@ report-txt-style = Стиль: { $style }
 report-md-keyword-col = Ключевое слово
 report-md-skill-col = Навык
 report-md-count-col = Кол-во
+
+# ── Support ─────────────────────────────────────────────────
+btn-support-user = 🎫 Поддержка
+btn-new-ticket = ➕ Новый тикет
+btn-back-tickets = ◀️ К тикетам
+btn-enter-conversation = 💬 Войти в чат
+btn-skip-attachments = ⏭ Пропустить
+btn-done-attachments = ✅ Готово
+btn-quit-conversation = 🚪 Выйти из чата
+btn-close-ticket = 🔒 Закрыть тикет
+btn-close-ticket-admin = 🔒 Закрыть тикет
+btn-take-into-work = 📌 Взять в работу
+btn-view-profile = 👤 Профиль пользователя
+btn-check-companies = 📋 Компании
+btn-check-tickets = 🎫 Тикеты
+btn-check-notifications = 🔔 Уведомления
+btn-message-history = 📜 История сообщений
+btn-filter-all = Все
+btn-filter-new = Новые
+btn-filter-progress = В работе
+btn-filter-closed = Закрытые
+btn-status-valid = ✅ Валидный
+btn-status-invalid = ❌ Невалидный
+btn-status-bug = 🐛 Баг
+
+support-title = <b>🎫 Поддержка</b>
+support-subtitle = Ваши тикеты в поддержку.
+support-empty = Тикетов пока нет. Создайте новый!
+support-ticket-detail =
+    <b>🎫 Тикет #{ $id }</b>
+
+    <b>Тема:</b> { $title }
+    <b>Статус:</b> { $status }
+    <b>Создан:</b> { $date }
+support-ticket-status-new = 🆕 Новый
+support-ticket-status-progress = 🔄 В работе
+support-ticket-status-closed = ✅ Закрыт
+
+support-enter-title =
+    <b>🎫 Новый тикет</b>
+
+    Введите тему тикета:
+support-enter-description =
+    <b>Тема:</b> { $title }
+
+    Теперь опишите вашу проблему подробно:
+support-enter-attachments =
+    Прикрепите файлы (фото: webp/png/jpg/jpeg, txt, mp4)
+    или нажмите «Пропустить» / «Готово»:
+support-title-empty = Тема не может быть пустой. Попробуйте снова:
+support-desc-empty = Описание не может быть пустым. Попробуйте снова:
+support-attachment-saved = ✅ Файл прикреплён ({ $count })
+support-attachment-invalid = ❌ Недопустимый тип файла. Разрешены: фото (webp/png/jpg/jpeg), txt, mp4.
+support-ticket-created =
+    <b>✅ Тикет #{ $id } создан!</b>
+
+    Вы в режиме чата. Отправляйте сообщения — они будут переданы в поддержку.
+support-conversation-entered =
+    <b>💬 Режим чата — Тикет #{ $id }</b>
+
+    Отправляйте сообщения. Они будут переданы в поддержку.
+support-conversation-left = Вы вышли из режима чата.
+support-ticket-closed-user = <b>🔒 Тикет #{ $id } закрыт.</b>
+support-ticket-closed-admin =
+    <b>🔒 Тикет #{ $id } закрыт</b>
+
+    <b>Результат:</b> { $result }
+    <b>Статус:</b> { $status }
+support-ticket-already-closed = Тикет уже закрыт.
+support-message-saved = 💬 Сообщение сохранено.
+support-no-admin = Администратор ещё не взял тикет. Сообщение сохранено и будет доставлено позже.
+
+support-channel-new-ticket = 🆕 <b>Новый тикет в поддержку</b>
+support-ticket-title-label = Тема
+support-ticket-desc-label = Описание
+support-ticket-author = Автор
+support-ticket-id-label = Тикет ID
+
+support-admin-reply = Поддержка
+support-user-label = Пользователь
+support-admin-label = Администратор
+support-user-profile = Профиль пользователя
+support-blacklist-count = Записей в чёрном списке
+support-referral-code = Реферальный код
+support-referred-by = Приведён пользователем
+support-ban-history = История банов
+support-no-messages = Нет сообщений в этом тикете.
+
+support-taken =
+    <b>📌 Тикет #{ $id } взят в работу</b>
+
+    <b>Тема:</b> { $title }
+    <b>Описание:</b>
+    { $description }
+
+    <b>Статус:</b> 🔄 В работе
+support-already-taken = Тикет уже взят в работу.
+support-close-enter-result = Введите результат / комментарий к закрытию тикета:
+support-close-select-status = Выберите статус закрытия:
+support-ban-enter-period =
+    Введите срок бана (например: 1d, 7d, 30d, 1h)
+    или <code>0</code> для перманентного:
+support-ban-enter-reason = Введите причину бана:
+support-ban-applied =
+    <b>🚫 Пользователь заблокирован</b>
+
+    <b>Срок:</b> { $period }
+    <b>Причина:</b> { $reason }
+support-ban-invalid-period = Некорректный формат. Используйте: 1d, 7d, 30d, 1h или 0.
+support-notifications-soon = 🔔 Уведомления — будет реализовано позже.
+support-companies-empty = У пользователя нет компаний.
+support-tickets-empty = У пользователя нет тикетов.
+support-history-sent = 📜 Отправлено { $count } сообщений.
+
+support-inbox-title = <b>📬 Входящие тикеты</b>
+support-inbox-empty = Нет тикетов.
+support-search-prompt =
+    <b>🔍 Поиск тикетов</b>
+
+    Введите текст для поиска по теме или описанию:
+support-search-results = <b>🔍 Результаты для «{ $query }»</b>
+support-search-empty = Тикеты не найдены по запросу <b>{ $query }</b>
+
+support-ticket-closed-notify-user =
+    <b>🔒 Ваш тикет #{ $id } был закрыт администратором.</b>
+
+    <b>Результат:</b> { $result }
+    <b>Статус:</b> { $status }
+support-ticket-closed-notify-admin =
+    <b>🔒 Тикет #{ $id } был закрыт пользователем.</b>
+support-unseen-delivered = 📬 Доставлено { $count } непрочитанных сообщений.
