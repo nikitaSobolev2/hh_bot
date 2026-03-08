@@ -66,3 +66,10 @@ class Settings(BaseSettings):
 
 
 settings = Settings()  # type: ignore[call-arg]
+
+
+def sync_setting_to_runtime(key: str, value: object) -> None:
+    """Push a single DB-managed setting value into the runtime settings object."""
+    if not hasattr(settings, key):
+        return
+    setattr(settings, key, str(value) if not isinstance(value, str) else value)

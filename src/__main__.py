@@ -5,6 +5,20 @@ from src.core.logging import get_logger, setup_logging
 logger = get_logger(__name__)
 
 
+async def _load_db_settings() -> None:
+    from src.bot.modules.admin.keyboards import MANAGED_SETTINGS
+    from src.config import sync_setting_to_runtime
+    from src.db.engine import async_session_factory
+    from src.repositories.app_settings import AppSettingRepository
+
+    async with async_session_factory() as session:
+        repo = AppSettingRepository(session)
+        for key, _, _ in MANAGED_SETTINGS:
+            val = await repo.get_value(key)
+            if val is not None:
+                sync_setting_to_runtime(key, val)
+
+
 async def main() -> None:
     setup_logging()
     logger.info("Starting HH Bot...")
@@ -13,6 +27,8 @@ async def main() -> None:
     from src.db.engine import init_db
 
     await init_db()
+    await _load_db_settings()
+    logger.info("DB-managed settings loaded")
 
     bot = create_bot()
     dp = create_dispatcher()

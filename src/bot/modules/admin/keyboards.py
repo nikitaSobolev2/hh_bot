@@ -11,7 +11,7 @@ MANAGED_SETTINGS = [
     ("openai_api_key", "OpenAI API Key", "text"),
     ("openai_model", "OpenAI Model", "text"),
     ("payment_enabled", "Payment Enabled", "toggle"),
-    ("logging_chat_id", "Logging Chat ID", "text"),
+    ("log_telegram_chat_id", "Logging Chat ID", "text"),
     ("support_chat_id", "Support Chat ID", "text"),
     ("blacklist_days", "Blacklist Duration (days)", "text"),
     ("task_parsing_enabled", "Parsing Task Enabled", "toggle"),

@@ -14,15 +14,19 @@ _CONFIGURED = False
 
 
 class TelegramLogHandler(logging.Handler):
-    """Sends ERROR+ log records to a Telegram chat via the bot."""
+    """Sends ERROR+ log records to a Telegram chat.
 
-    def __init__(self, chat_id: str, bot_token: str) -> None:
+    Reads chat_id from ``settings.log_telegram_chat_id`` on every emit so that
+    values changed at runtime via the admin panel take effect immediately.
+    """
+
+    def __init__(self, bot_token: str) -> None:
         super().__init__(level=logging.ERROR)
-        self._chat_id = chat_id
         self._bot_token = bot_token
 
     def emit(self, record: logging.LogRecord) -> None:
-        if not self._chat_id:
+        chat_id = settings.log_telegram_chat_id
+        if not chat_id:
             return
         try:
             loop = asyncio.get_running_loop()
@@ -30,14 +34,13 @@ class TelegramLogHandler(logging.Handler):
             return
 
         text = self.format(record)
-        truncated = text[:4000]
-        loop.create_task(self._send(truncated))
+        loop.create_task(self._send(chat_id, text[:4000]))
 
-    async def _send(self, text: str) -> None:
+    async def _send(self, chat_id: str, text: str) -> None:
         import httpx
 
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
-        payload = {"chat_id": self._chat_id, "text": f"🔴 LOG\n\n{text}", "parse_mode": ""}
+        payload = {"chat_id": chat_id, "text": f"🔴 LOG\n\n{text}", "parse_mode": ""}
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(url, json=payload)
@@ -83,10 +86,9 @@ def setup_logging() -> None:
     )
     root_logger.addHandler(file_handler)
 
-    if settings.log_telegram_chat_id and settings.bot_token:
-        tg_handler = TelegramLogHandler(settings.log_telegram_chat_id, settings.bot_token)
-        tg_handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s\n%(message)s"))
-        root_logger.addHandler(tg_handler)
+    tg_handler = TelegramLogHandler(settings.bot_token)
+    tg_handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s\n%(message)s"))
+    root_logger.addHandler(tg_handler)
 
     structlog.configure(
         processors=[

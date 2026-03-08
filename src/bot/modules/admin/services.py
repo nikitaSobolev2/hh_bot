@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.admin.keyboards import MANAGED_SETTINGS
+from src.config import sync_setting_to_runtime
 from src.core.i18n import I18nContext, get_text
 from src.models.balance import BalanceTransaction
 from src.models.user import User
@@ -105,6 +106,7 @@ async def toggle_setting(session: AsyncSession, key: str, user_id: int) -> bool:
     new_val = not bool(current)
     await repo.set_value(key, new_val, updated_by_id=user_id)
     await session.commit()
+    sync_setting_to_runtime(key, new_val)
     return new_val
 
 
@@ -121,3 +123,4 @@ async def update_setting(session: AsyncSession, key: str, raw_value: str, user_i
     repo = AppSettingRepository(session)
     await repo.set_value(key, parsed_value, updated_by_id=user_id)
     await session.commit()
+    sync_setting_to_runtime(key, parsed_value)
