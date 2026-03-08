@@ -424,6 +424,7 @@ support-no-messages = Нет сообщений в этом тикете.
 
 support-taken =
     <b>📌 Тикет #{ $id } взят в работу</b>
+support-taken-popup = Тикет #{ $id } взят в работу
 
     <b>Тема:</b> { $title }
     <b>Описание:</b>

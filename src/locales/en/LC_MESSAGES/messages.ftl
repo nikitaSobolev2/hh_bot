@@ -424,6 +424,7 @@ support-no-messages = No messages in this ticket.
 
 support-taken =
     <b>📌 Ticket #{ $id } taken into work</b>
+support-taken-popup = Ticket #{ $id } taken into work
 
     <b>Subject:</b> { $title }
     <b>Description:</b>

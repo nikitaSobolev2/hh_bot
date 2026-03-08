@@ -16,6 +16,7 @@ from src.bot.modules.support.keyboards import (
     user_ticket_list_keyboard,
 )
 from src.bot.modules.support.states import TicketForm, UserConversation
+from src.config import settings
 from src.core.i18n import I18nContext
 from src.models.user import User
 
@@ -286,8 +287,19 @@ async def enter_conversation(
     await state.set_state(UserConversation.chatting)
     await state.update_data(ticket_id=ticket.id)
 
+    status_map = {
+        "new": i18n.get("support-ticket-status-new"),
+        "in_progress": i18n.get("support-ticket-status-progress"),
+        "closed": i18n.get("support-ticket-status-closed"),
+    }
     await callback.message.edit_text(
-        i18n.get("support-conversation-entered", id=str(ticket.id)),
+        i18n.get(
+            "support-ticket-detail",
+            id=str(ticket.id),
+            title=ticket.title,
+            status=status_map.get(ticket.status, ticket.status),
+            date=ticket.created_at.strftime("%Y-%m-%d %H:%M"),
+        ),
     )
     await callback.message.answer(
         i18n.get("support-conversation-entered", id=str(ticket.id)),
@@ -369,17 +381,29 @@ async def _save_and_relay(
                 mime_type=mime_type,
             )
 
+    sender_name = user.first_name or i18n.get("support-user-label")
+
     if ticket.admin_id and ticket.admin:
         try:
             await support_svc.relay_to_admin(
                 message.bot,
                 ticket.admin.telegram_id,
                 message,
-                sender_name=user.first_name or i18n.get("support-user-label"),
+                sender_name=sender_name,
             )
             await support_svc.mark_messages_seen(session, ticket_id, for_admin=True)
         except Exception:
             pass
+
+    channel_id = settings.support_chat_id
+    if channel_id:
+        with contextlib.suppress(Exception):
+            await support_svc.relay_to_admin(
+                message.bot,
+                int(channel_id),
+                message,
+                sender_name=f"{sender_name} (#{ticket_id})",
+            )
 
 
 @router.message(UserConversation.chatting)

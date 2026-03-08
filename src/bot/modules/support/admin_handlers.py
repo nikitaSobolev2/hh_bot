@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.filters.admin import AdminFilter
@@ -24,6 +24,7 @@ from src.bot.modules.support.keyboards import (
     close_status_keyboard,
 )
 from src.bot.modules.support.states import AdminConversation, AdminTicketSearch
+from src.config import settings
 from src.core.i18n import I18nContext, get_text
 from src.models.user import User
 
@@ -248,7 +249,24 @@ async def take_ticket(
         target_user_id=ticket.user_id,
     )
 
-    await callback.answer(i18n.get("support-taken", id=str(ticket.id), title="", description=""))
+    channel_id = settings.support_chat_id
+    if channel_id and ticket.channel_message_id:
+        admin_link = f"https://t.me/{user.username}" if user.username else ""
+        taken_label = i18n.get("support-taken-popup", id=str(ticket.id))
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"👤 @{user.username}" if user.username else taken_label,
+                url=admin_link or f"tg://user?id={user.telegram_id}",
+            )],
+        ])
+        with contextlib.suppress(Exception):
+            await callback.bot.edit_message_reply_markup(
+                chat_id=int(channel_id),
+                message_id=ticket.channel_message_id,
+                reply_markup=kb,
+            )
+
+    await callback.answer(i18n.get("support-taken-popup", id=str(ticket.id)))
 
 
 # ── Enter conversation from inbox detail ─────────────────────
@@ -317,7 +335,7 @@ async def view_user_profile(
         callback_data.user_id,
         locale=user.language_code or "ru",
     )
-    await callback.bot.send_message(user.telegram_id, profile_text)
+    await callback.bot.send_message(callback.message.chat.id, profile_text)
     await callback.answer()
 
 
@@ -336,9 +354,11 @@ async def view_user_companies(
         page,
     )
 
+    chat_id = callback.message.chat.id
+
     if not companies:
         await callback.bot.send_message(
-            user.telegram_id,
+            chat_id,
             i18n.get("support-companies-empty"),
         )
         await callback.answer()
@@ -348,10 +368,9 @@ async def view_user_companies(
         return InlineKeyboardButton(
             text=f"📋 {c.vacancy_title} ({c.status})",
             callback_data=TicketAdminCallback(
-                action="companies",
+                action="noop",
                 ticket_id=callback_data.ticket_id,
                 user_id=callback_data.user_id,
-                page=page,
             ).pack(),
         )
 
@@ -369,8 +388,8 @@ async def view_user_companies(
         i18n=i18n,
     )
     await callback.bot.send_message(
-        user.telegram_id,
-        f"<b>📋 {i18n.get('btn-check-companies')}</b>",
+        chat_id,
+        f"<b>{i18n.get('btn-check-companies')}</b>",
         reply_markup=kb,
     )
     await callback.answer()
@@ -391,9 +410,11 @@ async def view_user_tickets(
         page,
     )
 
+    chat_id = callback.message.chat.id
+
     if not tickets:
         await callback.bot.send_message(
-            user.telegram_id,
+            chat_id,
             i18n.get("support-tickets-empty"),
         )
         await callback.answer()
@@ -405,10 +426,9 @@ async def view_user_tickets(
         return InlineKeyboardButton(
             text=f"{icon} {t.title[:40]}",
             callback_data=TicketAdminCallback(
-                action="tickets",
+                action="noop",
                 ticket_id=callback_data.ticket_id,
                 user_id=callback_data.user_id,
-                page=page,
             ).pack(),
         )
 
@@ -426,8 +446,8 @@ async def view_user_tickets(
         i18n=i18n,
     )
     await callback.bot.send_message(
-        user.telegram_id,
-        f"<b>🎫 {i18n.get('btn-check-tickets')}</b>",
+        chat_id,
+        f"<b>{i18n.get('btn-check-tickets')}</b>",
         reply_markup=kb,
     )
     await callback.answer()
@@ -440,9 +460,14 @@ async def view_notifications(
     i18n: I18nContext,
 ) -> None:
     await callback.bot.send_message(
-        user.telegram_id,
+        callback.message.chat.id,
         i18n.get("support-notifications-soon"),
     )
+    await callback.answer()
+
+
+@router.callback_query(TicketAdminCallback.filter(F.action == "noop"))
+async def noop_callback(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
@@ -488,6 +513,7 @@ async def close_prompt(
     await callback.bot.send_message(
         user.telegram_id,
         i18n.get("support-close-enter-result"),
+        reply_markup=REMOVE_KEYBOARD,
     )
     await callback.answer()
 
@@ -677,10 +703,9 @@ async def _conv_show_companies(
         return InlineKeyboardButton(
             text=f"📋 {c.vacancy_title} ({c.status})",
             callback_data=TicketAdminCallback(
-                action="companies",
+                action="noop",
                 ticket_id=ticket_id,
                 user_id=target_user_id,
-                page=0,
             ).pack(),
         )
 
@@ -697,7 +722,7 @@ async def _conv_show_companies(
         ).pack(),
         i18n=i18n,
     )
-    await message.answer(f"<b>📋 {i18n.get('btn-check-companies')}</b>", reply_markup=kb)
+    await message.answer(f"<b>{i18n.get('btn-check-companies')}</b>", reply_markup=kb)
 
 
 async def _conv_show_tickets(
@@ -722,10 +747,9 @@ async def _conv_show_tickets(
         return InlineKeyboardButton(
             text=f"{icon} {t.title[:40]}",
             callback_data=TicketAdminCallback(
-                action="tickets",
+                action="noop",
                 ticket_id=ticket_id,
                 user_id=target_user_id,
-                page=0,
             ).pack(),
         )
 
@@ -742,7 +766,7 @@ async def _conv_show_tickets(
         ).pack(),
         i18n=i18n,
     )
-    await message.answer(f"<b>🎫 {i18n.get('btn-check-tickets')}</b>", reply_markup=kb)
+    await message.answer(f"<b>{i18n.get('btn-check-tickets')}</b>", reply_markup=kb)
 
 
 async def _conv_save_and_relay(
@@ -825,7 +849,7 @@ async def admin_conversation_message(
         return
     if action == "close":
         await state.set_state(AdminConversation.close_result)
-        await message.answer(i18n.get("support-close-enter-result"))
+        await message.answer(i18n.get("support-close-enter-result"), reply_markup=REMOVE_KEYBOARD)
         return
     if action == "profile":
         profile_text = await support_svc.format_user_profile_support(
@@ -847,7 +871,7 @@ async def admin_conversation_message(
     if action == "ban":
         await state.set_state(AdminConversation.ban_period)
         await state.update_data(from_conversation=True)
-        await message.answer(i18n.get("support-ban-enter-period"))
+        await message.answer(i18n.get("support-ban-enter-period"), reply_markup=REMOVE_KEYBOARD)
         return
     if action == "history":
         count = await support_svc.send_message_history(

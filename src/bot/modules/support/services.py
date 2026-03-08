@@ -218,7 +218,7 @@ def is_allowed_attachment(message: Message) -> tuple[bool, str, str, str | None,
         fname = doc.file_name or ""
         ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
         if ext in ALLOWED_PHOTO_EXTENSIONS:
-            return True, doc.file_id, "photo", fname, doc.mime_type
+            return True, doc.file_id, "document", fname, doc.mime_type
         if ext in ALLOWED_DOC_EXTENSIONS:
             return True, doc.file_id, "document", fname, doc.mime_type
 
