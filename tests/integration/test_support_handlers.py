@@ -209,14 +209,15 @@ class TestAdminConversationKeyboard:
 
 
 class TestCloseStatusKeyboard:
-    def test_has_three_statuses(self, mock_i18n):
+    def test_has_three_statuses_and_cancel(self, mock_i18n):
         kb = close_status_keyboard(mock_i18n)
         buttons = kb.inline_keyboard
-        assert len(buttons) == 3
+        assert len(buttons) == 4
         all_texts = [b.text for row in buttons for b in row]
         assert "[btn-status-valid]" in all_texts
         assert "[btn-status-invalid]" in all_texts
         assert "[btn-status-bug]" in all_texts
+        assert "[btn-cancel]" in all_texts
 
 
 class TestAdminTicketDetailKeyboard:

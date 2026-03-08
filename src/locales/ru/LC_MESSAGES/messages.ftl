@@ -445,6 +445,7 @@ support-ban-applied =
     <b>Причина:</b> { $reason }
 support-ban-invalid-period = Некорректный формат. Используйте: 1d, 7d, 30d, 1h или 0.
 support-ban-cancelled = ❌ Бан отменён.
+support-close-cancelled = ❌ Закрытие отменено.
 support-ban-started-channel = 🚫 Админ начал процесс бана для пользователя.
 support-close-started-channel = 🔒 Админ начал закрытие тикета.
 support-notifications-soon = 🔔 Уведомления — будет реализовано позже.

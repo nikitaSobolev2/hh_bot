@@ -445,6 +445,7 @@ support-ban-applied =
     <b>Reason:</b> { $reason }
 support-ban-invalid-period = Invalid format. Use: 1d, 7d, 30d, 1h or 0.
 support-ban-cancelled = ❌ Ban cancelled.
+support-close-cancelled = ❌ Close cancelled.
 support-ban-started-channel = 🚫 Admin started ban process for the user.
 support-close-started-channel = 🔒 Admin started closing the ticket.
 support-notifications-soon = 🔔 Notifications — coming soon.

@@ -418,6 +418,19 @@ def ban_cancel_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
 # ── Close flow keyboards ──────────────────────────────────────
 
 
+def close_cancel_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=TicketAdminCallback(action="cancel_close").pack(),
+                )
+            ],
+        ]
+    )
+
+
 def close_status_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -437,6 +450,12 @@ def close_status_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=i18n.get("btn-status-bug"),
                     callback_data="close_status:bug",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=TicketAdminCallback(action="cancel_close").pack(),
                 )
             ],
         ]

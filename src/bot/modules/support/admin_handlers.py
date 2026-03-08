@@ -23,6 +23,7 @@ from src.bot.modules.support.keyboards import (
     admin_inbox_keyboard,
     admin_ticket_detail_keyboard,
     ban_cancel_keyboard,
+    close_cancel_keyboard,
     close_status_keyboard,
 )
 from src.bot.modules.support.states import AdminConversation, AdminTicketSearch
@@ -623,8 +624,34 @@ async def close_prompt(
     await callback.bot.send_message(
         callback.message.chat.id,
         i18n.get("support-close-enter-result"),
-        reply_markup=REMOVE_KEYBOARD,
+        reply_markup=close_cancel_keyboard(i18n),
     )
+    await callback.answer()
+
+
+@router.callback_query(TicketAdminCallback.filter(F.action == "cancel_close"))
+async def cancel_close(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    was_in_conversation = data.get("from_conversation", False)
+    ticket_id = data.get("ticket_id")
+    target_user_id = data.get("target_user_id")
+
+    if was_in_conversation:
+        await state.set_state(AdminConversation.chatting)
+        await state.update_data(ticket_id=ticket_id, target_user_id=target_user_id)
+        await callback.message.edit_text(i18n.get("support-close-cancelled"))
+        await callback.message.answer(
+            i18n.get("support-close-cancelled"),
+            reply_markup=admin_conversation_keyboard(i18n),
+        )
+    else:
+        await state.clear()
+        await callback.message.edit_text(i18n.get("support-close-cancelled"))
+
     await callback.answer()
 
 
@@ -974,7 +1001,11 @@ async def admin_conversation_message(
         return
     if action == "close":
         await state.set_state(AdminConversation.close_result)
-        await message.answer(i18n.get("support-close-enter-result"), reply_markup=REMOVE_KEYBOARD)
+        await state.update_data(from_conversation=True)
+        await message.answer(
+            i18n.get("support-close-enter-result"),
+            reply_markup=close_cancel_keyboard(i18n),
+        )
         return
     if action == "profile":
         profile_text = await support_svc.format_user_profile_support(

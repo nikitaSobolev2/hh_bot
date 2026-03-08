@@ -8,7 +8,7 @@ class SupportCallback(CallbackData, prefix="support"):
 
 
 class TicketAdminCallback(CallbackData, prefix="tkt_adm"):
-    action: str  # take, close, profile, companies, tickets, notifications, ban
+    action: str  # take, close, cancel_close, profile, companies, tickets, notifications, ban
     ticket_id: int = 0
     user_id: int = 0
     page: int = 0
