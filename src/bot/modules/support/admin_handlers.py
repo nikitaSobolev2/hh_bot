@@ -248,7 +248,7 @@ async def take_ticket(
             i18n.get("support-unseen-delivered", count=str(unseen_count)),
         )
 
-    dm_state = await dispatcher.fsm.get_context(
+    dm_state = dispatcher.fsm.get_context(
         bot=bot,
         chat_id=user.telegram_id,
         user_id=user.telegram_id,
