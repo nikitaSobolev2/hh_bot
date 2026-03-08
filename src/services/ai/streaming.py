@@ -18,8 +18,8 @@ logger = get_logger(__name__)
 
 _EDIT_INTERVAL_MS = 500
 _EDIT_TOKEN_BATCH = 15
-_DRAFT_INTERVAL_MS = 200
-_DRAFT_TOKEN_BATCH = 10
+_DRAFT_INTERVAL_MS = 500
+_DRAFT_TOKEN_BATCH = 15
 
 
 async def stream_to_telegram(
@@ -143,6 +143,7 @@ async def _stream_via_drafts(
 
             token_buffer = ""
             last_send_time = time.monotonic()
+            await asyncio.sleep(_DRAFT_INTERVAL_MS / 1000)
 
     final_text = initial_text.replace("\u23f3", "\u2705").replace("...", "") + accumulated
     if len(final_text) > 4096:
