@@ -195,7 +195,7 @@ class TestWorkExpRemove:
             mock_service.get_active_work_experiences = AsyncMock(return_value=[])
             await work_exp_remove(callback, callback_data, user, mock_session, i18n)
 
-        mock_service.deactivate_work_experience.assert_called_once_with(mock_session, 42)
+        mock_service.deactivate_work_experience.assert_called_once_with(mock_session, 42, user.id)
 
 
 class TestWorkExpSkip:

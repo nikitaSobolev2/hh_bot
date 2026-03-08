@@ -60,10 +60,12 @@ class TestWorkExperienceRepository:
         repo = WorkExperienceRepository(mock_session)
         entity = MagicMock(spec=UserWorkExperience)
         entity.is_active = True
+        entity.user_id = 1
         mock_session.get.return_value = entity
 
-        await repo.deactivate(42)
+        result = await repo.deactivate(42, user_id=1)
 
+        assert result is True
         assert entity.is_active is False
         mock_session.flush.assert_called_once()
 
@@ -72,8 +74,9 @@ class TestWorkExperienceRepository:
         repo = WorkExperienceRepository(mock_session)
         mock_session.get.return_value = None
 
-        await repo.deactivate(999)
+        result = await repo.deactivate(999, user_id=1)
 
+        assert result is False
         mock_session.flush.assert_not_called()
 
 
