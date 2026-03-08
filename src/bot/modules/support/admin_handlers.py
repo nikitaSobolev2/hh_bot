@@ -222,26 +222,27 @@ async def take_ticket(
         title=ticket.title,
         description=ticket.description[:500],
     )
+    reply_chat_id = callback.message.chat.id
     await callback.bot.send_message(
-        user.telegram_id,
+        reply_chat_id,
         text,
         reply_markup=admin_conversation_keyboard(i18n),
     )
 
     attachments = await support_svc.get_ticket_attachments(session, ticket.id)
     for att in attachments:
-        await support_svc._send_attachment(callback.bot, user.telegram_id, att)
+        await support_svc._send_attachment(callback.bot, reply_chat_id, att)
 
     unseen_count = await support_svc.deliver_unseen_to_admin(
         session,
         callback.bot,
         ticket.id,
-        user.telegram_id,
+        reply_chat_id,
         locale=user.language_code or "ru",
     )
     if unseen_count:
         await callback.bot.send_message(
-            user.telegram_id,
+            reply_chat_id,
             i18n.get("support-unseen-delivered", count=str(unseen_count)),
         )
 
@@ -563,7 +564,6 @@ async def ban_prompt(
     callback: CallbackQuery,
     callback_data: TicketAdminCallback,
     state: FSMContext,
-    user: User,
     i18n: I18nContext,
 ) -> None:
     await state.set_state(AdminConversation.ban_period)
@@ -571,13 +571,8 @@ async def ban_prompt(
         ticket_id=callback_data.ticket_id,
         target_user_id=callback_data.user_id,
     )
-    if callback.message.chat.id != user.telegram_id:
-        await callback.bot.send_message(
-            callback.message.chat.id,
-            i18n.get("support-ban-started-channel"),
-        )
     await callback.bot.send_message(
-        user.telegram_id,
+        callback.message.chat.id,
         i18n.get("support-ban-enter-period"),
         reply_markup=ban_cancel_keyboard(i18n),
     )
@@ -618,7 +613,6 @@ async def close_prompt(
     callback: CallbackQuery,
     callback_data: TicketAdminCallback,
     state: FSMContext,
-    user: User,
     i18n: I18nContext,
 ) -> None:
     await state.set_state(AdminConversation.close_result)
@@ -626,13 +620,8 @@ async def close_prompt(
         ticket_id=callback_data.ticket_id,
         target_user_id=callback_data.user_id,
     )
-    if callback.message.chat.id != user.telegram_id:
-        await callback.bot.send_message(
-            callback.message.chat.id,
-            i18n.get("support-close-started-channel"),
-        )
     await callback.bot.send_message(
-        user.telegram_id,
+        callback.message.chat.id,
         i18n.get("support-close-enter-result"),
         reply_markup=REMOVE_KEYBOARD,
     )
@@ -666,7 +655,6 @@ async def close_result_entered(
 )
 async def close_status_selected(
     callback: CallbackQuery,
-    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -697,7 +685,7 @@ async def close_status_selected(
         ),
     )
     await callback.bot.send_message(
-        user.telegram_id,
+        callback.message.chat.id,
         i18n.get("support-conversation-left"),
         reply_markup=REMOVE_KEYBOARD,
     )

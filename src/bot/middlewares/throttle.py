@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -42,14 +43,16 @@ class ThrottleMiddleware(BaseMiddleware):
         now = time.monotonic()
         last = self._last_request.get(tg_user.id, 0.0)
         if now - last < self._rate_limit:
-            logger.debug("Throttled user", telegram_id=tg_user.id)
-            return None
+            delay = self._rate_limit - (now - last)
+            logger.debug("Throttled user, delaying", telegram_id=tg_user.id, delay=delay)
+            await asyncio.sleep(delay)
 
-        self._last_request[tg_user.id] = now
+        self._last_request[tg_user.id] = time.monotonic()
 
         if len(self._last_request) > _CLEANUP_THRESHOLD:
+            cutoff = time.monotonic()
             self._last_request = {
-                uid: ts for uid, ts in self._last_request.items() if now - ts < _STALE_SECONDS
+                uid: ts for uid, ts in self._last_request.items() if cutoff - ts < _STALE_SECONDS
             }
 
         return await handler(event, data)
