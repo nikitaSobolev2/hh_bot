@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.logging import get_logger
 from src.worker.app import celery_app
@@ -25,17 +26,19 @@ def run_parsing_company(
     include_blacklisted: bool = False,
 ) -> dict:
     return run_async(
-        _run_parsing_company_async(self, parsing_company_id, user_id, include_blacklisted)
+        lambda sf: _run_parsing_company_async(
+            sf, self, parsing_company_id, user_id, include_blacklisted,
+        )
     )
 
 
 async def _run_parsing_company_async(
+    session_factory: async_sessionmaker[AsyncSession],
     task,
     parsing_company_id: int,
     user_id: int,
     include_blacklisted: bool = False,
 ) -> dict:
-    from src.db.engine import async_session_factory
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.blacklist import BlacklistRepository
     from src.repositories.parsing import ParsingCompanyRepository
@@ -45,7 +48,7 @@ async def _run_parsing_company_async(
 
     cb = CircuitBreaker("parsing")
 
-    async with async_session_factory() as session:
+    async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
 
         enabled = await settings_repo.get_value("task_parsing_enabled", default=True)
@@ -61,9 +64,8 @@ async def _run_parsing_company_async(
         logger.warning("Circuit breaker open for parsing")
         return {"status": "circuit_open"}
 
-    # Idempotency check
     idempotency_key = f"parse_company:{parsing_company_id}"
-    async with async_session_factory() as session:
+    async with session_factory() as session:
         task_repo = CeleryTaskRepository(session)
         existing = await task_repo.get_by_idempotency_key(idempotency_key)
         if existing and existing.status == "completed":
@@ -71,7 +73,7 @@ async def _run_parsing_company_async(
             return {"status": "already_completed", "task_id": existing.id}
 
     try:
-        async with async_session_factory() as session:
+        async with session_factory() as session:
             company_repo = ParsingCompanyRepository(session)
             company = await company_repo.get_by_id(parsing_company_id)
             if not company:
@@ -94,10 +96,13 @@ async def _run_parsing_company_async(
             keyword_filter=company.keyword_filter,
             target_count=company.target_count,
             blacklisted_ids=blacklisted_ids,
-            on_vacancy_processed=partial(_report_progress, parsing_company_id),
+            on_vacancy_processed=partial(
+                _report_progress, session_factory, parsing_company_id,
+            ),
         )
 
         await _save_parsing_results(
+            session_factory,
             parsing_company_id,
             user_id,
             task,
@@ -107,7 +112,7 @@ async def _run_parsing_company_async(
         cb.record_success()
 
         try:
-            await _notify_user(user_id, parsing_company_id)
+            await _notify_user(session_factory, user_id, parsing_company_id)
         except Exception as exc:
             logger.error("Failed to notify user", error=str(exc))
 
@@ -121,6 +126,7 @@ async def _run_parsing_company_async(
     except Exception as exc:
         cb.record_failure()
         await _mark_parsing_failed(
+            session_factory,
             parsing_company_id,
             user_id,
             task,
@@ -132,14 +138,14 @@ async def _run_parsing_company_async(
 
 
 async def _report_progress(
+    session_factory: async_sessionmaker[AsyncSession],
     parsing_company_id: int,
     current: int,
     _total: int,
 ) -> None:
-    from src.db.engine import async_session_factory
     from src.repositories.parsing import ParsingCompanyRepository
 
-    async with async_session_factory() as session:
+    async with session_factory() as session:
         repo = ParsingCompanyRepository(session)
         company = await repo.get_by_id(parsing_company_id)
         if company:
@@ -148,20 +154,20 @@ async def _report_progress(
 
 
 async def _save_parsing_results(
+    session_factory: async_sessionmaker[AsyncSession],
     parsing_company_id: int,
     user_id: int,
     task,
     result: dict,
     idempotency_key: str,
 ) -> None:
-    from src.db.engine import async_session_factory
     from src.models.blacklist import VacancyBlacklist
     from src.models.parsing import AggregatedResult, ParsedVacancy
     from src.models.task import BaseCeleryTask
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.parsing import ParsingCompanyRepository
 
-    async with async_session_factory() as session:
+    async with session_factory() as session:
         company_repo = ParsingCompanyRepository(session)
         company = await company_repo.get_by_id(parsing_company_id)
 
@@ -233,17 +239,17 @@ async def _save_parsing_results(
 
 
 async def _mark_parsing_failed(
+    session_factory: async_sessionmaker[AsyncSession],
     parsing_company_id: int,
     user_id: int,
     task,
     idempotency_key: str,
     exc: Exception,
 ) -> None:
-    from src.db.engine import async_session_factory
     from src.models.task import BaseCeleryTask
     from src.repositories.parsing import ParsingCompanyRepository
 
-    async with async_session_factory() as session:
+    async with session_factory() as session:
         company_repo = ParsingCompanyRepository(session)
         company = await company_repo.get_by_id(parsing_company_id)
         if company:
@@ -263,13 +269,16 @@ async def _mark_parsing_failed(
         await session.commit()
 
 
-async def _notify_user(user_id: int, parsing_company_id: int) -> None:
+async def _notify_user(
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    parsing_company_id: int,
+) -> None:
     from src.config import settings as app_settings
     from src.core.i18n import get_text
-    from src.db.engine import async_session_factory
     from src.repositories.user import UserRepository
 
-    async with async_session_factory() as session:
+    async with session_factory() as session:
         repo = UserRepository(session)
         user = await repo.get_by_id(user_id)
         if not user:

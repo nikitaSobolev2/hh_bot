@@ -115,20 +115,26 @@ class HHScraper:
         blacklisted: set[str],
         collected: list[dict[str, str]],
         target_count: int,
-    ) -> int:
-        """Filter and append new vacancies from a single page."""
+    ) -> tuple[int, bool]:
+        """Filter and append new vacancies from a single page.
+
+        Returns (new_count, page_had_unseen) where page_had_unseen indicates
+        the page contained vacancies not seen before (regardless of blacklist).
+        """
         new_count = 0
+        page_had_unseen = False
         for item in page_results:
             if item["url"] in seen_urls:
                 continue
+            seen_urls.add(item["url"])
+            page_had_unseen = True
             if item["hh_vacancy_id"] in blacklisted:
                 continue
-            seen_urls.add(item["url"])
             collected.append(item)
             new_count += 1
             if len(collected) >= target_count:
                 break
-        return new_count
+        return new_count, page_had_unseen
 
     async def collect_vacancy_urls(
         self,
@@ -156,7 +162,7 @@ class HHScraper:
                     break
 
                 page_results = self._extract_vacancies_from_page(soup, keyword)
-                new_count = self._collect_new_from_page(
+                new_count, page_had_unseen = self._collect_new_from_page(
                     page_results,
                     seen_urls,
                     blacklisted,
@@ -164,7 +170,7 @@ class HHScraper:
                     target_count,
                 )
 
-                zero_pages = zero_pages + 1 if new_count == 0 else 0
+                zero_pages = zero_pages + 1 if not page_had_unseen else 0
                 logger.info(
                     "Search page scraped",
                     page=page + 1,
@@ -173,8 +179,8 @@ class HHScraper:
                     target=target_count,
                 )
 
-                if zero_pages >= 2:
-                    logger.warning("2 pages with no new vacancies — stopping")
+                if zero_pages >= 3:
+                    logger.warning("3 pages with no new vacancies — stopping")
                     break
 
                 page += 1

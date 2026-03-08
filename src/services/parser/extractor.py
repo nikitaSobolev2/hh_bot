@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 OnVacancyProcessed = Callable[[int, int], Awaitable[None]]
 
-_DEFAULT_CONCURRENCY = 5
+_DEFAULT_CONCURRENCY = 15
 
 
 class ParsingExtractor:

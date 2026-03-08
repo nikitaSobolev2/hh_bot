@@ -13,6 +13,7 @@ from src.bot.modules.parsing.callbacks import (
     ParsingCallback,
 )
 from src.bot.modules.parsing.keyboards import (
+    back_to_company_keyboard,
     blacklist_choice_keyboard,
     cancel_keyboard,
     count_input_keyboard,
@@ -285,7 +286,7 @@ async def format_selection(
         text = report.generate_message()
         if len(text) > 4000:
             text = text[:3950] + "\n\n" + i18n.get("parsing-truncated")
-        await callback.message.edit_text(text, reply_markup=back_to_menu_keyboard(i18n))
+        await callback.message.edit_text(text, reply_markup=back_to_company_keyboard(callback_data.company_id, i18n))
 
     elif fmt in ("md", "txt"):
         content = report.generate_md() if fmt == "md" else report.generate_txt()

@@ -108,7 +108,26 @@ def format_choice_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=_t("btn-try-again", i18n, locale),
+                    callback_data=ParsingCallback(action="retry", company_id=company_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t("btn-back", i18n, locale),
+                    callback_data=MenuCallback(action="my_parsings").pack(),
+                )
+            ],
+        ]
+    )
+
+
+def back_to_company_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
                     callback_data=ParsingCallback(action="detail", company_id=company_id).pack(),
                 )
             ],
@@ -185,7 +204,7 @@ def retry_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-back"),
-                    callback_data=MenuCallback(action="main").pack(),
+                    callback_data=MenuCallback(action="my_parsings").pack(),
                 )
             ],
         ]
