@@ -183,30 +183,32 @@ async def _stream_via_edits(
         elapsed_ms = (now - last_edit_time) * 1000
         should_edit = len(token_buffer) >= _EDIT_TOKEN_BATCH or elapsed_ms >= _EDIT_INTERVAL_MS
 
-        if should_edit:
-            display_text = initial_text + accumulated + " \u258c"
-            if len(display_text) > 4000:
-                display_text = display_text[-3900:]
+        if not should_edit:
+            continue
 
-            try:
-                await bot.edit_message_text(
-                    text=display_text,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    parse_mode=parse_mode,
-                )
-                edit_count += 1
-            except TelegramRetryAfter as exc:
-                logger.warning("Edit flood control, pausing", retry_after=exc.retry_after)
-                await asyncio.sleep(exc.retry_after)
-            except TelegramBadRequest:
-                pass
+        display_text = initial_text + accumulated + " \u258c"
+        if len(display_text) > 4000:
+            display_text = display_text[-3900:]
 
-            token_buffer = ""
-            last_edit_time = time.monotonic()
+        try:
+            await bot.edit_message_text(
+                text=display_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode=parse_mode,
+            )
+            edit_count += 1
+        except TelegramRetryAfter as exc:
+            logger.warning("Edit flood control, pausing", retry_after=exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
+        except TelegramBadRequest:
+            pass
 
-            if edit_count % 10 == 0:
-                await asyncio.sleep(0.1)
+        token_buffer = ""
+        last_edit_time = time.monotonic()
+
+        if edit_count % 10 == 0:
+            await asyncio.sleep(0.1)
 
     final_text = initial_text.replace("\u23f3", "\u2705").replace("...", "") + accumulated
     if len(final_text) > 4000:

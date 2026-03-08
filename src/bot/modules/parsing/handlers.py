@@ -196,7 +196,9 @@ async def _confirm_and_launch(
         target_count=data["target_count"],
     )
 
-    parsing_service.dispatch_parsing_task(company_id, user.id, include_blacklisted)
+    parsing_service.dispatch_parsing_task(
+        company_id, user.id, include_blacklisted, telegram_chat_id=message.chat.id,
+    )
 
     text = parsing_service.format_confirmation(data, include_blacklisted, i18n)
     await message.answer(text, reply_markup=back_to_menu_keyboard(i18n))
@@ -244,7 +246,9 @@ async def parsing_retry(
         await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
-    new_company_id = await parsing_service.clone_and_dispatch(session, company.id, user.id)
+    new_company_id = await parsing_service.clone_and_dispatch(
+        session, company.id, user.id, telegram_chat_id=callback.message.chat.id,
+    )
 
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
     await callback.message.edit_text(

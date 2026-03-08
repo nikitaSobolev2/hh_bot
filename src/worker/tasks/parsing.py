@@ -1,7 +1,9 @@
 """Celery task for the full parsing pipeline."""
 
+import asyncio
+import random
+import time
 from datetime import UTC, datetime, timedelta
-from functools import partial
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -11,6 +13,85 @@ from src.worker.app import celery_app
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
+
+_PROGRESS_BAR_WIDTH = 20
+_PROGRESS_THROTTLE_MS = 500
+
+_PROGRESS_LABELS: dict[str, dict[str, str]] = {
+    "ru": {"title": "Обработка вакансий", "vacancies": "вакансий", "of": "из"},
+    "en": {"title": "Processing vacancies", "vacancies": "vacancies", "of": "of"},
+}
+
+
+class _ProgressTracker:
+    """Sends live progress bar updates to Telegram via ``send_message_draft``."""
+
+    def __init__(
+        self,
+        bot: "Bot",  # noqa: F821
+        chat_id: int,
+        *,
+        vacancy_title: str,
+        target_count: int,
+        keyword_filter: str,
+        locale: str = "ru",
+    ) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        self._draft_id = random.randint(1, 2**31 - 1)
+        self._vacancy_title = vacancy_title
+        self._target_count = target_count
+        self._keyword_filter = keyword_filter
+        self._labels = _PROGRESS_LABELS.get(locale, _PROGRESS_LABELS["ru"])
+        self._last_send: float = 0.0
+        self._lock = asyncio.Lock()
+
+    async def update(self, current: int, total: int) -> None:
+        from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+
+        now = time.monotonic()
+        is_last = current >= total
+
+        async with self._lock:
+            elapsed_ms = (now - self._last_send) * 1000
+            if elapsed_ms < _PROGRESS_THROTTLE_MS and not is_last:
+                return
+            self._last_send = time.monotonic()
+
+        text = self._build_text(current, total)
+        try:
+            await self._bot.send_message_draft(
+                chat_id=self._chat_id,
+                draft_id=self._draft_id,
+                text=text,
+                parse_mode="HTML",
+            )
+        except TelegramRetryAfter as exc:
+            logger.warning("Progress draft flood control", retry_after=exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
+        except TelegramBadRequest as exc:
+            logger.warning("Progress draft failed", error=str(exc))
+
+    def _build_text(self, current: int, total: int) -> str:
+        pct = round(current / total * 100) if total else 0
+        filled = round(_PROGRESS_BAR_WIDTH * current / total) if total else 0
+        bar = "\u2588" * filled + "\u2591" * (_PROGRESS_BAR_WIDTH - filled)
+
+        lb = self._labels
+        lines = [
+            f"<b>\u23f3 {lb['title']}</b>",
+            "",
+            f"<b>\U0001f4cb</b> {self._vacancy_title}",
+            f"<b>\U0001f3af</b> {self._target_count} {lb['vacancies']}",
+        ]
+        if self._keyword_filter:
+            lines.append(f"<b>\U0001f50e</b> {self._keyword_filter}")
+        lines += [
+            "",
+            f"<code>{bar}</code>  <b>{pct}%</b>",
+            f"<i>{current} {lb['of']} {total}</i>",
+        ]
+        return "\n".join(lines)
 
 
 @celery_app.task(
@@ -24,10 +105,12 @@ def run_parsing_company(
     parsing_company_id: int,
     user_id: int,
     include_blacklisted: bool = False,
+    telegram_chat_id: int = 0,
 ) -> dict:
     return run_async(
         lambda sf: _run_parsing_company_async(
             sf, self, parsing_company_id, user_id, include_blacklisted,
+            telegram_chat_id,
         )
     )
 
@@ -38,6 +121,7 @@ async def _run_parsing_company_async(
     parsing_company_id: int,
     user_id: int,
     include_blacklisted: bool = False,
+    telegram_chat_id: int = 0,
 ) -> dict:
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.blacklist import BlacklistRepository
@@ -72,6 +156,9 @@ async def _run_parsing_company_async(
             logger.info("Task already completed (idempotent)", key=idempotency_key)
             return {"status": "already_completed", "task_id": existing.id}
 
+    bot, locale = await _init_bot_and_locale(
+        session_factory, user_id, telegram_chat_id,
+    )
     try:
         async with session_factory() as session:
             company_repo = ParsingCompanyRepository(session)
@@ -90,15 +177,20 @@ async def _run_parsing_company_async(
                     company.vacancy_title,
                 )
 
+        tracker = _make_tracker(bot, telegram_chat_id, company, locale)
+
+        async def _on_vacancy_processed(current: int, total: int) -> None:
+            await _report_progress(session_factory, parsing_company_id, current, total)
+            if tracker:
+                await tracker.update(current, total)
+
         extractor = ParsingExtractor()
         result = await extractor.run_pipeline(
             search_url=company.search_url,
             keyword_filter=company.keyword_filter,
             target_count=company.target_count,
             blacklisted_ids=blacklisted_ids,
-            on_vacancy_processed=partial(
-                _report_progress, session_factory, parsing_company_id,
-            ),
+            on_vacancy_processed=_on_vacancy_processed,
         )
 
         await _save_parsing_results(
@@ -112,7 +204,9 @@ async def _run_parsing_company_async(
         cb.record_success()
 
         try:
-            await _notify_user(session_factory, user_id, parsing_company_id)
+            await _notify_user(
+                session_factory, user_id, parsing_company_id, bot=bot,
+            )
         except Exception as exc:
             logger.error("Failed to notify user", error=str(exc))
 
@@ -135,6 +229,57 @@ async def _run_parsing_company_async(
         )
         logger.error("Parsing task failed", error=str(exc), company_id=parsing_company_id)
         raise
+    finally:
+        if bot:
+            await bot.session.close()
+
+
+async def _init_bot_and_locale(
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    telegram_chat_id: int,
+) -> "tuple[Bot | None, str]":  # noqa: F821
+    from src.repositories.user import UserRepository
+
+    locale = "ru"
+    if not telegram_chat_id:
+        return None, locale
+    async with session_factory() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+        if user:
+            locale = user.language_code or "ru"
+    return _create_bot(), locale
+
+
+def _make_tracker(
+    bot: "Bot | None",  # noqa: F821
+    chat_id: int,
+    company: "ParsingCompany",  # noqa: F821
+    locale: str,
+) -> _ProgressTracker | None:
+    if not bot or not chat_id:
+        return None
+    return _ProgressTracker(
+        bot,
+        chat_id,
+        vacancy_title=company.vacancy_title,
+        target_count=company.target_count,
+        keyword_filter=company.keyword_filter or "",
+        locale=locale,
+    )
+
+
+def _create_bot() -> "Bot":  # noqa: F821
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    from src.config import settings as app_settings
+
+    return Bot(
+        token=app_settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
 async def _report_progress(
@@ -273,8 +418,9 @@ async def _notify_user(
     session_factory: async_sessionmaker[AsyncSession],
     user_id: int,
     parsing_company_id: int,
+    *,
+    bot: "Bot | None" = None,  # noqa: F821
 ) -> None:
-    from src.config import settings as app_settings
     from src.core.i18n import get_text
     from src.repositories.user import UserRepository
 
@@ -286,18 +432,12 @@ async def _notify_user(
 
     locale = user.language_code or "ru"
 
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
-
     from src.bot.modules.parsing.keyboards import format_choice_keyboard
-
     from src.services.ai.streaming import _send_with_retry
 
-    bot = Bot(
-        token=app_settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    owns_bot = bot is None
+    if owns_bot:
+        bot = _create_bot()
     try:
         text = get_text("parsing-completed", locale, id=str(parsing_company_id))
         kb = format_choice_keyboard(parsing_company_id, locale=locale)
@@ -305,4 +445,5 @@ async def _notify_user(
             bot, user.telegram_id, text=text, parse_mode="HTML", reply_markup=kb,
         )
     finally:
-        await bot.session.close()
+        if owns_bot:
+            await bot.session.close()

@@ -45,13 +45,23 @@ async def create_parsing_company(
     return company.id
 
 
-def dispatch_parsing_task(company_id: int, user_id: int, include_blacklisted: bool) -> None:
+def dispatch_parsing_task(
+    company_id: int,
+    user_id: int,
+    include_blacklisted: bool,
+    telegram_chat_id: int = 0,
+) -> None:
     from src.worker.tasks.parsing import run_parsing_company
 
-    run_parsing_company.delay(company_id, user_id, include_blacklisted)
+    run_parsing_company.delay(company_id, user_id, include_blacklisted, telegram_chat_id)
 
 
-async def clone_and_dispatch(session: AsyncSession, source_company_id: int, user_id: int) -> int:
+async def clone_and_dispatch(
+    session: AsyncSession,
+    source_company_id: int,
+    user_id: int,
+    telegram_chat_id: int = 0,
+) -> int:
     repo = ParsingCompanyRepository(session)
     source = await repo.get_by_id(source_company_id)
     if not source:
@@ -65,7 +75,9 @@ async def clone_and_dispatch(session: AsyncSession, source_company_id: int, user
         keyword_filter=source.keyword_filter or "",
         target_count=source.target_count,
     )
-    dispatch_parsing_task(new_id, user_id, include_blacklisted=False)
+    dispatch_parsing_task(
+        new_id, user_id, include_blacklisted=False, telegram_chat_id=telegram_chat_id,
+    )
     return new_id
 
 
