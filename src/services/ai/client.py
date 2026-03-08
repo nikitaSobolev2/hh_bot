@@ -22,7 +22,11 @@ class AIClient:
         self._api_key = api_key or settings.openai_api_key
         self._base_url = base_url or settings.openai_base_url
         self._model = model or settings.openai_model
-        self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
+        self._client = AsyncOpenAI(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            max_retries=5,
+        )
 
     async def extract_keywords(self, description: str) -> list[str]:
         if not description.strip():

@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 OnVacancyProcessed = Callable[[int, int], Awaitable[None]]
 
 _DEFAULT_CONCURRENCY = 15
+_AI_CONCURRENCY = 3
 
 
 class ParsingExtractor:
@@ -37,6 +38,7 @@ class ParsingExtractor:
         blacklisted_ids: set[str] | None = None,
         on_vacancy_processed: OnVacancyProcessed | None = None,
         concurrency: int = _DEFAULT_CONCURRENCY,
+        ai_concurrency: int = _AI_CONCURRENCY,
     ) -> dict:
         vacancies = await self._scraper.collect_vacancy_urls(
             search_url,
@@ -51,6 +53,7 @@ class ParsingExtractor:
 
         total = len(vacancies)
         sem = asyncio.Semaphore(concurrency)
+        ai_sem = asyncio.Semaphore(ai_concurrency)
         lock = asyncio.Lock()
         completed = [0]
 
@@ -66,7 +69,8 @@ class ParsingExtractor:
 
                 ai_keywords: list[str] = []
                 if description:
-                    ai_keywords = await self._ai.extract_keywords(description)
+                    async with ai_sem:
+                        ai_keywords = await self._ai.extract_keywords(description)
 
                 async with lock:
                     completed[0] += 1
