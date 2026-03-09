@@ -1,6 +1,7 @@
 """Shared fixtures for all tests."""
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture
@@ -21,6 +22,8 @@ def make_vacancy():
         work_schedule: str | None = None,
         working_hours: str | None = None,
         work_formats: str | None = None,
+        ai_summary: str | None = None,
+        ai_stack: list | None = None,
     ):
         from unittest.mock import MagicMock
 
@@ -38,6 +41,8 @@ def make_vacancy():
         vacancy.work_schedule = work_schedule
         vacancy.working_hours = working_hours
         vacancy.work_formats = work_formats
+        vacancy.ai_summary = ai_summary
+        vacancy.ai_stack = ai_stack
         return vacancy
 
     return _make
@@ -73,3 +78,15 @@ def make_feed_session():
         return feed_session
 
     return _make
+
+
+@pytest.fixture
+def mock_session():
+    """Minimal async SQLAlchemy session mock."""
+    session = MagicMock()
+    session.execute = AsyncMock()
+    session.get = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    return session

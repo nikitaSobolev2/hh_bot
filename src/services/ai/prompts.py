@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_COMPAT_DESCRIPTION_LIMIT = 4000
-
 
 def build_compatibility_system_prompt() -> str:
     """Return the system prompt for candidate-vacancy compatibility scoring."""
@@ -33,6 +31,9 @@ def build_compatibility_system_prompt() -> str:
     )
 
 
+_COMPAT_DESCRIPTION_LIMIT = 4000
+
+
 def build_compatibility_user_content(
     vacancy_title: str,
     vacancy_skills: list[str],
@@ -47,6 +48,62 @@ def build_compatibility_user_content(
         f"Описание (сокращённое): {vacancy_description[:_COMPAT_DESCRIPTION_LIMIT]}\n\n"
         f"Стек кандидата: {', '.join(user_tech_stack)}\n"
         f"Опыт кандидата: {user_work_experience}"
+    )
+
+
+def build_vacancy_analysis_system_prompt(
+    user_tech_stack: list[str],
+    user_work_experience: str,
+) -> str:
+    """Return the system prompt for combined vacancy analysis.
+
+    The model analyses the vacancy against the candidate profile and returns a
+    structured three-block response: a brief candidate-aware summary, a full
+    tech stack extracted from the vacancy, and a compatibility percentage.
+    """
+    stack_str = ", ".join(user_tech_stack) if user_tech_stack else "не указан"
+    exp_str = user_work_experience if user_work_experience else "не указан"
+    return (
+        "Ты — Senior Technical Recruitment Analyst с 30-летним опытом.\n\n"
+        "[ПРОФИЛЬ КАНДИДАТА]\n"
+        f"Стек: {stack_str}\n"
+        f"Опыт работы: {exp_str}\n\n"
+        "Проанализируй предоставленную вакансию и дай ответ СТРОГО в следующем формате "
+        "(ничего лишнего, никакого дополнительного текста после последней строки):\n\n"
+        "<краткий анализ>\n"
+        "[Stack]:<технологии>\n"
+        "[Compatibility]:<число>\n\n"
+        "[ПРАВИЛА ДЛЯ КАЖДОГО БЛОКА]\n\n"
+        "Блок 1 — краткий анализ (2–4 предложения):\n"
+        "- Сначала плюсы вакансии для данного кандидата с учётом его стека и опыта.\n"
+        "- Затем минусы, риски или несоответствия (если есть).\n"
+        "- Конкретно и по делу. Без общих фраз. Без буллетов и списков.\n"
+        "- Объём: не более 400 символов.\n\n"
+        "Блок 2 — [Stack]:<значения>:\n"
+        "- Перечисли ВСЕ технологии, фреймворки и методологии из вакансии.\n"
+        "- Формат строго: [Stack]:React,TypeScript,Docker,SCRUM\n"
+        "- Только одна строка.\n\n"
+        "Блок 3 — [Compatibility]:<число>:\n"
+        "- Одно целое число от 0 до 100, отражающее совместимость кандидата с вакансией.\n"
+        "- Формат строго: [Compatibility]:72\n"
+        "- Только одна строка."
+    )
+
+
+def build_vacancy_analysis_user_content(
+    vacancy_title: str,
+    vacancy_skills: list[str],
+    vacancy_description: str,
+) -> str:
+    """Return the user message for the combined vacancy analysis request.
+
+    The full description is passed without truncation so the model can produce
+    an accurate summary and extract the complete technology stack.
+    """
+    return (
+        f"Вакансия: {vacancy_title}\n"
+        f"Требуемые навыки: {', '.join(vacancy_skills)}\n\n"
+        f"Полное описание вакансии:\n{vacancy_description}"
     )
 
 

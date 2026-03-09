@@ -1,6 +1,10 @@
 """Async OpenAI client wrapper with streaming support."""
 
+from __future__ import annotations
+
+import re
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 
 import httpx
 from openai import AsyncOpenAI
@@ -10,11 +14,41 @@ from src.core.logging import get_logger
 from src.services.ai.prompts import (
     build_compatibility_system_prompt,
     build_compatibility_user_content,
+    build_vacancy_analysis_system_prompt,
+    build_vacancy_analysis_user_content,
 )
 
 logger = get_logger(__name__)
 
 MAX_DESCRIPTION_LENGTH = 8000
+
+_STACK_PATTERN = re.compile(r"\[Stack\]:\s*(.+)", re.IGNORECASE)
+_COMPAT_PATTERN = re.compile(r"\[Compatibility\]:\s*(\d+)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class VacancyAnalysis:
+    summary: str
+    stack: list[str]
+    compatibility_score: float
+
+
+def _parse_vacancy_analysis(text: str) -> VacancyAnalysis:
+    """Extract summary, stack list, and compatibility score from the AI response."""
+    stack_match = _STACK_PATTERN.search(text)
+    compat_match = _COMPAT_PATTERN.search(text)
+
+    stack = [s.strip() for s in stack_match.group(1).split(",") if s.strip()] if stack_match else []
+    compat = min(float(compat_match.group(1)), 100.0) if compat_match else 0.0
+
+    if stack_match:
+        summary = text[: stack_match.start()].strip()
+    elif compat_match:
+        summary = text[: compat_match.start()].strip()
+    else:
+        summary = text.strip()
+
+    return VacancyAnalysis(summary=summary, stack=stack, compatibility_score=compat)
 
 
 class AIClient:
@@ -85,6 +119,50 @@ class AIClient:
         except Exception as exc:
             logger.error("OpenAI keyword extraction failed", error=str(exc))
             return []
+
+    async def analyze_vacancy(
+        self,
+        vacancy_title: str,
+        vacancy_skills: list[str],
+        vacancy_description: str,
+        user_tech_stack: list[str],
+        user_work_experience: str,
+    ) -> VacancyAnalysis:
+        """Analyse a vacancy against the candidate profile in a single LLM call.
+
+        Returns a summary of positives/negatives, a parsed tech stack, and the
+        compatibility score — all extracted from the structured model response.
+        """
+        messages = [
+            {
+                "role": "system",
+                "content": build_vacancy_analysis_system_prompt(
+                    user_tech_stack=user_tech_stack,
+                    user_work_experience=user_work_experience,
+                ),
+            },
+            {
+                "role": "user",
+                "content": build_vacancy_analysis_user_content(
+                    vacancy_title=vacancy_title,
+                    vacancy_skills=vacancy_skills,
+                    vacancy_description=vacancy_description,
+                ),
+            },
+        ]
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=120,
+                messages=messages,
+                max_tokens=600,
+                temperature=0.2,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            return _parse_vacancy_analysis(raw)
+        except Exception as exc:
+            logger.error("Vacancy analysis failed", error=str(exc))
+            return VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
 
     async def calculate_compatibility(
         self,

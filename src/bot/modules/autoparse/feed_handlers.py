@@ -65,7 +65,13 @@ def feed_start_keyboard(session_id: int, i18n: I18nContext) -> InlineKeyboardMar
                     text=i18n.get("feed-btn-start"),
                     callback_data=FeedCallback(action="start", session_id=session_id).pack(),
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("feed-btn-stop"),
+                    callback_data=FeedCallback(action="stop", session_id=session_id).pack(),
+                )
+            ],
         ]
     )
 

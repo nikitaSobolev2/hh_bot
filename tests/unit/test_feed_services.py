@@ -145,6 +145,88 @@ def test_build_vacancy_card_skips_missing_optional_fields(make_vacancy):
     assert card  # should not raise and should have content
 
 
+def test_build_vacancy_card_escapes_html_special_chars_in_description(make_vacancy):
+    vacancy = make_vacancy(description="R&D team, salary > 100k, <senior> role")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "&amp;" in card
+    assert "&gt;" in card
+    assert "&lt;" in card
+    assert "R&D" not in card
+
+
+def test_build_vacancy_card_escapes_html_special_chars_in_title(make_vacancy):
+    vacancy = make_vacancy(title="Frontend & Backend Dev")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "Frontend &amp; Backend Dev" in card
+    assert "Frontend & Backend Dev" not in card
+
+
+def test_build_vacancy_card_escapes_html_special_chars_in_company_name(make_vacancy):
+    vacancy = make_vacancy(company_name="R&D Labs <Corp>")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "R&amp;D Labs &lt;Corp&gt;" in card
+
+
+def test_build_vacancy_card_shows_salary_with_currency_marker(make_vacancy):
+    vacancy = make_vacancy(salary="200 000 ₽")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "200 000 ₽" in card
+
+
+def test_build_vacancy_card_skips_salary_without_currency_marker(make_vacancy):
+    vacancy = make_vacancy(salary="4.4")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "💰" not in card
+
+
+def test_build_vacancy_card_skips_salary_when_only_rating_digits(make_vacancy):
+    vacancy = make_vacancy(salary="4.2 из 5")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "💰" not in card
+
+
+def test_build_vacancy_card_shows_ai_summary_when_present(make_vacancy):
+    vacancy = make_vacancy(
+        description="Full raw description",
+        ai_summary="Short AI-generated summary with pros and cons",
+    )
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "Short AI-generated summary with pros and cons" in card
+    assert "Full raw description" not in card
+
+
+def test_build_vacancy_card_falls_back_to_description_when_ai_summary_is_none(make_vacancy):
+    vacancy = make_vacancy(
+        description="Fallback raw description",
+        ai_summary=None,
+    )
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "Fallback raw description" in card
+
+
+def test_build_stats_message_escapes_html_in_vacancy_title():
+    text = build_stats_message("Frontend & Backend <Dev>", 5, avg_compat=None)
+
+    assert "Frontend &amp; Backend &lt;Dev&gt;" in text
+    assert "Frontend & Backend <Dev>" not in text
+
+
 def test_build_results_message_shows_all_stats():
     results = {
         "seen": 7,

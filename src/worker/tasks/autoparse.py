@@ -89,7 +89,13 @@ def _build_user_profile(
     return user_stack, user_exp
 
 
-def _build_autoparsed_vacancy(vac: dict, company_id: int, compat_score: float | None):
+def _build_autoparsed_vacancy(
+    vac: dict,
+    company_id: int,
+    compat_score: float | None,
+    ai_summary: str | None = None,
+    ai_stack: list[str] | None = None,
+):
     """Construct an AutoparsedVacancy ORM instance from a vacancy result dict."""
     from src.models.autoparse import AutoparsedVacancy
 
@@ -111,6 +117,8 @@ def _build_autoparsed_vacancy(vac: dict, company_id: int, compat_score: float | 
         work_formats=vac.get("work_formats"),
         tags=vac.get("tags"),
         compatibility_score=compat_score,
+        ai_summary=ai_summary or None,
+        ai_stack=ai_stack or None,
     )
 
 
@@ -222,14 +230,19 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
                     )
                     if existing is not None:
                         cached_compat = None
+                        cached_summary = None
+                        cached_stack = None
                         if ai_client and existing.raw_skills:
-                            cached_compat = await ai_client.calculate_compatibility(
+                            analysis = await ai_client.analyze_vacancy(
                                 vacancy_title=company.vacancy_title,
                                 vacancy_skills=existing.raw_skills,
                                 vacancy_description=existing.description or "",
                                 user_tech_stack=user_stack,
                                 user_work_experience=user_exp,
                             )
+                            cached_compat = analysis.compatibility_score
+                            cached_summary = analysis.summary or None
+                            cached_stack = analysis.stack or None
                         session.add(
                             AutoparsedVacancy(
                                 autoparse_company_id=company_id,
@@ -249,22 +262,31 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
                                 work_formats=existing.work_formats,
                                 tags=existing.tags,
                                 compatibility_score=cached_compat,
+                                ai_summary=cached_summary,
+                                ai_stack=cached_stack,
                             )
                         )
                         new_count += 1
                         continue
 
                 compat_score = None
+                ai_summary = None
+                ai_stack = None
                 if ai_client and vac.get("raw_skills"):
-                    compat_score = await ai_client.calculate_compatibility(
+                    analysis = await ai_client.analyze_vacancy(
                         vacancy_title=company.vacancy_title,
                         vacancy_skills=vac.get("raw_skills", []),
                         vacancy_description=vac.get("description", ""),
                         user_tech_stack=user_stack,
                         user_work_experience=user_exp,
                     )
+                    compat_score = analysis.compatibility_score
+                    ai_summary = analysis.summary or None
+                    ai_stack = analysis.stack or None
 
-                session.add(_build_autoparsed_vacancy(vac, company_id, compat_score))
+                session.add(
+                    _build_autoparsed_vacancy(vac, company_id, compat_score, ai_summary, ai_stack)
+                )
                 new_count += 1
 
             company_repo = AutoparseCompanyRepository(session)
@@ -442,7 +464,13 @@ async def _send_feed_stats_card(
                     text=get_text("feed-btn-start", locale),
                     callback_data=FeedCallback(action="start", session_id=feed_session_id).pack(),
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text=get_text("feed-btn-stop", locale),
+                    callback_data=FeedCallback(action="stop", session_id=feed_session_id).pack(),
+                )
+            ],
         ]
     )
 

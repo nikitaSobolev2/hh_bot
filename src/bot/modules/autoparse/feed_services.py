@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,12 @@ from src.models.vacancy_feed import VacancyFeedSession
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
 _MAX_DESCRIPTION_LENGTH = 1500
+_CURRENCY_MARKERS = frozenset({"₽", "$", "€", "£", "¥", "руб", "rub", "usd", "eur", "₴"})
+
+
+def _has_currency_marker(salary: str) -> bool:
+    lower = salary.lower()
+    return any(marker in lower for marker in _CURRENCY_MARKERS)
 
 
 async def create_feed_session(
@@ -108,7 +115,7 @@ def build_stats_message(
     locale: str = "ru",
 ) -> str:
     lines = [
-        f"📥 <b>{vacancy_title}</b>",
+        f"📥 <b>{html.escape(vacancy_title)}</b>",
         "",
         get_text("feed-stats-count", locale, count=count),
     ]
@@ -126,12 +133,13 @@ def build_vacancy_card(
     locale: str = "ru",
 ) -> str:
     progress = get_text("feed-vacancy-progress", locale, current=index + 1, total=total)
-    lines = [f"{progress} — <b><a href='{vacancy.url}'>{vacancy.title}</a></b>"]
+    safe_title = html.escape(vacancy.title)
+    lines = [f"{progress} — <b><a href='{vacancy.url}'>{safe_title}</a></b>"]
 
     if vacancy.company_name:
-        lines.append(f"\n🏢 {vacancy.company_name}")
+        lines.append(f"\n🏢 {html.escape(vacancy.company_name)}")
 
-    if vacancy.salary:
+    if vacancy.salary and _has_currency_marker(vacancy.salary):
         lines.append(f"💰 {vacancy.salary}")
 
     if vacancy.work_experience:
@@ -161,9 +169,11 @@ def build_vacancy_card(
         label = get_text("autoparse-compatibility-label", locale)
         lines.append(f"\n🎯 {label}: {vacancy.compatibility_score:.0f}%")
 
-    if vacancy.description:
+    if vacancy.ai_summary:
+        lines.append(f"\n{html.escape(vacancy.ai_summary)}")
+    elif vacancy.description:
         truncated = vacancy.description[:_MAX_DESCRIPTION_LENGTH]
-        lines.append(f"\n{truncated}")
+        lines.append(f"\n{html.escape(truncated)}")
 
     return "\n".join(lines)
 
