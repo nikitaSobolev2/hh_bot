@@ -117,6 +117,16 @@ def vacancy_page_html_with_work_format_prefix() -> str:
 
 
 @pytest.fixture
+def vacancy_page_html_with_compensation_frequency_prefix() -> str:
+    """Vacancy detail page where compensation_frequency includes the Russian label prefix."""
+    return """
+    <div data-qa="vacancy-description">Python developer needed.</div>
+    <div data-qa="skills-element"><div>Python</div></div>
+    <div data-qa="compensation-frequency-text">Оплата:ежемесячно</div>
+    """
+
+
+@pytest.fixture
 def mock_openai_response() -> MagicMock:
     response = MagicMock()
     response.choices = [MagicMock()]

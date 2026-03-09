@@ -14,3 +14,4 @@ class AutoparseSettingsForm(StatesGroup):
     work_exp_stack = State()
     send_time = State()
     tech_stack = State()
+    min_compat_percent = State()

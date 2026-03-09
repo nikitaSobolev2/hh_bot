@@ -101,14 +101,21 @@ class TestFormatVacancyMessage:
 
     def test_includes_compat_score_when_present(self):
         v = self._make_vacancy(compatibility_score=85.0)
-        msg = _format_vacancy_message(v)
+        msg = _format_vacancy_message(v, locale="ru")
         assert "85%" in msg
         assert "Совместимость" in msg
+
+    def test_includes_compat_score_label_in_english(self):
+        v = self._make_vacancy(compatibility_score=72.0)
+        msg = _format_vacancy_message(v, locale="en")
+        assert "72%" in msg
+        assert "Compatibility" in msg
 
     def test_omits_compat_score_when_absent(self):
         v = self._make_vacancy(compatibility_score=None)
         msg = _format_vacancy_message(v)
         assert "Совместимость" not in msg
+        assert "Compatibility" not in msg
 
     def test_includes_company_when_present(self):
         v = self._make_vacancy(company_name="Acme Corp")
@@ -332,3 +339,78 @@ class TestResolveCachedVacancy:
 
         assert returned_vac["description"] == ""
         assert returned_vac["raw_skills"] == []
+
+
+class TestDeliverMinCompatFilter:
+    """Verify the min_compatibility_percent delivery filter predicate."""
+
+    def _make_vacancy(
+        self,
+        *,
+        compatibility_score: float | None,
+        created_at_delta_hours: int = 0,
+    ) -> MagicMock:
+        from datetime import UTC, datetime, timedelta
+
+        v = MagicMock()
+        v.compatibility_score = compatibility_score
+        v.created_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            hours=created_at_delta_hours
+        )
+        return v
+
+    def _apply_filter(self, vacancies: list, *, min_compat: int) -> list:
+        from datetime import UTC, datetime, timedelta
+
+        today = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+        return [
+            v
+            for v in vacancies
+            if v.created_at >= today
+            and (v.compatibility_score is None or v.compatibility_score >= min_compat)
+        ]
+
+    def test_filters_vacancy_below_threshold(self):
+        vacancy = self._make_vacancy(compatibility_score=40.0)
+        result = self._apply_filter([vacancy], min_compat=50)
+        assert result == []
+
+    def test_passes_vacancy_above_threshold(self):
+        vacancy = self._make_vacancy(compatibility_score=60.0)
+        result = self._apply_filter([vacancy], min_compat=50)
+        assert result == [vacancy]
+
+    def test_passes_vacancy_at_exact_threshold(self):
+        vacancy = self._make_vacancy(compatibility_score=50.0)
+        result = self._apply_filter([vacancy], min_compat=50)
+        assert result == [vacancy]
+
+    def test_passes_vacancy_without_score(self):
+        vacancy = self._make_vacancy(compatibility_score=None)
+        result = self._apply_filter([vacancy], min_compat=50)
+        assert result == [vacancy]
+
+    def test_default_threshold_is_50(self):
+        ap_settings: dict = {}
+        min_compat = ap_settings.get("min_compatibility_percent", 50)
+
+        below = self._make_vacancy(compatibility_score=49.0)
+        above = self._make_vacancy(compatibility_score=51.0)
+        result = self._apply_filter([below, above], min_compat=min_compat)
+
+        assert below not in result
+        assert above in result
+
+    def test_zero_threshold_passes_all_scored_vacancies(self):
+        vacancies = [
+            self._make_vacancy(compatibility_score=0.0),
+            self._make_vacancy(compatibility_score=100.0),
+            self._make_vacancy(compatibility_score=None),
+        ]
+        result = self._apply_filter(vacancies, min_compat=0)
+        assert result == vacancies
+
+    def test_excludes_old_vacancies_regardless_of_score(self):
+        old = self._make_vacancy(compatibility_score=100.0, created_at_delta_hours=25)
+        result = self._apply_filter([old], min_compat=0)
+        assert result == []

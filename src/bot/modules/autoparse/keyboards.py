@@ -298,6 +298,12 @@ def autoparse_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("autoparse-settings-min-compat"),
+                    callback_data=AutoparseSettingsCallback(action="min_compat").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-back"),
                     callback_data=AutoparseCallback(action="hub").pack(),
                 )

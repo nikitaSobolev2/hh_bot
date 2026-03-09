@@ -520,11 +520,13 @@ async def settings_hub(
     else:
         stack_display = "—"
 
+    min_compat = current.get("min_compatibility_percent", 50)
     text = (
         f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
         f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
         f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
-        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}"
+        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
+        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%"
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=autoparse_settings_keyboard(i18n))
@@ -705,6 +707,43 @@ async def receive_tech_stack(
 ) -> None:
     stack = [s.strip() for s in message.text.split(",") if s.strip()]
     await ap_service.update_user_autoparse_settings(session, user.id, tech_stack=stack)
+    await state.clear()
+    await message.answer(
+        i18n.get("autoparse-settings-saved"),
+        reply_markup=autoparse_hub_keyboard(i18n),
+    )
+
+
+@router.callback_query(AutoparseSettingsCallback.filter(F.action == "min_compat"))
+async def settings_min_compat(
+    callback: CallbackQuery, state: FSMContext, i18n: I18nContext
+) -> None:
+    await state.set_state(AutoparseSettingsForm.min_compat_percent)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-settings-min-compat")
+            + "\n\n"
+            + i18n.get("autoparse-enter-min-compat"),
+            reply_markup=cancel_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+_MIN_COMPAT_MIN = 0
+_MIN_COMPAT_MAX = 100
+
+
+@router.message(AutoparseSettingsForm.min_compat_percent)
+async def receive_min_compat_percent(
+    message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
+    raw = message.text.strip()
+    if not raw.isdigit() or not (_MIN_COMPAT_MIN <= int(raw) <= _MIN_COMPAT_MAX):
+        await message.answer(i18n.get("autoparse-min-compat-invalid"))
+        return
+    await ap_service.update_user_autoparse_settings(
+        session, user.id, min_compatibility_percent=int(raw)
+    )
     await state.clear()
     await message.answer(
         i18n.get("autoparse-settings-saved"),

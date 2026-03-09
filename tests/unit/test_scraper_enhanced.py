@@ -29,6 +29,9 @@ class TestStripFieldPrefix:
     @pytest.mark.parametrize(
         "field,text,expected",
         [
+            ("compensation_frequency", "Оплата:ежемесячно", "ежемесячно"),
+            ("compensation_frequency", "Оплата: раз в две недели", "раз в две недели"),
+            ("compensation_frequency", "Monthly", "Monthly"),
             ("work_formats", "Формат работы:удалённо", "удалённо"),
             ("work_formats", "Формат работы: удалённо или гибрид", "удалённо или гибрид"),
             ("work_formats", "Remote", "Remote"),
@@ -147,3 +150,18 @@ class TestParseVacancyPageEnhanced:
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["work_experience"] == "1–3 года"
+
+    @pytest.mark.asyncio
+    async def test_strips_compensation_frequency_label_prefix(
+        self, vacancy_page_html_with_compensation_frequency_prefix: str
+    ):
+        scraper = HHScraper()
+        mock_client = AsyncMock()
+
+        with patch.object(scraper, "_fetch_page") as mock_fetch:
+            mock_fetch.return_value = BeautifulSoup(
+                vacancy_page_html_with_compensation_frequency_prefix, "html.parser"
+            )
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+
+        assert result["compensation_frequency"] == "ежемесячно"

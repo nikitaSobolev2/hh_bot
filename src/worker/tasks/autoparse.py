@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import redis
 
 from src.config import settings
+from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.worker.app import celery_app
 from src.worker.utils import run_async
@@ -299,7 +300,7 @@ _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
 _INTER_MESSAGE_DELAY_SECONDS = 1.0
 
 
-def _format_vacancy_message(vacancy) -> str:
+def _format_vacancy_message(vacancy, locale: str = "ru") -> str:
     """Build a standalone rich Telegram HTML message for one autoparsed vacancy."""
     lines = [f"<b><a href='{vacancy.url}'>{vacancy.title}</a></b>"]
 
@@ -330,19 +331,22 @@ def _format_vacancy_message(vacancy) -> str:
         lines.append(f"\U0001f527 {skills_text}")
 
     if vacancy.compatibility_score is not None:
-        lines.append(f"\U0001f3af Совместимость: {vacancy.compatibility_score:.0f}%")
+        label = get_text("autoparse-compatibility-label", locale)
+        lines.append(f"\U0001f3af {label}: {vacancy.compatibility_score:.0f}%")
 
     return "\n".join(lines)
 
 
-async def _send_vacancies_individually(bot, chat_id: int, vacancies: list) -> None:
+async def _send_vacancies_individually(
+    bot, chat_id: int, vacancies: list, locale: str = "ru"
+) -> None:
     """Send each vacancy as a separate Telegram message with a rate-limiting delay."""
     import asyncio
 
     from src.services.ai.streaming import _send_with_retry
 
     for vacancy in vacancies:
-        text = _format_vacancy_message(vacancy)
+        text = _format_vacancy_message(vacancy, locale)
         await _send_with_retry(bot, chat_id, text=text, parse_mode="HTML")
         await asyncio.sleep(_INTER_MESSAGE_DELAY_SECONDS)
 
@@ -392,6 +396,8 @@ async def _deliver_results_async(
             r.set(f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}", new_task.id, ex=86400)
             return {"status": "rescheduled", "eta": str(eta)}
 
+        locale = user.language_code or "ru"
+
         company_repo = AutoparseCompanyRepository(session)
         company = await company_repo.get_by_id(company_id)
         if not company:
@@ -400,7 +406,13 @@ async def _deliver_results_async(
         vacancy_repo = AutoparsedVacancyRepository(session)
         today = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
         vacancies = await vacancy_repo.get_by_company(company_id, limit=100)
-        new_vacancies = [v for v in vacancies if v.created_at >= today]
+        min_compat = ap_settings.get("min_compatibility_percent", 50)
+        new_vacancies = [
+            v
+            for v in vacancies
+            if v.created_at >= today
+            and (v.compatibility_score is None or v.compatibility_score >= min_compat)
+        ]
 
     if not new_vacancies:
         return {"status": "no_new_vacancies"}
@@ -417,9 +429,14 @@ async def _deliver_results_async(
     try:
         from src.services.ai.streaming import _send_with_retry
 
-        header = f"\U0001f4e5 <b>{company.vacancy_title}</b> — {len(new_vacancies)} новых вакансий"
+        header = get_text(
+            "autoparse-delivery-header",
+            locale,
+            title=company.vacancy_title,
+            count=len(new_vacancies),
+        )
         await _send_with_retry(bot, user.telegram_id, text=header, parse_mode="HTML")
-        await _send_vacancies_individually(bot, user.telegram_id, new_vacancies)
+        await _send_vacancies_individually(bot, user.telegram_id, new_vacancies, locale)
     finally:
         await bot.session.close()
 

@@ -24,6 +24,7 @@ SALARY_CLASS_RE = re.compile(r"magritte-text___")
 _SALARY_CURRENCY_MARKERS: tuple[str, ...] = ("₽", "$", "€", "руб")
 
 _DETAIL_FIELD_PREFIXES: dict[str, str] = {
+    "compensation_frequency": "Оплата:",
     "work_formats": "Формат работы:",
     "work_experience": "Опыт работы:",
     "employment_type": "Занятость:",
