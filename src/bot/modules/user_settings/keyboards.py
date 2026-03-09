@@ -224,14 +224,14 @@ def timezone_keyboard(
     if nav_row:
         rows.append(nav_row)
 
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=i18n.get("btn-tz-search"),
-                callback_data=TimezoneCallback(action="search").pack(),
-            )
-        ]
-    )
+    # rows.append(
+    #     [
+    #         InlineKeyboardButton(
+    #             text=i18n.get("btn-tz-search"),
+    #             callback_data=TimezoneCallback(action="search").pack(),
+    #         )
+    #     ]
+    # )
     rows.append(
         [
             InlineKeyboardButton(
