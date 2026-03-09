@@ -39,6 +39,15 @@ router = Router(name="autoparse")
 _PER_PAGE = 5
 
 
+async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
+    """Return True if the user already has a tech stack (manual or from work experience)."""
+    settings = await ap_service.get_user_autoparse_settings(session, user_id)
+    if settings.get("tech_stack"):
+        return True
+    experiences = await parsing_service.get_active_work_experiences(session, user_id)
+    return bool(experiences)
+
+
 # ── Hub ─────────────────────────────────────────────────────────────
 
 
@@ -89,6 +98,7 @@ async def create_start(
 async def template_selected(
     callback: CallbackQuery,
     callback_data: AutoparseCallback,
+    user: User,
     session: AsyncSession,
     state: FSMContext,
     i18n: I18nContext,
@@ -104,6 +114,26 @@ async def template_selected(
         search_url=company.search_url,
         keyword_filter=company.keyword_filter,
     )
+
+    if await _has_tech_stack(session, user.id):
+        data = await state.get_data()
+        new_company = await ap_service.create_autoparse_company(
+            session,
+            user.id,
+            data["vacancy_title"],
+            data["search_url"],
+            data.get("keyword_filter", ""),
+            "",
+        )
+        await state.clear()
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-created-success", id=str(new_company.id)),
+                reply_markup=autoparse_hub_keyboard(i18n),
+            )
+        await callback.answer()
+        return
+
     await state.set_state(AutoparseForm.skills)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
@@ -149,8 +179,28 @@ async def receive_url(message: Message, state: FSMContext, i18n: I18nContext) ->
 
 
 @router.message(AutoparseForm.keyword_filter)
-async def receive_keywords(message: Message, state: FSMContext, i18n: I18nContext) -> None:
+async def receive_keywords(
+    message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
     await state.update_data(keyword_filter=message.text.strip())
+
+    if await _has_tech_stack(session, user.id):
+        data = await state.get_data()
+        company = await ap_service.create_autoparse_company(
+            session,
+            user.id,
+            data["vacancy_title"],
+            data["search_url"],
+            data.get("keyword_filter", ""),
+            "",
+        )
+        await state.clear()
+        await message.answer(
+            i18n.get("autoparse-created-success", id=str(company.id)),
+            reply_markup=autoparse_hub_keyboard(i18n),
+        )
+        return
+
     await state.set_state(AutoparseForm.skills)
     await message.answer(
         i18n.get("autoparse-enter-skills"),
