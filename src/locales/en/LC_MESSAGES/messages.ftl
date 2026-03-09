@@ -498,6 +498,11 @@ autoparse-detail-vacancies = Vacancies
 autoparse-detail-last-run = Last run
 autoparse-run-now = ▶️ Run now
 autoparse-run-started = ✅ Parsing started!
+autoparse-run-finished = ✅ Parsing complete! Found { $count } new { $count ->
+    [one] vacancy
+   *[other] vacancies
+  }.
+autoparse-run-finished-empty = ✅ Parsing complete. No new vacancies found.
 autoparse-run-already-running = ⏳ Parsing is already in progress or was recently completed.
 autoparse-show-now = 📨 Show new vacancies now
 autoparse-delivering-now = 📨 Sending new vacancies to you now...

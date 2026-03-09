@@ -353,6 +353,7 @@ async def run_now(
     callback_data: AutoparseCallback,
     session: AsyncSession,
     i18n: I18nContext,
+    user: User,
 ) -> None:
     from src.worker.tasks.autoparse import run_autoparse_company
 
@@ -378,7 +379,7 @@ async def run_now(
     if company is None:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
-    run_autoparse_company.delay(company.id)
+    run_autoparse_company.delay(company.id, notify_user_id=user.id)
     await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
 
     count = await ap_service.get_vacancy_count(session, company.id)

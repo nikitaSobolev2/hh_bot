@@ -437,3 +437,93 @@ class TestDeliverLastDeliveredAt:
         company_repo.update.assert_called_once()
         _, kwargs = company_repo.update.call_args
         assert before <= kwargs["last_delivered_at"] <= after
+
+
+class TestSendRunCompletedNotification:
+    def _make_mock_bot(self, send_side_effect=None):
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(side_effect=send_side_effect)
+        mock_bot.session = MagicMock()
+        mock_bot.session.close = AsyncMock()
+        return mock_bot
+
+    @pytest.mark.asyncio
+    async def test_sends_finished_message_when_new_vacancies_found(self):
+        from unittest.mock import patch
+
+        from src.worker.tasks.autoparse import _send_run_completed_notification
+
+        mock_bot = self._make_mock_bot()
+
+        with patch("aiogram.Bot", return_value=mock_bot):
+            await _send_run_completed_notification(
+                bot_token="fake:token",
+                chat_id=12345,
+                new_count=3,
+                locale="en",
+            )
+
+        mock_bot.send_message.assert_called_once()
+        sent_text = mock_bot.send_message.call_args.kwargs["text"]
+        assert "3" in sent_text
+
+    @pytest.mark.asyncio
+    async def test_sends_empty_message_when_no_new_vacancies_found(self):
+        from unittest.mock import patch
+
+        from src.worker.tasks.autoparse import _send_run_completed_notification
+
+        mock_bot = self._make_mock_bot()
+
+        with patch("aiogram.Bot", return_value=mock_bot):
+            await _send_run_completed_notification(
+                bot_token="fake:token",
+                chat_id=12345,
+                new_count=0,
+                locale="en",
+            )
+
+        mock_bot.send_message.assert_called_once()
+        sent_text = mock_bot.send_message.call_args.kwargs["text"]
+        assert "No new vacancies" in sent_text
+
+    @pytest.mark.asyncio
+    async def test_closes_bot_session_after_sending(self):
+        from unittest.mock import patch
+
+        from src.worker.tasks.autoparse import _send_run_completed_notification
+
+        mock_bot = self._make_mock_bot()
+
+        with patch("aiogram.Bot", return_value=mock_bot):
+            await _send_run_completed_notification(
+                bot_token="fake:token",
+                chat_id=99,
+                new_count=1,
+                locale="ru",
+            )
+
+        mock_bot.session.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_closes_bot_session_even_when_send_raises(self):
+        from unittest.mock import patch
+
+        from src.worker.tasks.autoparse import _send_run_completed_notification
+
+        mock_bot = self._make_mock_bot(send_side_effect=RuntimeError("network error"))
+
+        with (
+            patch("aiogram.Bot", return_value=mock_bot),
+            pytest.raises(RuntimeError, match="network error"),
+        ):
+            await _send_run_completed_notification(
+                bot_token="fake:token",
+                chat_id=99,
+                new_count=2,
+                locale="ru",
+            )
+
+        mock_bot.session.close.assert_called_once()

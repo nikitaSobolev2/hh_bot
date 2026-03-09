@@ -498,6 +498,12 @@ autoparse-detail-vacancies = Вакансий
 autoparse-detail-last-run = Последний запуск
 autoparse-run-now = ▶️ Запустить сейчас
 autoparse-run-started = ✅ Парсинг запущен!
+autoparse-run-finished = ✅ Парсинг завершён! Найдено { $count } { $count ->
+    [one] новая вакансия
+    [few] новые вакансии
+   *[other] новых вакансий
+  }.
+autoparse-run-finished-empty = ✅ Парсинг завершён. Новых вакансий не найдено.
 autoparse-run-already-running = ⏳ Парсинг уже выполняется или был недавно завершён.
 autoparse-show-now = 📨 Показать новые вакансии сейчас
 autoparse-delivering-now = 📨 Отправляю новые вакансии...

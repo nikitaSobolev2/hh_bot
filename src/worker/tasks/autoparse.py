@@ -62,8 +62,8 @@ async def _dispatch_all_async(session_factory) -> dict:
     max_retries=2,
     default_retry_delay=60,
 )
-def run_autoparse_company(self, company_id: int) -> dict:
-    return run_async(lambda sf: _run_autoparse_company_async(sf, self, company_id))
+def run_autoparse_company(self, company_id: int, notify_user_id: int | None = None) -> dict:
+    return run_async(lambda sf: _run_autoparse_company_async(sf, self, company_id, notify_user_id))
 
 
 def _build_user_profile(
@@ -149,7 +149,9 @@ async def _resolve_cached_vacancy(
     return vac, None
 
 
-async def _run_autoparse_company_async(session_factory, task, company_id: int) -> dict:
+async def _run_autoparse_company_async(
+    session_factory, task, company_id: int, notify_user_id: int | None = None
+) -> dict:
     from src.models.autoparse import AutoparsedVacancy
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
@@ -304,6 +306,14 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
 
         if new_count > 0 and user:
             deliver_autoparse_results.delay(company_id, user.id)
+
+        if notify_user_id is not None and user:
+            await _send_run_completed_notification(
+                bot_token=settings.bot_token,
+                chat_id=user.telegram_id,
+                new_count=new_count,
+                locale=user.language_code or "ru",
+            )
 
         logger.info(
             "Autoparse company completed",
@@ -485,5 +495,30 @@ async def _send_feed_stats_card(
             reply_markup=keyboard,
             parse_mode="HTML",
         )
+    finally:
+        await bot.session.close()
+
+
+async def _send_run_completed_notification(
+    bot_token: str,
+    chat_id: int,
+    new_count: int,
+    locale: str,
+) -> None:
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    if new_count > 0:
+        text = get_text("autoparse-run-finished", locale, count=new_count)
+    else:
+        text = get_text("autoparse-run-finished-empty", locale)
+
+    bot = Bot(
+        token=bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
     finally:
         await bot.session.close()
