@@ -136,6 +136,16 @@ def test_build_vacancy_analysis_system_prompt_includes_output_format_markers():
     assert "[Compatibility]" in prompt
 
 
+def test_build_vacancy_analysis_system_prompt_describes_vacancy_not_candidate_match():
+    prompt = build_vacancy_analysis_system_prompt(
+        user_tech_stack=["Python"],
+        user_work_experience="5 лет",
+    )
+
+    assert "вакансии как предложения" in prompt
+    assert "НЕ пиши про совпадение" in prompt
+
+
 def test_build_vacancy_analysis_system_prompt_handles_empty_stack_and_experience():
     prompt = build_vacancy_analysis_system_prompt(
         user_tech_stack=[],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,10 +16,29 @@ from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 _MAX_DESCRIPTION_LENGTH = 1500
 _CURRENCY_MARKERS = frozenset({"₽", "$", "€", "£", "¥", "руб", "rub", "usd", "eur", "₴"})
 
+# Patterns used by _clean_salary to insert missing spaces in HH.ru salary strings.
+_CYRILLIC_BEFORE_DIGIT = re.compile(r"([а-яёА-ЯЁ])(\d)")
+_DIGIT_BEFORE_CURRENCY = re.compile(r"(\d)([₽$€£¥₴])")
+_CURRENCY_BEFORE_CYRILLIC = re.compile(r"([₽$€£¥₴])([а-яёА-ЯЁ])")
+_MULTI_SPACE = re.compile(r" {2,}")
+
 
 def _has_currency_marker(salary: str) -> bool:
     lower = salary.lower()
     return any(marker in lower for marker in _CURRENCY_MARKERS)
+
+
+def _clean_salary(salary: str) -> str:
+    """Normalise spacing in a raw HH.ru salary string.
+
+    HH.ru sometimes concatenates salary fragments without spaces, producing
+    strings like "от4 000$за месяц,до вычета налогов".  This function inserts
+    spaces at the obvious boundaries so the result reads naturally.
+    """
+    text = _CYRILLIC_BEFORE_DIGIT.sub(r"\1 \2", salary)
+    text = _DIGIT_BEFORE_CURRENCY.sub(r"\1 \2", text)
+    text = _CURRENCY_BEFORE_CYRILLIC.sub(r"\1 \2", text)
+    return _MULTI_SPACE.sub(" ", text).strip()
 
 
 async def create_feed_session(
@@ -155,7 +175,7 @@ def build_vacancy_card(
         lines.append(f"\n🏢 {html.escape(vacancy.company_name)}")
 
     if vacancy.salary and _has_currency_marker(vacancy.salary):
-        lines.append(f"💰 {vacancy.salary}")
+        lines.append(f"💰 {_clean_salary(vacancy.salary)}")
 
     if vacancy.work_experience:
         lines.append(f"🎓 {vacancy.work_experience}")

@@ -198,6 +198,14 @@ def test_build_vacancy_card_skips_salary_when_only_rating_digits(make_vacancy):
     assert "💰" not in card
 
 
+def test_build_vacancy_card_cleans_malformed_salary(make_vacancy):
+    vacancy = make_vacancy(salary="от4 000$за месяц,до вычета налогов")
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "от 4 000 $ за месяц" in card
+
+
 def test_build_vacancy_card_shows_ai_summary_when_present(make_vacancy):
     vacancy = make_vacancy(
         description="Full raw description",
