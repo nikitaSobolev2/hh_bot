@@ -155,7 +155,7 @@ class AIClient:
                 model=self._model,
                 timeout=120,
                 messages=messages,
-                max_tokens=600,
+                max_tokens=2000,
                 temperature=0.2,
             )
             raw = (response.choices[0].message.content or "").strip()

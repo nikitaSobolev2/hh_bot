@@ -234,10 +234,10 @@ async def _run_autoparse_company_async(
                         cached_compat = None
                         cached_summary = None
                         cached_stack = None
-                        if ai_client and existing.raw_skills:
+                        if ai_client:
                             analysis = await ai_client.analyze_vacancy(
                                 vacancy_title=company.vacancy_title,
-                                vacancy_skills=existing.raw_skills,
+                                vacancy_skills=existing.raw_skills or [],
                                 vacancy_description=existing.description or "",
                                 user_tech_stack=user_stack,
                                 user_work_experience=user_exp,
@@ -274,7 +274,7 @@ async def _run_autoparse_company_async(
                 compat_score = None
                 ai_summary = None
                 ai_stack = None
-                if ai_client and vac.get("raw_skills"):
+                if ai_client:
                     analysis = await ai_client.analyze_vacancy(
                         vacancy_title=company.vacancy_title,
                         vacancy_skills=vac.get("raw_skills", []),
@@ -343,6 +343,7 @@ async def _deliver_results_async(
 
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
     from src.repositories.user import UserRepository
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
     async with session_factory() as session:
         user_repo = UserRepository(session)
@@ -389,6 +390,10 @@ async def _deliver_results_async(
         )
         min_compat = ap_settings.get("min_compatibility_percent", 50)
         new_vacancies = await vacancy_repo.get_new_since(company_id, since, min_compat)
+        if new_vacancies:
+            feed_repo = VacancyFeedSessionRepository(session)
+            seen_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
+            new_vacancies = [v for v in new_vacancies if v.id not in seen_ids]
 
     if not new_vacancies:
         return {"status": "no_new_vacancies"}

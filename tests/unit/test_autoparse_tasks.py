@@ -396,14 +396,22 @@ class TestDeliverLastDeliveredAt:
 
         company_repo.update.assert_not_called()
 
+    def _make_feed_repo(self, *, seen_ids: set | None = None) -> MagicMock:
+        feed_repo = MagicMock()
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value=seen_ids or set())
+        return feed_repo
+
     @pytest.mark.asyncio
     async def test_updates_last_delivered_at_after_successful_delivery(self):
         user = self._make_user()
         company = self._make_company()
-        vacancies = [self._make_vacancy()]
+        vacancy = self._make_vacancy()
+        vacancy.id = 1
+        vacancies = [vacancy]
         user_repo, company_repo, vacancy_repo = self._make_repos(
             user=user, company=company, vacancies=vacancies
         )
+        feed_repo = self._make_feed_repo()
 
         before = datetime.now(UTC).replace(tzinfo=None)
 
@@ -416,6 +424,10 @@ class TestDeliverLastDeliveredAt:
             patch(
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
             ),
             patch(
                 "src.worker.tasks.autoparse._create_feed_session",
@@ -527,3 +539,205 @@ class TestSendRunCompletedNotification:
             )
 
         mock_bot.session.close.assert_called_once()
+
+
+class TestDeliverSeenIdsFilter:
+    """Verify that _deliver_results_async excludes already-seen vacancy IDs."""
+
+    def _make_session_factory(self, session: MagicMock):
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        return factory
+
+    def _make_user(self) -> MagicMock:
+        user = MagicMock()
+        user.language_code = "ru"
+        user.timezone = "Europe/Moscow"
+        user.autoparse_settings = {}
+        user.telegram_id = 100
+        return user
+
+    def _make_company(self) -> MagicMock:
+        company = MagicMock()
+        company.last_delivered_at = datetime(2026, 1, 1, 12, 0, 0)
+        company.vacancy_title = "Python Dev"
+        return company
+
+    def _make_vacancy(self, vacancy_id: int) -> MagicMock:
+        v = MagicMock()
+        v.id = vacancy_id
+        v.url = f"https://hh.ru/vacancy/{vacancy_id}"
+        v.title = "Dev"
+        v.salary = None
+        v.compatibility_score = None
+        v.company_name = None
+        v.work_formats = None
+        v.work_experience = None
+        v.employment_type = None
+        v.work_schedule = None
+        v.working_hours = None
+        v.raw_skills = None
+        return v
+
+    @pytest.mark.asyncio
+    async def test_excludes_vacancies_already_in_previous_feed_sessions(self):
+        user = self._make_user()
+        company = self._make_company()
+        seen_vacancy = self._make_vacancy(1)
+        new_vacancy = self._make_vacancy(2)
+
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_new_since = AsyncMock(return_value=[seen_vacancy, new_vacancy])
+        feed_repo = MagicMock()
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+            patch(
+                "src.worker.tasks.autoparse._create_feed_session",
+                new_callable=AsyncMock,
+                return_value=99,
+            ) as mock_create,
+            patch(
+                "src.worker.tasks.autoparse._send_feed_stats_card",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        assert result == {"status": "delivered", "count": 1}
+        passed_ids = mock_create.call_args.kwargs["vacancy_ids"]
+        assert passed_ids == [2]
+
+    @pytest.mark.asyncio
+    async def test_returns_no_new_vacancies_when_all_are_already_seen(self):
+        user = self._make_user()
+        company = self._make_company()
+        vacancy = self._make_vacancy(1)
+
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_new_since = AsyncMock(return_value=[vacancy])
+        feed_repo = MagicMock()
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        assert result == {"status": "no_new_vacancies"}
+
+    @pytest.mark.asyncio
+    async def test_skips_seen_ids_query_when_get_new_since_returns_empty(self):
+        user = self._make_user()
+        company = self._make_company()
+
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_new_since = AsyncMock(return_value=[])
+        feed_repo = MagicMock()
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value=set())
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+        ):
+            await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        feed_repo.get_all_seen_vacancy_ids.assert_not_called()
+
+
+class TestGetAllSeenVacancyIds:
+    """Verify VacancyFeedSessionRepository.get_all_seen_vacancy_ids."""
+
+    @pytest.mark.asyncio
+    async def test_unions_vacancy_ids_from_all_sessions(self):
+        from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=[([1, 2, 3],), ([3, 4],)])
+
+        repo = VacancyFeedSessionRepository(session)
+        seen = await repo.get_all_seen_vacancy_ids(user_id=42, company_id=10)
+
+        assert seen == {1, 2, 3, 4}
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_set_when_no_sessions_exist(self):
+        from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=[])
+
+        repo = VacancyFeedSessionRepository(session)
+        seen = await repo.get_all_seen_vacancy_ids(user_id=42, company_id=10)
+
+        assert seen == set()
+
+    @pytest.mark.asyncio
+    async def test_handles_single_session_correctly(self):
+        from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=[([10, 20, 30],)])
+
+        repo = VacancyFeedSessionRepository(session)
+        seen = await repo.get_all_seen_vacancy_ids(user_id=1, company_id=5)
+
+        assert seen == {10, 20, 30}

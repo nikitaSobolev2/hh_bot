@@ -1,8 +1,10 @@
 """Unit tests for vacancy analysis parsing and prompt builders."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from src.services.ai.client import VacancyAnalysis, _parse_vacancy_analysis
+from src.services.ai.client import AIClient, VacancyAnalysis, _parse_vacancy_analysis
 from src.services.ai.prompts import (
     build_vacancy_analysis_system_prompt,
     build_vacancy_analysis_user_content,
@@ -183,3 +185,75 @@ def test_build_vacancy_analysis_user_content_passes_full_description_untruncated
     )
 
     assert long_description in content
+
+
+# ── analyze_vacancy with empty skills ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_analyze_vacancy_calls_openai_even_when_skills_list_is_empty():
+    """AI analysis must run on description alone when no structured skills are available."""
+    ai_response = MagicMock()
+    ai_response.choices = [MagicMock()]
+    ai_response.choices[
+        0
+    ].message.content = (
+        "Вакансия предлагает интересный проект.\n[Stack]:PHP,PostgreSQL,Docker\n[Compatibility]:55"
+    )
+
+    mock_completions = MagicMock()
+    mock_completions.create = AsyncMock(return_value=ai_response)
+
+    with patch("src.services.ai.client.AsyncOpenAI") as mock_openai_cls:
+        mock_openai_cls.return_value.chat.completions = mock_completions
+        client = AIClient(api_key="test", base_url="http://fake", model="gpt-test")
+        result = await client.analyze_vacancy(
+            vacancy_title="PHP Developer",
+            vacancy_skills=[],
+            vacancy_description="Требования: PHP, PostgreSQL, Docker.",
+            user_tech_stack=["Python"],
+            user_work_experience="2 года backend",
+        )
+
+    mock_completions.create.assert_called_once()
+    assert result.stack == ["PHP", "PostgreSQL", "Docker"]
+    assert result.compatibility_score == 55.0
+    assert "Вакансия" in result.summary
+
+
+@pytest.mark.asyncio
+async def test_analyze_vacancy_uses_description_as_primary_source_when_no_skills():
+    """Vacancy description text is included in the prompt even when skills list is empty."""
+    ai_response = MagicMock()
+    ai_response.choices = [MagicMock()]
+    ai_response.choices[0].message.content = "Анализ.\n[Stack]:Go\n[Compatibility]:40"
+
+    mock_completions = MagicMock()
+    mock_completions.create = AsyncMock(return_value=ai_response)
+
+    description = "Разработка на Go, опыт с Kubernetes."
+
+    with patch("src.services.ai.client.AsyncOpenAI") as mock_openai_cls:
+        mock_openai_cls.return_value.chat.completions = mock_completions
+        client = AIClient(api_key="test", base_url="http://fake", model="gpt-test")
+        await client.analyze_vacancy(
+            vacancy_title="Go Developer",
+            vacancy_skills=[],
+            vacancy_description=description,
+            user_tech_stack=["Python"],
+            user_work_experience="",
+        )
+
+    call_kwargs = mock_completions.create.call_args.kwargs
+    user_message_content = call_kwargs["messages"][1]["content"]
+    assert description in user_message_content
+
+
+def test_build_vacancy_analysis_user_content_raises_on_none_skills():
+    """None passed as vacancy_skills causes TypeError — callers must normalise to []."""
+    with pytest.raises(TypeError):
+        build_vacancy_analysis_user_content(
+            vacancy_title="Dev",
+            vacancy_skills=None,  # type: ignore[arg-type]
+            vacancy_description="desc",
+        )
