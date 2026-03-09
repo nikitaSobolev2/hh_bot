@@ -13,6 +13,7 @@ from src.models.task import (
     CompanyParseKeywordsFromDescriptionTask,
 )
 from src.models.user import User
+from src.models.vacancy_feed import VacancyFeedSession
 from src.models.work_experience import UserWorkExperience
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "AutoparseCompany",
     "AutoparsedVacancy",
     "UserWorkExperience",
+    "VacancyFeedSession",
     "ParsingCompany",
     "ParsedVacancy",
     "AggregatedResult",

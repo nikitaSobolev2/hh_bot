@@ -1,134 +1,75 @@
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+"""Shared fixtures for all tests."""
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture
-def mock_session() -> AsyncMock:
-    session = AsyncMock(spec=AsyncSession)
-    session.execute = AsyncMock()
-    session.flush = AsyncMock()
-    session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    session.refresh = AsyncMock()
-    session.add = MagicMock()
-    return session
+def make_vacancy():
+    """Factory for minimal AutoparsedVacancy-like mock objects."""
+
+    def _make(
+        vacancy_id: int = 1,
+        title: str = "Python Developer",
+        url: str = "https://hh.ru/vacancy/1",
+        company_name: str | None = "Acme Corp",
+        salary: str | None = "200 000 руб.",
+        compatibility_score: float | None = None,
+        description: str = "Test description",
+        raw_skills: list | None = None,
+        work_experience: str | None = None,
+        employment_type: str | None = None,
+        work_schedule: str | None = None,
+        working_hours: str | None = None,
+        work_formats: str | None = None,
+    ):
+        from unittest.mock import MagicMock
+
+        vacancy = MagicMock()
+        vacancy.id = vacancy_id
+        vacancy.title = title
+        vacancy.url = url
+        vacancy.company_name = company_name
+        vacancy.salary = salary
+        vacancy.compatibility_score = compatibility_score
+        vacancy.description = description
+        vacancy.raw_skills = raw_skills
+        vacancy.work_experience = work_experience
+        vacancy.employment_type = employment_type
+        vacancy.work_schedule = work_schedule
+        vacancy.working_hours = working_hours
+        vacancy.work_formats = work_formats
+        return vacancy
+
+    return _make
 
 
 @pytest.fixture
-def sample_vacancy_html() -> str:
-    return """
-    <div data-qa="vacancy-serp__vacancy">
-        <a href="https://hh.ru/vacancy/12345?from=search">
-            Frontend Developer
-        </a>
-        <a data-qa="vacancy-serp__vacancy-employer" href="https://hh.ru/employer/100">
-            Yandex
-        </a>
-        <span class="magritte-text___abc123">300 000 руб.</span>
-        <div data-qa="vacancy-serp__tag-remote">Remote</div>
-    </div>
-    <div data-qa="vacancy-serp__vacancy">
-        <a href="https://hh.ru/vacancy/67890">
-            Backend Engineer
-        </a>
-        <a data-qa="vacancy-serp__vacancy-employer" href="https://hh.ru/employer/200">
-            VK
-        </a>
-    </div>
-    """
+def make_feed_session():
+    """Factory for minimal VacancyFeedSession-like mock objects."""
 
+    def _make(
+        session_id: int = 1,
+        user_id: int = 42,
+        company_id: int = 10,
+        chat_id: int = 42,
+        vacancy_ids: list | None = None,
+        current_index: int = 0,
+        liked_ids: list | None = None,
+        disliked_ids: list | None = None,
+        is_completed: bool = False,
+    ):
+        from unittest.mock import MagicMock
 
-@pytest.fixture
-def sample_vacancy_page_html() -> str:
-    return """
-    <div data-qa="vacancy-description">
-        We are looking for a developer with Python, Django, and PostgreSQL experience.
-        Knowledge of Docker and CI/CD is a plus.
-    </div>
-    <div data-qa="skills-element"><div>Python</div></div>
-    <div data-qa="skills-element"><div>Django</div></div>
-    <div data-qa="skills-element"><div>PostgreSQL</div></div>
-    <div data-qa="compensation-frequency-text">Monthly</div>
-    <div data-qa="work-experience-text">3-6 years</div>
-    <div data-qa="common-employment-text">Full-time</div>
-    <div data-qa="work-schedule-by-days-text">5/2</div>
-    <div data-qa="working-hours-text">8 hours</div>
-    <div data-qa="work-formats-text">Remote</div>
-    """
+        feed_session = MagicMock()
+        feed_session.id = session_id
+        feed_session.user_id = user_id
+        feed_session.autoparse_company_id = company_id
+        feed_session.chat_id = chat_id
+        feed_session.vacancy_ids = vacancy_ids if vacancy_ids is not None else [1, 2, 3]
+        feed_session.current_index = current_index
+        feed_session.liked_ids = liked_ids if liked_ids is not None else []
+        feed_session.disliked_ids = disliked_ids if disliked_ids is not None else []
+        feed_session.is_completed = is_completed
+        return feed_session
 
-
-@pytest.fixture
-def vacancy_html_with_viewer_count() -> str:
-    """Search card where only a viewer-count string appears in the Magritte text class."""
-    return """
-    <div data-qa="vacancy-serp__vacancy">
-        <a href="https://hh.ru/vacancy/99999">Backend Developer</a>
-        <a data-qa="vacancy-serp__vacancy-employer">Acme Corp</a>
-        <span class="magritte-text___abc">Сейчас смотрят 6 человек</span>
-    </div>
-    """
-
-
-@pytest.fixture
-def vacancy_html_with_rating() -> str:
-    """Search card where only a company rating appears in the Magritte text class."""
-    return """
-    <div data-qa="vacancy-serp__vacancy">
-        <a href="https://hh.ru/vacancy/88888">Tech Lead</a>
-        <a data-qa="vacancy-serp__vacancy-employer">Some Ltd</a>
-        <span class="magritte-text___abc">2.6</span>
-    </div>
-    """
-
-
-@pytest.fixture
-def vacancy_html_with_multi_span_salary() -> str:
-    """Search card where salary is split across child spans (tests spacing fix)."""
-    return """
-    <div data-qa="vacancy-serp__vacancy">
-        <a href="https://hh.ru/vacancy/77777">Senior Dev</a>
-        <a data-qa="vacancy-serp__vacancy-employer">Big Corp</a>
-        <span class="magritte-text___abc">
-            <span>от</span><span>4 000</span><span>$</span><span>за месяц</span>
-        </span>
-    </div>
-    """
-
-
-@pytest.fixture
-def vacancy_page_html_with_work_format_prefix() -> str:
-    """Vacancy detail page where work_formats element includes the Russian label prefix."""
-    return """
-    <div data-qa="vacancy-description">Python developer needed.</div>
-    <div data-qa="skills-element"><div>Python</div></div>
-    <div data-qa="work-formats-text">Формат работы:удалённо</div>
-    <div data-qa="work-experience-text">Опыт работы:1–3 года</div>
-    """
-
-
-@pytest.fixture
-def vacancy_page_html_with_compensation_frequency_prefix() -> str:
-    """Vacancy detail page where compensation_frequency includes the Russian label prefix."""
-    return """
-    <div data-qa="vacancy-description">Python developer needed.</div>
-    <div data-qa="skills-element"><div>Python</div></div>
-    <div data-qa="compensation-frequency-text">Оплата:ежемесячно</div>
-    """
-
-
-@pytest.fixture
-def mock_openai_response() -> MagicMock:
-    response = MagicMock()
-    response.choices = [MagicMock()]
-    response.choices[0].message.content = "Python, Django, PostgreSQL, Docker, CI/CD"
-    return response
+    return _make

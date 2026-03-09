@@ -525,6 +525,23 @@ autoparse-settings-min-compat = 🎯 Min. compatibility
 autoparse-enter-min-compat = Enter minimum compatibility percentage (0–100):
 autoparse-min-compat-invalid = Enter a whole number between 0 and 100.
 autoparse-delivery-header = 📥 <b>{ $title }</b> — { $count } new vacancies
+
+# ── Vacancy Feed ──────────────────────────────────────────
+feed-stats-count = 🆕 { $count } new vacancies
+feed-stats-avg-compat = 📊 Average compatibility: { $avg }%
+feed-stats-hint = Press the button below to start browsing.
+feed-btn-start = ▶️ Start browsing
+feed-vacancy-progress = [{ $current } / { $total }]
+feed-btn-open = 🔗 Open on HH.ru
+feed-btn-like = 👍 Like
+feed-btn-dislike = 👎 Dislike
+feed-btn-stop = ⏹ Stop
+feed-results-header = 📊 Feed Results
+feed-results-seen = Viewed: { $seen } of { $total }
+feed-results-liked = 👍 Liked: { $liked }
+feed-results-disliked = 👎 Disliked: { $disliked }
+feed-results-avg-liked-compat = 📊 Avg. compatibility of liked: { $avg }%
+feed-session-not-found = Feed session not found or already completed.
 btn-confirm = ✅ Confirm
 btn-timezone = 🌍 Timezone
 settings-timezone-current = Current timezone: { $tz }

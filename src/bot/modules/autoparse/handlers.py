@@ -17,6 +17,7 @@ from src.bot.modules.autoparse.callbacks import (
     AutoparseSettingsCallback,
     AutoparseWorkExpCallback,
 )
+from src.bot.modules.autoparse.feed_handlers import router as feed_router
 from src.bot.modules.autoparse.keyboards import (
     MAX_WORK_EXPERIENCES,
     autoparse_detail_keyboard,
@@ -40,6 +41,7 @@ from src.repositories.app_settings import AppSettingRepository
 from src.repositories.parsing import ParsingCompanyRepository
 
 router = Router(name="autoparse")
+router.include_router(feed_router)
 
 _PER_PAGE = 5
 

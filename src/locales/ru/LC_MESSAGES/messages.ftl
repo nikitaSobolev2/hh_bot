@@ -525,6 +525,23 @@ autoparse-settings-min-compat = 🎯 Мин. совместимость
 autoparse-enter-min-compat = Введите минимальный процент совместимости (0–100):
 autoparse-min-compat-invalid = Введите целое число от 0 до 100.
 autoparse-delivery-header = 📥 <b>{ $title }</b> — { $count } новых вакансий
+
+# ── Vacancy Feed ──────────────────────────────────────────
+feed-stats-count = 🆕 { $count } новых вакансий
+feed-stats-avg-compat = 📊 Средняя совместимость: { $avg }%
+feed-stats-hint = Нажмите кнопку ниже, чтобы начать просмотр.
+feed-btn-start = ▶️ Начать просмотр
+feed-vacancy-progress = [{ $current } / { $total }]
+feed-btn-open = 🔗 Открыть на HH.ru
+feed-btn-like = 👍 Нравится
+feed-btn-dislike = 👎 Не нравится
+feed-btn-stop = ⏹ Остановить
+feed-results-header = 📊 Результаты просмотра
+feed-results-seen = Просмотрено: { $seen } из { $total }
+feed-results-liked = 👍 Понравилось: { $liked }
+feed-results-disliked = 👎 Не понравилось: { $disliked }
+feed-results-avg-liked-compat = 📊 Средняя совместимость понравившихся: { $avg }%
+feed-session-not-found = Сессия просмотра не найдена или уже завершена.
 btn-confirm = ✅ Подтвердить
 btn-timezone = 🌍 Часовой пояс
 settings-timezone-current = Текущий часовой пояс: { $tz }

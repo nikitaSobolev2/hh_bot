@@ -1,0 +1,275 @@
+"""Unit tests for the interactive vacancy feed services."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.bot.modules.autoparse.feed_services import (
+    build_results_message,
+    build_stats_message,
+    build_vacancy_card,
+    complete_feed_session,
+    compute_feed_results,
+    create_feed_session,
+    get_feed_session,
+    record_reaction,
+)
+
+# ── Pure function tests ─────────────────────────────────────────────
+
+
+def test_compute_feed_results_returns_correct_counts(make_feed_session, make_vacancy):
+    feed_session = make_feed_session(
+        vacancy_ids=[1, 2, 3, 4],
+        current_index=3,
+        liked_ids=[1, 3],
+        disliked_ids=[2],
+    )
+    vacancy_1 = make_vacancy(vacancy_id=1, compatibility_score=80.0)
+    vacancy_3 = make_vacancy(vacancy_id=3, compatibility_score=60.0)
+    vacancies_by_id = {1: vacancy_1, 3: vacancy_3}
+
+    results = compute_feed_results(feed_session, vacancies_by_id)
+
+    assert results["seen"] == 3
+    assert results["total"] == 4
+    assert results["liked"] == 2
+    assert results["disliked"] == 1
+
+
+def test_compute_feed_results_calculates_avg_compat_of_liked(make_feed_session, make_vacancy):
+    feed_session = make_feed_session(
+        vacancy_ids=[1, 2],
+        current_index=2,
+        liked_ids=[1, 2],
+        disliked_ids=[],
+    )
+    v1 = make_vacancy(vacancy_id=1, compatibility_score=80.0)
+    v2 = make_vacancy(vacancy_id=2, compatibility_score=60.0)
+    vacancies_by_id = {1: v1, 2: v2}
+
+    results = compute_feed_results(feed_session, vacancies_by_id)
+
+    assert results["avg_compat_liked"] == pytest.approx(70.0)
+
+
+def test_compute_feed_results_no_liked_returns_none_avg(make_feed_session):
+    feed_session = make_feed_session(
+        vacancy_ids=[1, 2],
+        current_index=2,
+        liked_ids=[],
+        disliked_ids=[1, 2],
+    )
+    results = compute_feed_results(feed_session, {})
+
+    assert results["avg_compat_liked"] is None
+
+
+def test_compute_feed_results_ignores_vacancies_without_compat_score(
+    make_feed_session, make_vacancy
+):
+    feed_session = make_feed_session(
+        vacancy_ids=[1, 2],
+        current_index=2,
+        liked_ids=[1, 2],
+        disliked_ids=[],
+    )
+    v1 = make_vacancy(vacancy_id=1, compatibility_score=90.0)
+    v2 = make_vacancy(vacancy_id=2, compatibility_score=None)
+    vacancies_by_id = {1: v1, 2: v2}
+
+    results = compute_feed_results(feed_session, vacancies_by_id)
+
+    assert results["avg_compat_liked"] == pytest.approx(90.0)
+
+
+def test_build_stats_message_includes_title_and_count():
+    text = build_stats_message("Frontend Developer", 5, avg_compat=None)
+
+    assert "Frontend Developer" in text
+    assert "5" in text
+
+
+def test_build_stats_message_includes_avg_compat_when_present():
+    text = build_stats_message("Backend Dev", 10, avg_compat=75.0)
+
+    assert "75" in text
+
+
+def test_build_stats_message_omits_avg_compat_line_when_none():
+    text = build_stats_message("Backend Dev", 10, avg_compat=None)
+
+    assert "feed-stats-avg-compat" not in text
+
+
+def test_build_vacancy_card_shows_progress(make_vacancy):
+    vacancy = make_vacancy(vacancy_id=1)
+
+    card = build_vacancy_card(vacancy, index=2, total=10)
+
+    assert "3" in card
+    assert "10" in card
+
+
+def test_build_vacancy_card_includes_title_and_company(make_vacancy):
+    vacancy = make_vacancy(
+        title="Python Dev",
+        url="https://hh.ru/1",
+        company_name="TechCorp",
+    )
+
+    card = build_vacancy_card(vacancy, index=0, total=5)
+
+    assert "Python Dev" in card
+    assert "TechCorp" in card
+
+
+def test_build_vacancy_card_includes_compatibility_score(make_vacancy):
+    vacancy = make_vacancy(compatibility_score=85.0)
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert "85" in card
+
+
+def test_build_vacancy_card_skips_missing_optional_fields(make_vacancy):
+    vacancy = make_vacancy(
+        salary=None,
+        work_experience=None,
+        employment_type=None,
+        company_name=None,
+    )
+
+    card = build_vacancy_card(vacancy, index=0, total=1)
+
+    assert card  # should not raise and should have content
+
+
+def test_build_results_message_shows_all_stats():
+    results = {
+        "seen": 7,
+        "total": 10,
+        "liked": 4,
+        "disliked": 3,
+        "avg_compat_liked": 82.0,
+    }
+
+    text = build_results_message(results)
+
+    assert "7" in text
+    assert "10" in text
+    assert "4" in text
+    assert "3" in text
+    assert "82" in text
+
+
+def test_build_results_message_omits_avg_compat_line_when_none():
+    results = {
+        "seen": 3,
+        "total": 5,
+        "liked": 0,
+        "disliked": 3,
+        "avg_compat_liked": None,
+    }
+
+    text = build_results_message(results)
+
+    assert "feed-results-avg-liked-compat" not in text
+
+
+# ── Async service tests ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_feed_session_stores_vacancy_ids():
+    mock_session = AsyncMock()
+    mock_feed_session = MagicMock()
+    mock_feed_session.id = 99
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.create = AsyncMock(return_value=mock_feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        result = await create_feed_session(
+            session=mock_session,
+            user_id=1,
+            company_id=2,
+            chat_id=100,
+            vacancy_ids=[10, 20, 30],
+        )
+
+    mock_repo_instance.create.assert_called_once()
+    call_kwargs = mock_repo_instance.create.call_args.kwargs
+    assert call_kwargs["vacancy_ids"] == [10, 20, 30]
+    assert call_kwargs["user_id"] == 1
+    assert result.id == 99
+
+
+@pytest.mark.asyncio
+async def test_record_like_appends_to_liked_ids(make_feed_session):
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(liked_ids=[], disliked_ids=[], current_index=0)
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.update = AsyncMock(return_value=feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        await record_reaction(mock_session, feed_session, vacancy_id=5, is_like=True)
+
+    call_kwargs = mock_repo_instance.update.call_args.kwargs
+    assert 5 in call_kwargs["liked_ids"]
+    assert call_kwargs["disliked_ids"] == []
+    assert call_kwargs["current_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_record_dislike_appends_to_disliked_ids(make_feed_session):
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(liked_ids=[], disliked_ids=[], current_index=0)
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.update = AsyncMock(return_value=feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        await record_reaction(mock_session, feed_session, vacancy_id=7, is_like=False)
+
+    call_kwargs = mock_repo_instance.update.call_args.kwargs
+    assert 7 in call_kwargs["disliked_ids"]
+    assert call_kwargs["liked_ids"] == []
+    assert call_kwargs["current_index"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_feed_session_delegates_to_repository():
+    mock_session = AsyncMock()
+    expected = MagicMock()
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.get_by_id = AsyncMock(return_value=expected)
+        mock_repo.return_value = mock_repo_instance
+
+        result = await get_feed_session(mock_session, session_id=42)
+
+    mock_repo_instance.get_by_id.assert_called_once_with(42)
+    assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_complete_feed_session_sets_is_completed(make_feed_session):
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(is_completed=False)
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.update = AsyncMock(return_value=feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        await complete_feed_session(mock_session, feed_session)
+
+    call_kwargs = mock_repo_instance.update.call_args.kwargs
+    assert call_kwargs["is_completed"] is True
+    assert call_kwargs["completed_at"] is not None

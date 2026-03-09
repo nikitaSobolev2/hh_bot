@@ -19,3 +19,9 @@ class AutoparseSettingsCallback(CallbackData, prefix="aps"):
 class AutoparseWorkExpCallback(CallbackData, prefix="apwe"):
     action: str
     work_exp_id: int = 0
+
+
+class FeedCallback(CallbackData, prefix="feed"):
+    action: str  # start | like | dislike | stop
+    session_id: int
+    vacancy_id: int = 0

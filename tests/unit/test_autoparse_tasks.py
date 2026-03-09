@@ -7,12 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.worker.tasks.autoparse import (
-    _INTER_MESSAGE_DELAY_SECONDS,
     _build_user_profile,
     _deliver_results_async,
-    _format_vacancy_message,
     _resolve_cached_vacancy,
-    _send_vacancies_individually,
 )
 
 
@@ -55,221 +52,6 @@ class TestBuildUserProfile:
 
         assert "Alpha — Go" in exp
         assert "Beta — Rust" in exp
-
-
-class TestFormatVacancyMessage:
-    def _make_vacancy(
-        self,
-        *,
-        url: str = "https://hh.ru/vacancy/1",
-        title: str = "Backend Dev",
-        salary: str | None = None,
-        compatibility_score: float | None = None,
-        company_name: str | None = None,
-        work_formats: str | None = None,
-        work_experience: str | None = None,
-        employment_type: str | None = None,
-        work_schedule: str | None = None,
-        working_hours: str | None = None,
-        raw_skills: list | None = None,
-    ):
-        v = MagicMock()
-        v.url = url
-        v.title = title
-        v.salary = salary
-        v.compatibility_score = compatibility_score
-        v.company_name = company_name
-        v.work_formats = work_formats
-        v.work_experience = work_experience
-        v.employment_type = employment_type
-        v.work_schedule = work_schedule
-        v.working_hours = working_hours
-        v.raw_skills = raw_skills
-        return v
-
-    def test_title_rendered_as_html_link(self):
-        v = self._make_vacancy(title="Python Dev", url="https://hh.ru/vacancy/42")
-        msg = _format_vacancy_message(v)
-        assert "<a href='https://hh.ru/vacancy/42'>Python Dev</a>" in msg
-
-    def test_includes_salary_when_present(self):
-        v = self._make_vacancy(salary="от 150 000 ₽")
-        msg = _format_vacancy_message(v)
-        assert "от 150 000 ₽" in msg
-
-    def test_omits_salary_when_absent(self):
-        v = self._make_vacancy(salary=None)
-        msg = _format_vacancy_message(v)
-        assert "₽" not in msg
-
-    def test_includes_compat_score_when_present(self):
-        v = self._make_vacancy(compatibility_score=85.0)
-        msg = _format_vacancy_message(v, locale="ru")
-        assert "85%" in msg
-        assert "Совместимость" in msg
-
-    def test_includes_compat_score_label_in_english(self):
-        v = self._make_vacancy(compatibility_score=72.0)
-        msg = _format_vacancy_message(v, locale="en")
-        assert "72%" in msg
-        assert "Compatibility" in msg
-
-    def test_omits_compat_score_when_absent(self):
-        v = self._make_vacancy(compatibility_score=None)
-        msg = _format_vacancy_message(v)
-        assert "Совместимость" not in msg
-        assert "Compatibility" not in msg
-
-    def test_includes_company_when_present(self):
-        v = self._make_vacancy(company_name="Acme Corp")
-        msg = _format_vacancy_message(v)
-        assert "Acme Corp" in msg
-
-    def test_company_line_has_no_leading_blank_line(self):
-        v = self._make_vacancy(company_name="Acme Corp")
-        msg = _format_vacancy_message(v)
-        assert "\n\n" not in msg
-
-    def test_omits_company_line_when_absent(self):
-        v = self._make_vacancy(company_name=None)
-        msg = _format_vacancy_message(v)
-        assert "\U0001f3e2" not in msg
-
-    def test_includes_work_formats_when_present(self):
-        v = self._make_vacancy(work_formats="удалённо")
-        msg = _format_vacancy_message(v)
-        assert "удалённо" in msg
-
-    def test_omits_work_formats_when_absent(self):
-        v = self._make_vacancy(work_formats=None)
-        msg = _format_vacancy_message(v)
-        assert "\U0001f4cd" not in msg
-
-    def test_includes_skills_list_when_present(self):
-        v = self._make_vacancy(raw_skills=["Python", "FastAPI", "Docker"])
-        msg = _format_vacancy_message(v)
-        assert "Python" in msg
-        assert "FastAPI" in msg
-        assert "Docker" in msg
-
-    def test_omits_skills_line_when_absent(self):
-        v = self._make_vacancy(raw_skills=None)
-        msg = _format_vacancy_message(v)
-        assert "\U0001f527" not in msg
-
-    def test_includes_work_experience_when_present(self):
-        v = self._make_vacancy(work_experience="От 3 до 6 лет")
-        msg = _format_vacancy_message(v)
-        assert "От 3 до 6 лет" in msg
-
-    def test_includes_employment_type_when_present(self):
-        v = self._make_vacancy(employment_type="Полная занятость")
-        msg = _format_vacancy_message(v)
-        assert "Полная занятость" in msg
-
-    def test_message_within_telegram_limit(self):
-        v = self._make_vacancy(
-            title="X" * 200,
-            salary="200 000 ₽",
-            company_name="Y" * 200,
-            work_formats="удалённо",
-            work_experience="От 3 до 6 лет",
-            employment_type="Полная занятость",
-            work_schedule="Пятидневная рабочая неделя",
-            working_hours="Полный день",
-            raw_skills=["skill" + str(i) for i in range(50)],
-            compatibility_score=99.0,
-        )
-        msg = _format_vacancy_message(v)
-        assert len(msg) <= 4096
-
-    def test_minimal_vacancy_contains_only_title_link(self):
-        v = self._make_vacancy()
-        msg = _format_vacancy_message(v)
-        lines = msg.split("\n")
-        assert len(lines) == 1
-        assert "<b>" in lines[0]
-
-
-class TestSendVacanciesIndividually:
-    def _make_vacancy(self, title: str = "Dev") -> MagicMock:
-        v = MagicMock()
-        v.url = "https://hh.ru/vacancy/1"
-        v.title = title
-        v.salary = None
-        v.compatibility_score = None
-        v.company_name = None
-        v.work_formats = None
-        v.work_experience = None
-        v.employment_type = None
-        v.work_schedule = None
-        v.working_hours = None
-        v.raw_skills = None
-        return v
-
-    @pytest.mark.asyncio
-    async def test_sends_one_message_per_vacancy(self):
-        bot = MagicMock()
-        vacancies = [self._make_vacancy(f"Dev {i}") for i in range(3)]
-
-        with (
-            patch(
-                "src.services.ai.streaming._send_with_retry",
-                new_callable=AsyncMock,
-            ) as mock_send,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            await _send_vacancies_individually(bot, chat_id=123, vacancies=vacancies)
-
-        assert mock_send.call_count == 3
-
-    @pytest.mark.asyncio
-    async def test_sleeps_between_messages(self):
-        bot = MagicMock()
-        vacancies = [self._make_vacancy("Dev A"), self._make_vacancy("Dev B")]
-
-        with (
-            patch("src.services.ai.streaming._send_with_retry", new_callable=AsyncMock),
-            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
-        ):
-            await _send_vacancies_individually(bot, chat_id=456, vacancies=vacancies)
-
-        assert mock_sleep.call_count == len(vacancies)
-        for call in mock_sleep.call_args_list:
-            assert call.args[0] == _INTER_MESSAGE_DELAY_SECONDS
-
-    @pytest.mark.asyncio
-    async def test_does_nothing_for_empty_list(self):
-        bot = MagicMock()
-
-        with (
-            patch(
-                "src.services.ai.streaming._send_with_retry",
-                new_callable=AsyncMock,
-            ) as mock_send,
-            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
-        ):
-            await _send_vacancies_individually(bot, chat_id=789, vacancies=[])
-
-        mock_send.assert_not_called()
-        mock_sleep.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_passes_html_parse_mode(self):
-        bot = MagicMock()
-        vacancies = [self._make_vacancy()]
-
-        with (
-            patch(
-                "src.services.ai.streaming._send_with_retry",
-                new_callable=AsyncMock,
-            ) as mock_send,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            await _send_vacancies_individually(bot, chat_id=111, vacancies=vacancies)
-
-        _, kwargs = mock_send.call_args
-        assert kwargs.get("parse_mode") == "HTML"
 
 
 class TestResolveCachedVacancy:
@@ -623,10 +405,6 @@ class TestDeliverLastDeliveredAt:
             user=user, company=company, vacancies=vacancies
         )
 
-        bot_mock = MagicMock()
-        bot_mock.session = MagicMock()
-        bot_mock.session.close = AsyncMock()
-
         before = datetime.now(UTC).replace(tzinfo=None)
 
         with (
@@ -639,13 +417,13 @@ class TestDeliverLastDeliveredAt:
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
             ),
-            patch("aiogram.Bot", return_value=bot_mock),
             patch(
-                "src.services.ai.streaming._send_with_retry",
+                "src.worker.tasks.autoparse._create_feed_session",
                 new_callable=AsyncMock,
+                return_value=42,
             ),
             patch(
-                "src.worker.tasks.autoparse._send_vacancies_individually",
+                "src.worker.tasks.autoparse._send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
         ):

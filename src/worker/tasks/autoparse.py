@@ -297,58 +297,6 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
 
 
 _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
-_INTER_MESSAGE_DELAY_SECONDS = 1.0
-
-
-def _format_vacancy_message(vacancy, locale: str = "ru") -> str:
-    """Build a standalone rich Telegram HTML message for one autoparsed vacancy."""
-    lines = [f"<b><a href='{vacancy.url}'>{vacancy.title}</a></b>"]
-
-    if vacancy.company_name:
-        lines.append(f"\n\U0001f3e2 {vacancy.company_name}")
-
-    if vacancy.salary:
-        lines.append(f"\U0001f4b0 {vacancy.salary}")
-
-    if vacancy.work_experience:
-        lines.append(f"\U0001f393 {vacancy.work_experience}")
-
-    if vacancy.employment_type:
-        lines.append(f"\u23f0 {vacancy.employment_type}")
-
-    if vacancy.work_schedule:
-        lines.append(f"\U0001f4c5 {vacancy.work_schedule}")
-
-    if vacancy.working_hours:
-        lines.append(f"\U0001f557 {vacancy.working_hours}")
-
-    if vacancy.work_formats:
-        lines.append(f"\U0001f4cd {vacancy.work_formats}")
-
-    skills = vacancy.raw_skills
-    if skills:
-        skills_text = ", ".join(skills) if isinstance(skills, list) else str(skills)
-        lines.append(f"\U0001f527 {skills_text}")
-
-    if vacancy.compatibility_score is not None:
-        label = get_text("autoparse-compatibility-label", locale)
-        lines.append(f"\U0001f3af {label}: {vacancy.compatibility_score:.0f}%")
-
-    return "\n".join(lines)
-
-
-async def _send_vacancies_individually(
-    bot, chat_id: int, vacancies: list, locale: str = "ru"
-) -> None:
-    """Send each vacancy as a separate Telegram message with a rate-limiting delay."""
-    import asyncio
-
-    from src.services.ai.streaming import _send_with_retry
-
-    for vacancy in vacancies:
-        text = _format_vacancy_message(vacancy, locale)
-        await _send_with_retry(bot, chat_id, text=text, parse_mode="HTML")
-        await asyncio.sleep(_INTER_MESSAGE_DELAY_SECONDS)
 
 
 @celery_app.task(bind=True, name="autoparse.deliver_results", max_retries=3)
@@ -413,28 +361,22 @@ async def _deliver_results_async(
     if not new_vacancies:
         return {"status": "no_new_vacancies"}
 
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
-
-    bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    feed_session_id = await _create_feed_session(
+        session_factory,
+        user_id=user_id,
+        company_id=company_id,
+        chat_id=user.telegram_id,
+        vacancy_ids=[v.id for v in new_vacancies],
     )
 
-    try:
-        from src.services.ai.streaming import _send_with_retry
-
-        header = get_text(
-            "autoparse-delivery-header",
-            locale,
-            title=company.vacancy_title,
-            count=len(new_vacancies),
-        )
-        await _send_with_retry(bot, user.telegram_id, text=header, parse_mode="HTML")
-        await _send_vacancies_individually(bot, user.telegram_id, new_vacancies, locale)
-    finally:
-        await bot.session.close()
+    await _send_feed_stats_card(
+        bot_token=settings.bot_token,
+        chat_id=user.telegram_id,
+        vacancy_title=company.vacancy_title,
+        vacancies=new_vacancies,
+        feed_session_id=feed_session_id,
+        locale=locale,
+    )
 
     async with session_factory() as session:
         company_repo = AutoparseCompanyRepository(session)
@@ -446,3 +388,74 @@ async def _deliver_results_async(
             )
 
     return {"status": "delivered", "count": len(new_vacancies)}
+
+
+async def _create_feed_session(
+    session_factory,
+    user_id: int,
+    company_id: int,
+    chat_id: int,
+    vacancy_ids: list[int],
+) -> int:
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    async with session_factory() as session:
+        repo = VacancyFeedSessionRepository(session)
+        feed_session = await repo.create(
+            user_id=user_id,
+            autoparse_company_id=company_id,
+            chat_id=chat_id,
+            vacancy_ids=vacancy_ids,
+            current_index=0,
+            liked_ids=[],
+            disliked_ids=[],
+            is_completed=False,
+        )
+        await session.commit()
+        return feed_session.id
+
+
+async def _send_feed_stats_card(
+    bot_token: str,
+    chat_id: int,
+    vacancy_title: str,
+    vacancies: list,
+    feed_session_id: int,
+    locale: str,
+) -> None:
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from src.bot.modules.autoparse.callbacks import FeedCallback
+    from src.bot.modules.autoparse.feed_services import build_stats_message
+
+    compat_scores = [v.compatibility_score for v in vacancies if v.compatibility_score is not None]
+    avg_compat = sum(compat_scores) / len(compat_scores) if compat_scores else None
+
+    text = build_stats_message(vacancy_title, len(vacancies), avg_compat, locale)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=get_text("feed-btn-start", locale),
+                    callback_data=FeedCallback(action="start", session_id=feed_session_id).pack(),
+                )
+            ]
+        ]
+    )
+
+    bot = Bot(
+        token=bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    finally:
+        await bot.session.close()

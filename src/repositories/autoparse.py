@@ -140,7 +140,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
             select(AutoparsedVacancy)
             .where(
                 AutoparsedVacancy.autoparse_company_id == company_id,
-                AutoparsedVacancy.created_at > since,
+                AutoparsedVacancy.created_at >= since,
                 or_(
                     AutoparsedVacancy.compatibility_score.is_(None),
                     AutoparsedVacancy.compatibility_score >= min_compat,
