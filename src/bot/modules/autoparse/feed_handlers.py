@@ -49,6 +49,14 @@ def feed_vacancy_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("feed-btn-show-later"),
+                    callback_data=FeedCallback(
+                        action="show_later", session_id=session_id, vacancy_id=vacancy_id
+                    ).pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("feed-btn-stop"),
                     callback_data=FeedCallback(action="stop", session_id=session_id).pack(),
                 )
@@ -120,6 +128,41 @@ async def handle_feed_react(
 
     is_like = callback_data.action == "like"
     await feed_services.record_reaction(session, feed_session, callback_data.vacancy_id, is_like)
+
+    total = len(feed_session.vacancy_ids)
+    if feed_session.current_index >= total:
+        await _show_results(callback, session, feed_session, i18n)
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    next_vacancy_id = feed_session.vacancy_ids[feed_session.current_index]
+    vacancy = await vacancy_repo.get_by_id(next_vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
+    keyboard = feed_vacancy_keyboard(feed_session.id, vacancy.id, vacancy.url, i18n)
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(FeedCallback.filter(F.action == "show_later"))
+async def handle_feed_show_later(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed:
+        await callback.answer()
+        return
+
+    await feed_services.move_vacancy_to_end(session, feed_session)
 
     total = len(feed_session.vacancy_ids)
     if feed_session.current_index >= total:

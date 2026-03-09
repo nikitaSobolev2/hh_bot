@@ -70,6 +70,21 @@ async def record_reaction(
     await session.commit()
 
 
+async def move_vacancy_to_end(
+    session: AsyncSession,
+    feed_session: VacancyFeedSession,
+) -> None:
+    ids = list(feed_session.vacancy_ids)
+    ids.append(ids.pop(feed_session.current_index))
+    repo = VacancyFeedSessionRepository(session)
+    await repo.update(
+        feed_session,
+        vacancy_ids=ids,
+        current_index=feed_session.current_index + 1,
+    )
+    await session.commit()
+
+
 async def complete_feed_session(
     session: AsyncSession,
     feed_session: VacancyFeedSession,

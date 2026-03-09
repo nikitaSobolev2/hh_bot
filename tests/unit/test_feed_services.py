@@ -12,6 +12,7 @@ from src.bot.modules.autoparse.feed_services import (
     compute_feed_results,
     create_feed_session,
     get_feed_session,
+    move_vacancy_to_end,
     record_reaction,
 )
 
@@ -338,6 +339,50 @@ async def test_get_feed_session_delegates_to_repository():
 
     mock_repo_instance.get_by_id.assert_called_once_with(42)
     assert result is expected
+
+
+@pytest.mark.asyncio
+async def test_move_vacancy_to_end_appends_current_id_to_end_and_increments_index(
+    make_feed_session,
+):
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(
+        vacancy_ids=[10, 20, 30, 40],
+        current_index=1,
+    )
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.update = AsyncMock(return_value=feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        await move_vacancy_to_end(mock_session, feed_session)
+
+    call_kwargs = mock_repo_instance.update.call_args.kwargs
+    assert call_kwargs["vacancy_ids"] == [10, 30, 40, 20]
+    assert call_kwargs["current_index"] == 2
+
+
+@pytest.mark.asyncio
+async def test_move_vacancy_to_end_when_only_one_vacancy_keeps_it_at_end_and_exceeds_index(
+    make_feed_session,
+):
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(
+        vacancy_ids=[99],
+        current_index=0,
+    )
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.update = AsyncMock(return_value=feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        await move_vacancy_to_end(mock_session, feed_session)
+
+    call_kwargs = mock_repo_instance.update.call_args.kwargs
+    assert call_kwargs["vacancy_ids"] == [99]
+    assert call_kwargs["current_index"] == 1
 
 
 @pytest.mark.asyncio

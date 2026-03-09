@@ -540,6 +540,7 @@ feed-vacancy-progress = [{ $current } / { $total }]
 feed-btn-open = 🔗 Open on HH.ru
 feed-btn-like = 👍 Like
 feed-btn-dislike = 👎 Dislike
+feed-btn-show-later = 🔄 Show later
 feed-btn-stop = ⏹ Stop
 feed-results-header = 📊 Feed Results
 feed-results-seen = Viewed: { $seen } of { $total }
