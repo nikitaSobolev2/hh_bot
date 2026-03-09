@@ -254,12 +254,17 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
         raise
 
 
+_DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
+
+
 @celery_app.task(bind=True, name="autoparse.deliver_results", max_retries=3)
-def deliver_autoparse_results(self, company_id: int, user_id: int) -> dict:
-    return run_async(lambda sf: _deliver_results_async(sf, self, company_id, user_id))
+def deliver_autoparse_results(self, company_id: int, user_id: int, force_now: bool = False) -> dict:
+    return run_async(lambda sf: _deliver_results_async(sf, self, company_id, user_id, force_now))
 
 
-async def _deliver_results_async(session_factory, task, company_id: int, user_id: int) -> dict:
+async def _deliver_results_async(
+    session_factory, task, company_id: int, user_id: int, force_now: bool = False
+) -> dict:
     from zoneinfo import ZoneInfo
 
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
@@ -290,9 +295,11 @@ async def _deliver_results_async(session_factory, task, company_id: int, user_id
             target_time += timedelta(days=1)
 
         diff_minutes = abs((now_user - target_time).total_seconds()) / 60
-        if diff_minutes > 30:
+        if not force_now and diff_minutes > 30:
             eta = target_time.astimezone(UTC).replace(tzinfo=None)
-            deliver_autoparse_results.apply_async(args=[company_id, user_id], eta=eta)
+            r = _redis_client()
+            new_task = deliver_autoparse_results.apply_async(args=[company_id, user_id], eta=eta)
+            r.set(f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}", new_task.id, ex=86400)
             return {"status": "rescheduled", "eta": str(eta)}
 
         company_repo = AutoparseCompanyRepository(session)

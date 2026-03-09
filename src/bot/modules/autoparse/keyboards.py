@@ -161,6 +161,7 @@ def autoparse_detail_keyboard(
     company: AutoparseCompany,
     i18n: I18nContext,
     show_run_now: bool = False,
+    show_show_now: bool = False,
 ) -> InlineKeyboardMarkup:
     toggle_text = (
         i18n.get("autoparse-toggle-disabled")
@@ -196,6 +197,17 @@ def autoparse_detail_keyboard(
                     text=i18n.get("autoparse-run-now"),
                     callback_data=AutoparseCallback(
                         action="run_now", company_id=company.id
+                    ).pack(),
+                )
+            ]
+        )
+    if show_show_now:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-show-now"),
+                    callback_data=AutoparseCallback(
+                        action="show_now", company_id=company.id
                     ).pack(),
                 )
             ]

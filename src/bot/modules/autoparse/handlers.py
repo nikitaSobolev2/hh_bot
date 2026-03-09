@@ -9,6 +9,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import redis as redis_sync
+
 from src.bot.modules.autoparse import services as ap_service
 from src.bot.modules.autoparse.callbacks import (
     AutoparseCallback,
@@ -31,6 +33,7 @@ from src.bot.modules.autoparse.keyboards import (
 )
 from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
+from src.config import settings
 from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
 from src.models.user import User
@@ -303,7 +306,9 @@ async def company_detail(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=autoparse_detail_keyboard(company, i18n, show_run_now=show_run_now),
+            reply_markup=autoparse_detail_keyboard(
+                company, i18n, show_run_now=show_run_now, show_show_now=(count > 0)
+            ),
         )
     await callback.answer()
 
@@ -332,7 +337,9 @@ async def toggle_company(
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 text,
-                reply_markup=autoparse_detail_keyboard(company, i18n, show_run_now=show_run_now),
+                reply_markup=autoparse_detail_keyboard(
+                    company, i18n, show_run_now=show_run_now, show_show_now=(count > 0)
+                ),
             )
 
 
@@ -353,21 +360,56 @@ async def run_now(
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    if not company.is_enabled:
-        await callback.answer(i18n.get("autoparse-toggle-disabled"), show_alert=True)
+    if not await _should_show_run_now(session, company):
+        count = await ap_service.get_vacancy_count(session, company.id)
+        text = ap_service.format_company_detail(company, count, i18n)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                text,
+                reply_markup=autoparse_detail_keyboard(
+                    company, i18n, show_run_now=False, show_show_now=(count > 0)
+                ),
+            )
+        await callback.answer(i18n.get("autoparse-run-already-running"), show_alert=True)
         return
 
+    company = await ap_service.mark_parsing_started(session, company.id)
     run_autoparse_company.delay(company.id)
     await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
 
     count = await ap_service.get_vacancy_count(session, company.id)
-    show_run_now = await _should_show_run_now(session, company)
     text = ap_service.format_company_detail(company, count, i18n)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=autoparse_detail_keyboard(company, i18n, show_run_now=show_run_now),
+            reply_markup=autoparse_detail_keyboard(
+                company, i18n, show_run_now=False, show_show_now=(count > 0)
+            ),
         )
+
+
+# ── Show new vacancies now ───────────────────────────────────────────
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "show_now"))
+async def show_new_vacancies_now(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
+    from src.worker.app import celery_app
+
+    r = redis_sync.Redis.from_url(settings.redis_url)
+    task_key = f"{_DELIVER_TASK_PREFIX}{callback_data.company_id}:{user.id}"
+    scheduled_id = r.get(task_key)
+    if scheduled_id:
+        celery_app.control.revoke(scheduled_id.decode(), terminate=False)
+        r.delete(task_key)
+
+    deliver_autoparse_results.delay(callback_data.company_id, user.id, True)
+    await callback.answer(i18n.get("autoparse-delivering-now"), show_alert=True)
 
 
 # ── Delete ──────────────────────────────────────────────────────────

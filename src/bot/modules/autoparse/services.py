@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +67,15 @@ async def soft_delete_autoparse_company(session: AsyncSession, company_id: int) 
 async def get_autoparse_detail(session: AsyncSession, company_id: int) -> AutoparseCompany | None:
     repo = AutoparseCompanyRepository(session)
     return await repo.get_by_id(company_id)
+
+
+async def mark_parsing_started(session: AsyncSession, company_id: int) -> AutoparseCompany | None:
+    repo = AutoparseCompanyRepository(session)
+    company = await repo.get_by_id(company_id)
+    if company:
+        await repo.update(company, last_parsed_at=datetime.now(UTC).replace(tzinfo=None))
+        await session.commit()
+    return company
 
 
 async def get_vacancy_count(session: AsyncSession, company_id: int) -> int:
