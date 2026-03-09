@@ -1,6 +1,7 @@
 """Handlers for the Autoparse feature."""
 
 import contextlib
+from datetime import UTC, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -31,7 +32,9 @@ from src.bot.modules.autoparse.keyboards import (
 from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
 from src.core.i18n import I18nContext
+from src.models.autoparse import AutoparseCompany
 from src.models.user import User
+from src.repositories.app_settings import AppSettingRepository
 from src.repositories.parsing import ParsingCompanyRepository
 
 router = Router(name="autoparse")
@@ -46,6 +49,18 @@ async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
         return True
     experiences = await parsing_service.get_active_work_experiences(session, user_id)
     return bool(experiences)
+
+
+async def _should_show_run_now(session: AsyncSession, company: AutoparseCompany) -> bool:
+    """Return True if the manual 'Run now' button should be shown for this company."""
+    if not company.is_enabled:
+        return False
+    settings_repo = AppSettingRepository(session)
+    interval_hours = int(await settings_repo.get_value("autoparse_interval_hours", default=6))
+    if company.last_parsed_at is None:
+        return True
+    elapsed = datetime.now(UTC).replace(tzinfo=None) - company.last_parsed_at
+    return elapsed > timedelta(hours=interval_hours)
 
 
 # ── Hub ─────────────────────────────────────────────────────────────
@@ -283,11 +298,12 @@ async def company_detail(
         return
 
     count = await ap_service.get_vacancy_count(session, company.id)
+    show_run_now = await _should_show_run_now(session, company)
     text = ap_service.format_company_detail(company, count, i18n)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=autoparse_detail_keyboard(company, i18n),
+            reply_markup=autoparse_detail_keyboard(company, i18n, show_run_now=show_run_now),
         )
     await callback.answer()
 
@@ -311,11 +327,47 @@ async def toggle_company(
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
     if company:
         count = await ap_service.get_vacancy_count(session, company.id)
+        show_run_now = await _should_show_run_now(session, company)
         text = ap_service.format_company_detail(company, count, i18n)
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
-                text, reply_markup=autoparse_detail_keyboard(company, i18n)
+                text,
+                reply_markup=autoparse_detail_keyboard(company, i18n, show_run_now=show_run_now),
             )
+
+
+# ── Run now ─────────────────────────────────────────────────────────
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "run_now"))
+async def run_now(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.worker.tasks.autoparse import run_autoparse_company
+
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    if not company.is_enabled:
+        await callback.answer(i18n.get("autoparse-toggle-disabled"), show_alert=True)
+        return
+
+    run_autoparse_company.delay(company.id)
+    await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
+
+    count = await ap_service.get_vacancy_count(session, company.id)
+    show_run_now = await _should_show_run_now(session, company)
+    text = ap_service.format_company_detail(company, count, i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=autoparse_detail_keyboard(company, i18n, show_run_now=show_run_now),
+        )
 
 
 # ── Delete ──────────────────────────────────────────────────────────

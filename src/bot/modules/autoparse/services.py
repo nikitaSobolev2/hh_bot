@@ -93,15 +93,15 @@ def format_company_detail(
         f"<b>{i18n.get('autoparse-detail-title')}</b>",
         "",
         f"<b>{company.vacancy_title}</b>",
-        f"Status: {status}",
-        f"URL: <code>{company.search_url[:80]}...</code>",
-        f"Keywords: {company.keyword_filter or '—'}",
-        f"Skills: {company.skills or '—'}",
+        f"{i18n.get('autoparse-detail-status')}: {status}",
+        f"{i18n.get('autoparse-detail-url')}: <code>{company.search_url[:80]}...</code>",
+        f"{i18n.get('autoparse-detail-keywords')}: {company.keyword_filter or '—'}",
+        f"{i18n.get('autoparse-detail-skills')}: {company.skills or '—'}",
         "",
         f"{i18n.get('autoparse-detail-metrics')}:",
-        f"  Runs: {company.total_runs}",
-        f"  Vacancies: {vacancies_count}",
-        f"  Last run: {last_run}",
+        f"  {i18n.get('autoparse-detail-runs')}: {company.total_runs}",
+        f"  {i18n.get('autoparse-detail-vacancies')}: {vacancies_count}",
+        f"  {i18n.get('autoparse-detail-last-run')}: {last_run}",
     ]
     return "\n".join(lines)
 

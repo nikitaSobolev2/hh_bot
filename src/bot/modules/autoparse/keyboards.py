@@ -157,42 +157,58 @@ def autoparse_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def autoparse_detail_keyboard(company: AutoparseCompany, i18n: I18nContext) -> InlineKeyboardMarkup:
+def autoparse_detail_keyboard(
+    company: AutoparseCompany,
+    i18n: I18nContext,
+    show_run_now: bool = False,
+) -> InlineKeyboardMarkup:
     toggle_text = (
         i18n.get("autoparse-toggle-disabled")
         if company.is_enabled
         else i18n.get("autoparse-toggle-enabled")
     )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=toggle_text,
+                callback_data=AutoparseCallback(action="toggle", company_id=company.id).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-download-title"),
+                callback_data=AutoparseCallback(
+                    action="download", company_id=company.id
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-confirm-delete"),
+                callback_data=AutoparseCallback(action="delete", company_id=company.id).pack(),
+            )
+        ],
+    ]
+    if show_run_now:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=toggle_text,
-                    callback_data=AutoparseCallback(action="toggle", company_id=company.id).pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-download-title"),
+                    text=i18n.get("autoparse-run-now"),
                     callback_data=AutoparseCallback(
-                        action="download", company_id=company.id
+                        action="run_now", company_id=company.id
                     ).pack(),
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-confirm-delete"),
-                    callback_data=AutoparseCallback(action="delete", company_id=company.id).pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-back"),
-                    callback_data=AutoparseCallback(action="list").pack(),
-                )
-            ],
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action="list").pack(),
+            )
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def download_format_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
