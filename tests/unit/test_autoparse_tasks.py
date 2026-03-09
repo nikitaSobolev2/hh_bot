@@ -122,6 +122,11 @@ class TestFormatVacancyMessage:
         msg = _format_vacancy_message(v)
         assert "Acme Corp" in msg
 
+    def test_company_line_has_no_leading_blank_line(self):
+        v = self._make_vacancy(company_name="Acme Corp")
+        msg = _format_vacancy_message(v)
+        assert "\n\n" not in msg
+
     def test_omits_company_line_when_absent(self):
         v = self._make_vacancy(company_name=None)
         msg = _format_vacancy_message(v)
