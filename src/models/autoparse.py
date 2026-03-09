@@ -24,6 +24,7 @@ class AutoparseCompany(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     last_parsed_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_delivered_at: Mapped[datetime | None] = mapped_column(default=None)
     total_runs: Mapped[int] = mapped_column(Integer, default=0)
     total_vacancies_found: Mapped[int] = mapped_column(Integer, default=0)
 

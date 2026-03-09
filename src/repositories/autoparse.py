@@ -1,6 +1,7 @@
 from collections.abc import Sequence
+from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
@@ -126,3 +127,27 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         stmt = select(AutoparsedVacancy.hh_vacancy_id).distinct()
         result = await self._session.execute(stmt)
         return set(result.scalars().all())
+
+    async def get_new_since(
+        self,
+        company_id: int,
+        since: datetime,
+        min_compat: float,
+        *,
+        limit: int = 100,
+    ) -> list[AutoparsedVacancy]:
+        stmt = (
+            select(AutoparsedVacancy)
+            .where(
+                AutoparsedVacancy.autoparse_company_id == company_id,
+                AutoparsedVacancy.created_at > since,
+                or_(
+                    AutoparsedVacancy.compatibility_score.is_(None),
+                    AutoparsedVacancy.compatibility_score >= min_compat,
+                ),
+            )
+            .order_by(AutoparsedVacancy.created_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())

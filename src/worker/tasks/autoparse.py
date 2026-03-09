@@ -404,15 +404,11 @@ async def _deliver_results_async(
             return {"status": "company_not_found"}
 
         vacancy_repo = AutoparsedVacancyRepository(session)
-        today = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
-        vacancies = await vacancy_repo.get_by_company(company_id, limit=100)
+        since = company.last_delivered_at or (
+            datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+        )
         min_compat = ap_settings.get("min_compatibility_percent", 50)
-        new_vacancies = [
-            v
-            for v in vacancies
-            if v.created_at >= today
-            and (v.compatibility_score is None or v.compatibility_score >= min_compat)
-        ]
+        new_vacancies = await vacancy_repo.get_new_since(company_id, since, min_compat)
 
     if not new_vacancies:
         return {"status": "no_new_vacancies"}
@@ -439,5 +435,14 @@ async def _deliver_results_async(
         await _send_vacancies_individually(bot, user.telegram_id, new_vacancies, locale)
     finally:
         await bot.session.close()
+
+    async with session_factory() as session:
+        company_repo = AutoparseCompanyRepository(session)
+        refreshed = await company_repo.get_by_id(company_id)
+        if refreshed:
+            await company_repo.update(
+                refreshed,
+                last_delivered_at=datetime.now(UTC).replace(tzinfo=None),
+            )
 
     return {"status": "delivered", "count": len(new_vacancies)}

@@ -1,5 +1,7 @@
 """Unit tests for autoparse task helper functions."""
 
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,6 +9,7 @@ import pytest
 from src.worker.tasks.autoparse import (
     _INTER_MESSAGE_DELAY_SECONDS,
     _build_user_profile,
+    _deliver_results_async,
     _format_vacancy_message,
     _resolve_cached_vacancy,
     _send_vacancies_individually,
@@ -419,3 +422,240 @@ class TestDeliverMinCompatFilter:
         old = self._make_vacancy(compatibility_score=100.0, created_at_delta_hours=25)
         result = self._apply_filter([old], min_compat=0)
         assert result == []
+
+
+class TestDeliverLastDeliveredAt:
+    """Verify that deliver_autoparse_results only sends vacancies not yet delivered."""
+
+    def _make_session_factory(self, session: MagicMock):
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        return factory
+
+    def _make_user(self) -> MagicMock:
+        user = MagicMock()
+        user.language_code = "ru"
+        user.timezone = "Europe/Moscow"
+        user.autoparse_settings = {}
+        user.telegram_id = 100
+        return user
+
+    def _make_company(self, *, last_delivered_at: datetime | None = None) -> MagicMock:
+        company = MagicMock()
+        company.last_delivered_at = last_delivered_at
+        company.vacancy_title = "Python Dev"
+        return company
+
+    def _make_vacancy(self) -> MagicMock:
+        v = MagicMock()
+        v.url = "https://hh.ru/vacancy/1"
+        v.title = "Dev"
+        v.salary = None
+        v.compatibility_score = None
+        v.company_name = None
+        v.work_formats = None
+        v.work_experience = None
+        v.employment_type = None
+        v.work_schedule = None
+        v.working_hours = None
+        v.raw_skills = None
+        return v
+
+    def _make_repos(
+        self,
+        *,
+        user: MagicMock,
+        company: MagicMock,
+        vacancies: list,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_new_since = AsyncMock(return_value=vacancies)
+
+        return user_repo, company_repo, vacancy_repo
+
+    @pytest.mark.asyncio
+    async def test_uses_last_delivered_at_as_since_when_set(self):
+        last_delivered = datetime(2026, 3, 9, 10, 0, 0)
+        user = self._make_user()
+        company = self._make_company(last_delivered_at=last_delivered)
+        user_repo, company_repo, vacancy_repo = self._make_repos(
+            user=user, company=company, vacancies=[]
+        )
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+        ):
+            await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        since_used = vacancy_repo.get_new_since.call_args.args[1]
+        assert since_used == last_delivered
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_24h_window_when_last_delivered_at_is_none(self):
+        user = self._make_user()
+        company = self._make_company(last_delivered_at=None)
+        user_repo, company_repo, vacancy_repo = self._make_repos(
+            user=user, company=company, vacancies=[]
+        )
+
+        before = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+        ):
+            await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        after = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+        since_used = vacancy_repo.get_new_since.call_args.args[1]
+        assert before <= since_used <= after
+
+    @pytest.mark.asyncio
+    async def test_calls_get_new_since_not_get_by_company(self):
+        user = self._make_user()
+        company = self._make_company()
+        user_repo, company_repo, vacancy_repo = self._make_repos(
+            user=user, company=company, vacancies=[]
+        )
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+        ):
+            await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        vacancy_repo.get_new_since.assert_called_once()
+        vacancy_repo.get_by_company.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_no_new_vacancies_when_get_new_since_is_empty(self):
+        user = self._make_user()
+        company = self._make_company()
+        user_repo, company_repo, vacancy_repo = self._make_repos(
+            user=user, company=company, vacancies=[]
+        )
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        assert result == {"status": "no_new_vacancies"}
+
+    @pytest.mark.asyncio
+    async def test_does_not_update_last_delivered_at_when_no_new_vacancies(self):
+        user = self._make_user()
+        company = self._make_company()
+        user_repo, company_repo, vacancy_repo = self._make_repos(
+            user=user, company=company, vacancies=[]
+        )
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+        ):
+            await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        company_repo.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_updates_last_delivered_at_after_successful_delivery(self):
+        user = self._make_user()
+        company = self._make_company()
+        vacancies = [self._make_vacancy()]
+        user_repo, company_repo, vacancy_repo = self._make_repos(
+            user=user, company=company, vacancies=vacancies
+        )
+
+        bot_mock = MagicMock()
+        bot_mock.session = MagicMock()
+        bot_mock.session.close = AsyncMock()
+
+        before = datetime.now(UTC).replace(tzinfo=None)
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch("aiogram.Bot", return_value=bot_mock),
+            patch(
+                "src.services.ai.streaming._send_with_retry",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.worker.tasks.autoparse._send_vacancies_individually",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        after = datetime.now(UTC).replace(tzinfo=None)
+
+        assert result == {"status": "delivered", "count": 1}
+        company_repo.update.assert_called_once()
+        _, kwargs = company_repo.update.call_args
+        assert before <= kwargs["last_delivered_at"] <= after
