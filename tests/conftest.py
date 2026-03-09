@@ -68,6 +68,55 @@ def sample_vacancy_page_html() -> str:
 
 
 @pytest.fixture
+def vacancy_html_with_viewer_count() -> str:
+    """Search card where only a viewer-count string appears in the Magritte text class."""
+    return """
+    <div data-qa="vacancy-serp__vacancy">
+        <a href="https://hh.ru/vacancy/99999">Backend Developer</a>
+        <a data-qa="vacancy-serp__vacancy-employer">Acme Corp</a>
+        <span class="magritte-text___abc">Сейчас смотрят 6 человек</span>
+    </div>
+    """
+
+
+@pytest.fixture
+def vacancy_html_with_rating() -> str:
+    """Search card where only a company rating appears in the Magritte text class."""
+    return """
+    <div data-qa="vacancy-serp__vacancy">
+        <a href="https://hh.ru/vacancy/88888">Tech Lead</a>
+        <a data-qa="vacancy-serp__vacancy-employer">Some Ltd</a>
+        <span class="magritte-text___abc">2.6</span>
+    </div>
+    """
+
+
+@pytest.fixture
+def vacancy_html_with_multi_span_salary() -> str:
+    """Search card where salary is split across child spans (tests spacing fix)."""
+    return """
+    <div data-qa="vacancy-serp__vacancy">
+        <a href="https://hh.ru/vacancy/77777">Senior Dev</a>
+        <a data-qa="vacancy-serp__vacancy-employer">Big Corp</a>
+        <span class="magritte-text___abc">
+            <span>от</span><span>4 000</span><span>$</span><span>за месяц</span>
+        </span>
+    </div>
+    """
+
+
+@pytest.fixture
+def vacancy_page_html_with_work_format_prefix() -> str:
+    """Vacancy detail page where work_formats element includes the Russian label prefix."""
+    return """
+    <div data-qa="vacancy-description">Python developer needed.</div>
+    <div data-qa="skills-element"><div>Python</div></div>
+    <div data-qa="work-formats-text">Формат работы:удалённо</div>
+    <div data-qa="work-experience-text">Опыт работы:1–3 года</div>
+    """
+
+
+@pytest.fixture
 def mock_openai_response() -> MagicMock:
     response = MagicMock()
     response.choices = [MagicMock()]

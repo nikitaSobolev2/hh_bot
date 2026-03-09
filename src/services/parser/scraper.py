@@ -21,6 +21,37 @@ logger = get_logger(__name__)
 HH_VACANCY_RE = re.compile(r"https?://(?:[a-z]+\.)?hh\.ru/vacancy/(\d+)")
 SALARY_CLASS_RE = re.compile(r"magritte-text___")
 
+_SALARY_CURRENCY_MARKERS: tuple[str, ...] = ("₽", "$", "€", "руб")
+
+_DETAIL_FIELD_PREFIXES: dict[str, str] = {
+    "work_formats": "Формат работы:",
+    "work_experience": "Опыт работы:",
+    "employment_type": "Занятость:",
+    "work_schedule": "График работы:",
+    "working_hours": "Рабочие часы:",
+}
+
+_MULTI_SPACE_RE = re.compile(r" {2,}")
+
+
+def _looks_like_salary(text: str) -> bool:
+    """Return True only when *text* contains a currency marker.
+
+    HH.ru search cards show both salary amounts and viewer-count strings
+    (e.g. "Сейчас смотрят 6 человек") inside the same Magritte text class.
+    Ratings like "2.6" also match that class.  We accept a string as salary
+    only when it carries an explicit currency marker.
+    """
+    return any(marker in text for marker in _SALARY_CURRENCY_MARKERS)
+
+
+def _strip_field_prefix(field: str, text: str) -> str:
+    """Remove a known Russian label prefix from a scraped detail field value."""
+    prefix = _DETAIL_FIELD_PREFIXES.get(field, "")
+    if prefix and text.startswith(prefix):
+        return text[len(prefix) :].strip()
+    return text
+
 
 class HHScraper:
     def __init__(
@@ -135,8 +166,9 @@ class HHScraper:
             metadata["company_url"] = employer_link
 
         for el in block.find_all(class_=SALARY_CLASS_RE):
-            text = el.get_text(strip=True)
-            if text and any(c.isdigit() for c in text):
+            raw = el.get_text(separator=" ", strip=True)
+            text = _MULTI_SPACE_RE.sub(" ", raw)
+            if text and _looks_like_salary(text):
                 metadata["salary"] = text
                 break
 
@@ -257,6 +289,6 @@ class HHScraper:
         for field, data_qa in self._VACANCY_DETAIL_SELECTORS.items():
             el = soup.find(attrs={"data-qa": data_qa})
             if el:
-                result[field] = el.get_text(strip=True)
+                result[field] = _strip_field_prefix(field, el.get_text(strip=True))
 
         return result

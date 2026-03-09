@@ -296,6 +296,55 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
 
 
 _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
+_INTER_MESSAGE_DELAY_SECONDS = 1.0
+
+
+def _format_vacancy_message(vacancy) -> str:
+    """Build a standalone rich Telegram HTML message for one autoparsed vacancy."""
+    lines = [f"<b><a href='{vacancy.url}'>{vacancy.title}</a></b>"]
+
+    if vacancy.company_name:
+        lines.append(f"\n\U0001f3e2 {vacancy.company_name}")
+
+    if vacancy.salary:
+        lines.append(f"\U0001f4b0 {vacancy.salary}")
+
+    if vacancy.work_experience:
+        lines.append(f"\U0001f393 {vacancy.work_experience}")
+
+    if vacancy.employment_type:
+        lines.append(f"\u23f0 {vacancy.employment_type}")
+
+    if vacancy.work_schedule:
+        lines.append(f"\U0001f4c5 {vacancy.work_schedule}")
+
+    if vacancy.working_hours:
+        lines.append(f"\U0001f557 {vacancy.working_hours}")
+
+    if vacancy.work_formats:
+        lines.append(f"\U0001f4cd {vacancy.work_formats}")
+
+    skills = vacancy.raw_skills
+    if skills:
+        skills_text = ", ".join(skills) if isinstance(skills, list) else str(skills)
+        lines.append(f"\U0001f527 {skills_text}")
+
+    if vacancy.compatibility_score is not None:
+        lines.append(f"\U0001f3af Совместимость: {vacancy.compatibility_score:.0f}%")
+
+    return "\n".join(lines)
+
+
+async def _send_vacancies_individually(bot, chat_id: int, vacancies: list) -> None:
+    """Send each vacancy as a separate Telegram message with a rate-limiting delay."""
+    import asyncio
+
+    from src.services.ai.streaming import _send_with_retry
+
+    for vacancy in vacancies:
+        text = _format_vacancy_message(vacancy)
+        await _send_with_retry(bot, chat_id, text=text, parse_mode="HTML")
+        await asyncio.sleep(_INTER_MESSAGE_DELAY_SECONDS)
 
 
 @celery_app.task(bind=True, name="autoparse.deliver_results", max_retries=3)
@@ -366,22 +415,11 @@ async def _deliver_results_async(
     )
 
     try:
-        lines = [f"<b>\U0001f4e5 {company.vacancy_title}</b>\n"]
-        for v in new_vacancies[:20]:
-            compat = f" [{v.compatibility_score:.0f}%]" if v.compatibility_score is not None else ""
-            salary = f" | {v.salary}" if v.salary else ""
-            lines.append(
-                f"\u2022 <a href='{v.url}'>{v.title}</a>{salary}{compat}"
-                f"\n  {v.company_name or '—'}"
-                f" | {v.work_formats or '—'}"
-            )
-        if len(new_vacancies) > 20:
-            lines.append(f"\n... and {len(new_vacancies) - 20} more")
-
-        text = "\n".join(lines)
         from src.services.ai.streaming import _send_with_retry
 
-        await _send_with_retry(bot, user.telegram_id, text=text, parse_mode="HTML")
+        header = f"\U0001f4e5 <b>{company.vacancy_title}</b> — {len(new_vacancies)} новых вакансий"
+        await _send_with_retry(bot, user.telegram_id, text=header, parse_mode="HTML")
+        await _send_vacancies_individually(bot, user.telegram_id, new_vacancies)
     finally:
         await bot.session.close()
 

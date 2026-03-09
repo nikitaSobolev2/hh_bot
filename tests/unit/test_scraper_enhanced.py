@@ -3,7 +3,43 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from bs4 import BeautifulSoup
 
-from src.services.parser.scraper import HHScraper
+from src.services.parser.scraper import HHScraper, _looks_like_salary, _strip_field_prefix
+
+
+class TestLooksLikeSalary:
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("300 000 руб.", True),
+            ("от 100 000 ₽ в месяц, до вычета налогов", True),
+            ("до 200 $ за месяц", True),
+            ("от 4 000 € в год", True),
+            ("Сейчас смотрят 6 человек", False),
+            ("Сейчас смотрит 1 человек", False),
+            ("2.6", False),
+            ("42", False),
+            ("", False),
+        ],
+    )
+    def test_identifies_salary_text_correctly(self, text: str, expected: bool):
+        assert _looks_like_salary(text) is expected
+
+
+class TestStripFieldPrefix:
+    @pytest.mark.parametrize(
+        "field,text,expected",
+        [
+            ("work_formats", "Формат работы:удалённо", "удалённо"),
+            ("work_formats", "Формат работы: удалённо или гибрид", "удалённо или гибрид"),
+            ("work_formats", "Remote", "Remote"),
+            ("work_experience", "Опыт работы:1–3 года", "1–3 года"),
+            ("employment_type", "Занятость:полная", "полная"),
+            ("working_hours", "8 часов", "8 часов"),
+            ("unknown_field", "Формат работы:удалённо", "Формат работы:удалённо"),
+        ],
+    )
+    def test_strips_known_label_prefix(self, field: str, text: str, expected: str):
+        assert _strip_field_prefix(field, text) == expected
 
 
 class TestExtractCardMetadata:
@@ -32,6 +68,24 @@ class TestExtractCardMetadata:
         soup = BeautifulSoup(sample_vacancy_html, "html.parser")
         results = self.scraper._extract_vacancies_from_page(soup, "backend")
         assert results[0].get("salary") is None
+
+    def test_viewer_count_is_not_stored_as_salary(self, vacancy_html_with_viewer_count: str):
+        soup = BeautifulSoup(vacancy_html_with_viewer_count, "html.parser")
+        results = self.scraper._extract_vacancies_from_page(soup, "")
+        assert results[0].get("salary") is None
+
+    def test_company_rating_is_not_stored_as_salary(self, vacancy_html_with_rating: str):
+        soup = BeautifulSoup(vacancy_html_with_rating, "html.parser")
+        results = self.scraper._extract_vacancies_from_page(soup, "")
+        assert results[0].get("salary") is None
+
+    def test_multi_span_salary_has_spaces_between_parts(
+        self, vacancy_html_with_multi_span_salary: str
+    ):
+        soup = BeautifulSoup(vacancy_html_with_multi_span_salary, "html.parser")
+        results = self.scraper._extract_vacancies_from_page(soup, "")
+        salary = results[0].get("salary", "")
+        assert salary == "от 4 000 $ за месяц"
 
 
 class TestParseVacancyPageEnhanced:
@@ -63,3 +117,33 @@ class TestParseVacancyPageEnhanced:
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_strips_work_formats_label_prefix(
+        self, vacancy_page_html_with_work_format_prefix: str
+    ):
+        scraper = HHScraper()
+        mock_client = AsyncMock()
+
+        with patch.object(scraper, "_fetch_page") as mock_fetch:
+            mock_fetch.return_value = BeautifulSoup(
+                vacancy_page_html_with_work_format_prefix, "html.parser"
+            )
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+
+        assert result["work_formats"] == "удалённо"
+
+    @pytest.mark.asyncio
+    async def test_strips_work_experience_label_prefix(
+        self, vacancy_page_html_with_work_format_prefix: str
+    ):
+        scraper = HHScraper()
+        mock_client = AsyncMock()
+
+        with patch.object(scraper, "_fetch_page") as mock_fetch:
+            mock_fetch.return_value = BeautifulSoup(
+                vacancy_page_html_with_work_format_prefix, "html.parser"
+            )
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+
+        assert result["work_experience"] == "1–3 года"
