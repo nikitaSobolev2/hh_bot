@@ -19,6 +19,7 @@ from src.services.parser.keyword_match import matches_keyword_expression
 logger = get_logger(__name__)
 
 HH_VACANCY_RE = re.compile(r"https?://(?:[a-z]+\.)?hh\.ru/vacancy/(\d+)")
+SALARY_CLASS_RE = re.compile(r"magritte-text___")
 
 
 class HHScraper:
@@ -77,8 +78,8 @@ class HHScraper:
         self,
         soup: BeautifulSoup,
         keyword: str,
-    ) -> list[dict[str, str]]:
-        found: list[dict[str, str]] = []
+    ) -> list[dict]:
+        found: list[dict] = []
         blocks = soup.select('[data-qa="vacancy-serp__vacancy"]')
 
         for block in blocks:
@@ -98,15 +99,48 @@ class HHScraper:
             if matches_keyword_expression(title, keyword):
                 vacancy_id = self._extract_vacancy_id(clean_url)
                 if vacancy_id:
-                    found.append(
-                        {
-                            "url": clean_url,
-                            "title": title,
-                            "hh_vacancy_id": vacancy_id,
-                        }
-                    )
+                    item: dict = {
+                        "url": clean_url,
+                        "title": title,
+                        "hh_vacancy_id": vacancy_id,
+                    }
+                    item.update(self._extract_card_metadata(block))
+                    found.append(item)
 
         return found
+
+    @staticmethod
+    def _extract_card_metadata(block: "Tag") -> dict:  # noqa: F821
+        """Extract tags, company info, and salary from a search result card."""
+        metadata: dict = {}
+
+        tag_elements = block.select('[data-qa^="vacancy-serp__"]')
+        tags = []
+        for el in tag_elements:
+            qa = el.get("data-qa", "")
+            if qa and qa != "vacancy-serp__vacancy" and qa != "vacancy-serp__vacancy-employer":
+                text = el.get_text(strip=True)
+                if text:
+                    tags.append(text)
+        if tags:
+            metadata["tags"] = tags
+
+        employer_el = block.select_one('[data-qa="vacancy-serp__vacancy-employer"]')
+        if employer_el:
+            metadata["company_name"] = employer_el.get_text(strip=True)
+            employer_link = employer_el.get("href") if employer_el.name == "a" else None
+            if not employer_link:
+                a_tag = employer_el.find("a", href=True)
+                employer_link = a_tag["href"] if a_tag else None
+            metadata["company_url"] = employer_link
+
+        for el in block.find_all(class_=SALARY_CLASS_RE):
+            text = el.get_text(strip=True)
+            if text and any(c.isdigit() for c in text):
+                metadata["salary"] = text
+                break
+
+        return metadata
 
     @staticmethod
     def _collect_new_from_page(
@@ -188,14 +222,29 @@ class HHScraper:
 
         return collected[:target_count]
 
+    _VACANCY_DETAIL_SELECTORS: dict[str, str] = {
+        "compensation_frequency": "compensation-frequency-text",
+        "work_experience": "work-experience-text",
+        "employment_type": "common-employment-text",
+        "work_schedule": "work-schedule-by-days-text",
+        "working_hours": "working-hours-text",
+        "work_formats": "work-formats-text",
+    }
+
     async def parse_vacancy_page(
         self,
         client: httpx.AsyncClient,
         url: str,
-    ) -> tuple[str, list[str]]:
+    ) -> dict:
+        """Parse a single vacancy page and return all available fields.
+
+        Returns a dict with keys: description, skills, and optional detail
+        fields (compensation_frequency, work_experience, etc.).
+        Returns an empty dict on fetch failure.
+        """
         soup = await self._fetch_page(client, url)
         if soup is None:
-            return "", []
+            return {}
 
         desc_el = soup.find(attrs={"data-qa": "vacancy-description"})
         description = desc_el.get_text(separator="\n", strip=True) if desc_el else ""
@@ -203,4 +252,11 @@ class HHScraper:
         skill_elements = soup.select('[data-qa="skills-element"] > div')
         skills = [el.get_text(strip=True) for el in skill_elements if el.get_text(strip=True)]
 
-        return description, skills
+        result: dict = {"description": description, "skills": skills}
+
+        for field, data_qa in self._VACANCY_DETAIL_SELECTORS.items():
+            el = soup.find(attrs={"data-qa": data_qa})
+            if el:
+                result[field] = el.get_text(strip=True)
+
+        return result

@@ -1,4 +1,5 @@
 from src.models.app_settings import AppSetting
+from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.models.balance import BalanceTransaction
 from src.models.ban import UserBan
 from src.models.blacklist import VacancyBlacklist
@@ -18,6 +19,8 @@ __all__ = [
     "Role",
     "RolePermission",
     "User",
+    "AutoparseCompany",
+    "AutoparsedVacancy",
     "UserWorkExperience",
     "ParsingCompany",
     "ParsedVacancy",

@@ -31,10 +31,18 @@ def sample_vacancy_html() -> str:
         <a href="https://hh.ru/vacancy/12345?from=search">
             Frontend Developer
         </a>
+        <a data-qa="vacancy-serp__vacancy-employer" href="https://hh.ru/employer/100">
+            Yandex
+        </a>
+        <span class="magritte-text___abc123">300 000 руб.</span>
+        <div data-qa="vacancy-serp__tag-remote">Remote</div>
     </div>
     <div data-qa="vacancy-serp__vacancy">
         <a href="https://hh.ru/vacancy/67890">
             Backend Engineer
+        </a>
+        <a data-qa="vacancy-serp__vacancy-employer" href="https://hh.ru/employer/200">
+            VK
         </a>
     </div>
     """
@@ -50,6 +58,12 @@ def sample_vacancy_page_html() -> str:
     <div data-qa="skills-element"><div>Python</div></div>
     <div data-qa="skills-element"><div>Django</div></div>
     <div data-qa="skills-element"><div>PostgreSQL</div></div>
+    <div data-qa="compensation-frequency-text">Monthly</div>
+    <div data-qa="work-experience-text">3-6 years</div>
+    <div data-qa="common-employment-text">Full-time</div>
+    <div data-qa="work-schedule-by-days-text">5/2</div>
+    <div data-qa="working-hours-text">8 hours</div>
+    <div data-qa="work-formats-text">Remote</div>
     """
 
 

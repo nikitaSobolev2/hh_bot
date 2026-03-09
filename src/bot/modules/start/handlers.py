@@ -11,7 +11,7 @@ from src.models.user import User
 
 router = Router(name="start")
 
-_HANDLED_IN_START = {"main", "profile", "settings", "my_parsings", "admin", "support"}
+_HANDLED_IN_START = {"main", "profile", "settings", "my_parsings", "autoparse", "admin", "support"}
 
 
 def _menu_keyboard(user: User, i18n: I18nContext) -> object:
@@ -65,6 +65,11 @@ async def menu_navigation(
         from src.bot.modules.parsing.handlers import show_parsing_list
 
         await show_parsing_list(callback, user, i18n)
+
+    elif action == "autoparse":
+        from src.bot.modules.autoparse.handlers import show_autoparse_hub
+
+        await show_autoparse_hub(callback, i18n)
 
     elif action == "admin":
         if not user.is_admin:

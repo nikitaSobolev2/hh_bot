@@ -64,13 +64,13 @@ class TestParseVacancyPage:
 
         with patch.object(scraper, "_fetch_page") as mock_fetch:
             mock_fetch.return_value = BeautifulSoup(sample_vacancy_page_html, "html.parser")
-            desc, skills = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
-        assert "Python" in desc
-        assert "Django" in desc
-        assert "Python" in skills
-        assert "Django" in skills
-        assert "PostgreSQL" in skills
+        assert "Python" in result["description"]
+        assert "Django" in result["description"]
+        assert "Python" in result["skills"]
+        assert "Django" in result["skills"]
+        assert "PostgreSQL" in result["skills"]
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_failed_fetch(self):
@@ -78,7 +78,6 @@ class TestParseVacancyPage:
         mock_client = AsyncMock()
 
         with patch.object(scraper, "_fetch_page", return_value=None):
-            desc, skills = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
-        assert desc == ""
-        assert skills == []
+        assert result == {}

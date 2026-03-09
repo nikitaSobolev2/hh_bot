@@ -1,5 +1,6 @@
 from aiogram import Router
-from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards.common import back_to_menu_keyboard
@@ -10,6 +11,7 @@ from src.bot.modules.user_settings.keyboards import (
     language_keyboard,
     settings_keyboard,
 )
+from src.bot.modules.user_settings.states import UserSettingsForm
 from src.core.i18n import I18nContext
 from src.models.user import User
 
@@ -29,6 +31,7 @@ async def settings_actions(
     callback_data: SettingsCallback,
     user: User,
     session: AsyncSession,
+    state: FSMContext,
     i18n: I18nContext,
 ) -> None:
     action = callback_data.action
@@ -66,6 +69,15 @@ async def settings_actions(
             reply_markup=back_to_menu_keyboard(i18n),
         )
 
+    elif action == "timezone":
+        await callback.message.edit_text(
+            i18n.get("settings-timezone-current", tz=user.timezone)
+            + "\n\n"
+            + i18n.get("settings-timezone-enter"),
+            reply_markup=settings_keyboard(i18n),
+        )
+        await state.set_state(UserSettingsForm.timezone)
+
     elif action == "delete_data":
         await callback.message.edit_text(
             f"{i18n.get('delete-data-title')}\n\n{i18n.get('delete-data-warning')}",
@@ -73,6 +85,23 @@ async def settings_actions(
         )
 
     await callback.answer()
+
+
+@router.message(UserSettingsForm.timezone)
+async def receive_timezone(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    tz = message.text.strip()
+    await settings_service.set_timezone(session, user.id, tz)
+    await state.clear()
+    await message.answer(
+        i18n.get("settings-timezone-current", tz=tz),
+        reply_markup=settings_keyboard(i18n),
+    )
 
 
 async def _show_blacklist_management(

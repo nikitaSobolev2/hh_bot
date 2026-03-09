@@ -11,6 +11,26 @@ from src.core.logging import get_logger
 logger = get_logger(__name__)
 
 MAX_DESCRIPTION_LENGTH = 8000
+_COMPAT_DESCRIPTION_LIMIT = 4000
+
+_COMPATIBILITY_SYSTEM_PROMPT = (
+    "Ты — профессиональный HR-аналитик.\n"
+    "Твоя задача: оценить совместимость кандидата и вакансии.\n"
+    "Ты получаешь:\n"
+    "1. Название вакансии, требуемые навыки и описание.\n"
+    "2. Технический стек кандидата и описание его опыта работы.\n\n"
+    "[ПРАВИЛА]\n"
+    "1. Сравни стек кандидата с требуемыми навыками вакансии.\n"
+    "   Каждая совпадающая или близко связанная технология добавляет баллы.\n"
+    "2. Оцени релевантность опыта: соответствует ли уровень и домен\n"
+    "   кандидата требованиям вакансии?\n"
+    "3. Название вакансии задаёт контекст важности каждого навыка.\n"
+    "4. Верни ТОЛЬКО одно целое число от 0 до 100. Без пояснений, без лишнего текста.\n"
+    "   - 0-20: почти нет совпадений\n"
+    "   - 21-50: частичное совпадение, не хватает ключевых требований\n"
+    "   - 51-75: хорошее совпадение, большинство требований покрыто\n"
+    "   - 76-100: сильное совпадение, покрывает почти все требования"
+)
 
 
 class AIClient:
@@ -81,6 +101,39 @@ class AIClient:
         except Exception as exc:
             logger.error("OpenAI keyword extraction failed", error=str(exc))
             return []
+
+    async def calculate_compatibility(
+        self,
+        vacancy_title: str,
+        vacancy_skills: list[str],
+        vacancy_description: str,
+        user_tech_stack: list[str],
+        user_work_experience: str,
+    ) -> float:
+        user_content = (
+            f"Вакансия: {vacancy_title}\n"
+            f"Требуемые навыки: {', '.join(vacancy_skills)}\n"
+            f"Описание (сокращённое): {vacancy_description[:_COMPAT_DESCRIPTION_LIMIT]}\n\n"
+            f"Стек кандидата: {', '.join(user_tech_stack)}\n"
+            f"Опыт кандидата: {user_work_experience}"
+        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=60,
+                messages=[
+                    {"role": "system", "content": _COMPATIBILITY_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                max_tokens=10,
+                temperature=0.1,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            digits = "".join(c for c in raw if c.isdigit())
+            return min(float(int(digits)), 100.0) if digits else 0.0
+        except Exception as exc:
+            logger.error("Compatibility scoring failed", error=str(exc))
+            return 0.0
 
     async def generate_key_phrases(
         self,

@@ -35,6 +35,7 @@ def _register_middlewares(dp: Dispatcher) -> None:
 
 def _register_routers(dp: Dispatcher) -> None:
     from src.bot.modules.admin.handlers import router as admin_router
+    from src.bot.modules.autoparse.handlers import router as autoparse_router
     from src.bot.modules.parsing.handlers import router as parsing_router
     from src.bot.modules.profile.handlers import router as profile_router
     from src.bot.modules.start.handlers import router as start_router
@@ -45,6 +46,7 @@ def _register_routers(dp: Dispatcher) -> None:
     dp.include_router(start_router)
     dp.include_router(profile_router)
     dp.include_router(user_settings_router)
+    dp.include_router(autoparse_router)
     dp.include_router(parsing_router)
     dp.include_router(support_user_router)
     dp.include_router(support_admin_router)

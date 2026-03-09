@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.db.base import Base
 
 if TYPE_CHECKING:
+    from src.models.autoparse import AutoparseCompany
     from src.models.balance import BalanceTransaction
     from src.models.ban import UserBan
     from src.models.blacklist import VacancyBlacklist
@@ -37,6 +38,8 @@ class User(Base):
     referral_code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
 
     notification_settings: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    timezone: Mapped[str] = mapped_column(String(50), default="Europe/Moscow")
+    autoparse_settings: Mapped[dict | None] = mapped_column(JSONB, default=None)
 
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
@@ -47,6 +50,9 @@ class User(Base):
     referred_by: Mapped[User | None] = relationship(remote_side="User.id")
 
     parsing_companies: Mapped[list[ParsingCompany]] = relationship(back_populates="user")
+    autoparse_companies: Mapped[list[AutoparseCompany]] = relationship(
+        back_populates="user",
+    )
     blacklist_entries: Mapped[list[VacancyBlacklist]] = relationship(back_populates="user")
     balance_transactions: Mapped[list[BalanceTransaction]] = relationship(back_populates="user")
     referral_events: Mapped[list[ReferralEvent]] = relationship(

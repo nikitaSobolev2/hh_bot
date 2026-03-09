@@ -66,10 +66,13 @@ class ParsingExtractor:
             vac: dict,
         ) -> tuple[dict, list[str], list[str]]:
             async with sem:
-                description, skills = await self._scraper.parse_vacancy_page(
+                page_data = await self._scraper.parse_vacancy_page(
                     client,
                     vac["url"],
                 )
+
+                description = page_data.get("description", "")
+                skills = page_data.get("skills", [])
 
                 async with scrape_lock:
                     scraped_count[0] += 1
@@ -99,16 +102,24 @@ class ParsingExtractor:
                 if on_vacancy_processed:
                     await on_vacancy_processed(current, total)
 
-                return (
-                    {
-                        **vac,
-                        "description": description,
-                        "raw_skills": skills,
-                        "ai_keywords": ai_keywords,
-                    },
-                    skills,
-                    ai_keywords,
-                )
+                merged = {
+                    **vac,
+                    "description": description,
+                    "raw_skills": skills,
+                    "ai_keywords": ai_keywords,
+                }
+                for key in (
+                    "compensation_frequency",
+                    "work_experience",
+                    "employment_type",
+                    "work_schedule",
+                    "working_hours",
+                    "work_formats",
+                ):
+                    if key in page_data:
+                        merged[key] = page_data[key]
+
+                return merged, skills, ai_keywords
 
         async with httpx.AsyncClient() as client:
             results = await asyncio.gather(*[_process_vacancy(client, vac) for vac in vacancies])

@@ -22,6 +22,9 @@ MANAGED_SETTINGS = [
     ("cb_parsing_recovery_timeout", "CB Parsing Recovery Timeout (s)", "text"),
     ("cb_keyphrase_failure_threshold", "CB Key Phrases Failure Threshold", "text"),
     ("cb_keyphrase_recovery_timeout", "CB Key Phrases Recovery Timeout (s)", "text"),
+    ("task_autoparse_enabled", "Autoparse Task Enabled", "toggle"),
+    ("autoparse_interval_hours", "Autoparse Interval (hours)", "text"),
+    ("autoparse_target_count", "Autoparse Target Count per Run", "text"),
 ]
 
 

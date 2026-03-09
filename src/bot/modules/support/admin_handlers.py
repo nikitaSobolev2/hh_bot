@@ -263,12 +263,16 @@ async def take_ticket(
     if channel_id and ticket.channel_message_id:
         admin_link = f"https://t.me/{user.username}" if user.username else ""
         taken_label = i18n.get("support-taken-popup", id=str(ticket.id))
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"👤 @{user.username}" if user.username else taken_label,
-                url=admin_link or f"tg://user?id={user.telegram_id}",
-            )],
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"👤 @{user.username}" if user.username else taken_label,
+                        url=admin_link or f"tg://user?id={user.telegram_id}",
+                    )
+                ],
+            ]
+        )
         with contextlib.suppress(Exception):
             await callback.bot.edit_message_reply_markup(
                 chat_id=int(channel_id),
@@ -491,18 +495,24 @@ def _company_format_keyboard(
 ) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(
-                text=i18n.get("btn-view-message"),
-                callback_data=TicketAdminCallback(action="fmt_msg", page=company_id).pack(),
-            )],
-            [InlineKeyboardButton(
-                text=i18n.get("btn-download-md"),
-                callback_data=TicketAdminCallback(action="fmt_md", page=company_id).pack(),
-            )],
-            [InlineKeyboardButton(
-                text=i18n.get("btn-download-txt"),
-                callback_data=TicketAdminCallback(action="fmt_txt", page=company_id).pack(),
-            )],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-view-message"),
+                    callback_data=TicketAdminCallback(action="fmt_msg", page=company_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-download-md"),
+                    callback_data=TicketAdminCallback(action="fmt_md", page=company_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-download-txt"),
+                    callback_data=TicketAdminCallback(action="fmt_txt", page=company_id).pack(),
+                )
+            ],
         ]
     )
 

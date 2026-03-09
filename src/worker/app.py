@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from src.config import settings
 
@@ -9,6 +10,7 @@ celery_app = Celery(
     include=[
         "src.worker.tasks.parsing",
         "src.worker.tasks.ai",
+        "src.worker.tasks.autoparse",
     ],
 )
 
@@ -22,4 +24,10 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     result_expires=3600,
+    beat_schedule={
+        "autoparse-dispatch-all": {
+            "task": "autoparse.dispatch_all",
+            "schedule": crontab(minute=0, hour="*/6"),
+        },
+    },
 )

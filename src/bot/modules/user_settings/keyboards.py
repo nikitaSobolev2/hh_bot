@@ -34,6 +34,12 @@ def settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("btn-timezone"),
+                    callback_data=SettingsCallback(action="timezone").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-delete-data"),
                     callback_data=SettingsCallback(action="delete_data").pack(),
                 )

@@ -51,6 +51,18 @@ class ParsedVacancyRepository(BaseRepository[ParsedVacancy]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, ParsedVacancy)
 
+    async def exists_by_hh_id(self, hh_vacancy_id: str) -> bool:
+        stmt = select(
+            select(ParsedVacancy.id).where(ParsedVacancy.hh_vacancy_id == hh_vacancy_id).exists()
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
+
+    async def get_by_hh_id(self, hh_vacancy_id: str) -> ParsedVacancy | None:
+        stmt = select(ParsedVacancy).where(ParsedVacancy.hh_vacancy_id == hh_vacancy_id)
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
 
 class AggregatedResultRepository(BaseRepository[AggregatedResult]):
     def __init__(self, session: AsyncSession) -> None:

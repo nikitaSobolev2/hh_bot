@@ -21,6 +21,12 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("btn-autoparse"),
+                    callback_data=MenuCallback(action="autoparse").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-profile"),
                     callback_data=MenuCallback(action="profile").pack(),
                 )

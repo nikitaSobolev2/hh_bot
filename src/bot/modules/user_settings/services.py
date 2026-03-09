@@ -17,6 +17,14 @@ async def set_language(session: AsyncSession, user_id: int, lang: str) -> None:
         await session.commit()
 
 
+async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> None:
+    repo = UserRepository(session)
+    db_user = await repo.get_by_id(user_id)
+    if db_user:
+        await repo.update(db_user, timezone=timezone)
+        await session.commit()
+
+
 async def get_blacklist_contexts(session: AsyncSession, user_id: int) -> list[tuple[str, int]]:
     now = datetime.now(UTC).replace(tzinfo=None)
     stmt = (
