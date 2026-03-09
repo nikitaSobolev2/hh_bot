@@ -63,6 +63,11 @@ class ParsedVacancyRepository(BaseRepository[ParsedVacancy]):
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def get_all_hh_ids(self) -> set[str]:
+        stmt = select(ParsedVacancy.hh_vacancy_id).distinct()
+        result = await self._session.execute(stmt)
+        return set(result.scalars().all())
+
 
 class AggregatedResultRepository(BaseRepository[AggregatedResult]):
     def __init__(self, session: AsyncSession) -> None:

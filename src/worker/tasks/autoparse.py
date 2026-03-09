@@ -65,8 +65,82 @@ def run_autoparse_company(self, company_id: int) -> dict:
     return run_async(lambda sf: _run_autoparse_company_async(sf, self, company_id))
 
 
-async def _run_autoparse_company_async(session_factory, task, company_id: int) -> dict:
+def _build_user_profile(
+    ap_settings: dict,
+    work_experiences: list,
+) -> tuple[list[str], str]:
+    """Derive the user's tech stack and experience summary from settings and work history."""
     from src.bot.modules.autoparse.services import derive_tech_stack_from_experiences
+
+    custom_stack = ap_settings.get("tech_stack", [])
+    if custom_stack:
+        user_stack = custom_stack
+    elif work_experiences:
+        user_stack = derive_tech_stack_from_experiences(work_experiences)
+    else:
+        user_stack = []
+
+    user_exp = (
+        "\n".join(f"{e.company_name} — {e.stack}" for e in work_experiences)
+        if work_experiences
+        else ""
+    )
+    return user_stack, user_exp
+
+
+def _build_autoparsed_vacancy(vac: dict, company_id: int, compat_score: float | None):
+    """Construct an AutoparsedVacancy ORM instance from a vacancy result dict."""
+    from src.models.autoparse import AutoparsedVacancy
+
+    return AutoparsedVacancy(
+        autoparse_company_id=company_id,
+        hh_vacancy_id=vac["hh_vacancy_id"],
+        url=vac.get("url", ""),
+        title=vac.get("title", ""),
+        description=vac.get("description", ""),
+        raw_skills=vac.get("raw_skills"),
+        company_name=vac.get("company_name"),
+        company_url=vac.get("company_url"),
+        salary=vac.get("salary"),
+        compensation_frequency=vac.get("compensation_frequency"),
+        work_experience=vac.get("work_experience"),
+        employment_type=vac.get("employment_type"),
+        work_schedule=vac.get("work_schedule"),
+        working_hours=vac.get("working_hours"),
+        work_formats=vac.get("work_formats"),
+        tags=vac.get("tags"),
+        compatibility_score=compat_score,
+    )
+
+
+async def _resolve_cached_vacancy(
+    hh_id: str,
+    vac: dict,
+    vacancy_repo,
+    parsed_vacancy_repo,
+) -> tuple[dict, object | None]:
+    """Return (enriched_vac, existing_autoparsed) for a cached vacancy.
+
+    Tries AutoparsedVacancy first (full data). Falls back to ParsedVacancy
+    to merge description and raw_skills onto the card-level dict so that
+    AI compatibility scoring can still run even when the vacancy was only
+    previously seen via the manual parsing feature.
+    """
+    existing = await vacancy_repo.get_by_hh_id(hh_id)
+    if existing is not None:
+        return vac, existing
+
+    existing_parsed = await parsed_vacancy_repo.get_by_hh_id(hh_id)
+    if existing_parsed is not None:
+        vac = {
+            **vac,
+            "description": existing_parsed.description or "",
+            "raw_skills": existing_parsed.raw_skills or [],
+        }
+    return vac, None
+
+
+async def _run_autoparse_company_async(session_factory, task, company_id: int) -> dict:
     from src.models.autoparse import AutoparsedVacancy
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
@@ -107,8 +181,7 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
 
             global_ids = await vacancy_repo.get_all_known_hh_ids()
             parsed_repo = ParsedVacancyRepository(session)
-            for row in await parsed_repo.get_all():
-                global_ids.add(row.hh_vacancy_id)
+            global_ids |= await parsed_repo.get_all_hh_ids()
 
             settings_repo = AppSettingRepository(session)
             target_count = int(await settings_repo.get_value("autoparse_target_count", default=50))
@@ -128,27 +201,13 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
             known_hh_ids=global_ids,
         )
 
-        custom_stack = ap_settings.get("tech_stack", [])
-        if custom_stack:
-            user_stack = custom_stack
-        elif work_experiences:
-            user_stack = derive_tech_stack_from_experiences(work_experiences)
-        else:
-            user_stack = []
-
-        if work_experiences:
-            user_exp = "\n".join(
-                f"{e.company_name} — {e.stack}" for e in work_experiences
-            )
-        else:
-            user_exp = ""
-
-        has_profile = bool(user_stack or user_exp)
-        ai_client = AIClient() if has_profile else None
+        user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
+        ai_client = AIClient() if (user_stack or user_exp) else None
 
         new_count = 0
         async with session_factory() as session:
             vacancy_repo = AutoparsedVacancyRepository(session)
+            parsed_repo = ParsedVacancyRepository(session)
 
             for vac in results:
                 hh_id = vac["hh_vacancy_id"]
@@ -157,8 +216,10 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
                     continue
 
                 if vac.get("cached"):
-                    existing = await vacancy_repo.get_by_hh_id(hh_id)
-                    if existing:
+                    vac, existing = await _resolve_cached_vacancy(
+                        hh_id, vac, vacancy_repo, parsed_repo
+                    )
+                    if existing is not None:
                         cached_compat = None
                         if ai_client and existing.raw_skills:
                             cached_compat = await ai_client.calculate_compatibility(
@@ -202,27 +263,7 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
                         user_work_experience=user_exp,
                     )
 
-                session.add(
-                    AutoparsedVacancy(
-                        autoparse_company_id=company_id,
-                        hh_vacancy_id=hh_id,
-                        url=vac.get("url", ""),
-                        title=vac.get("title", ""),
-                        description=vac.get("description", ""),
-                        raw_skills=vac.get("raw_skills"),
-                        company_name=vac.get("company_name"),
-                        company_url=vac.get("company_url"),
-                        salary=vac.get("salary"),
-                        compensation_frequency=vac.get("compensation_frequency"),
-                        work_experience=vac.get("work_experience"),
-                        employment_type=vac.get("employment_type"),
-                        work_schedule=vac.get("work_schedule"),
-                        working_hours=vac.get("working_hours"),
-                        work_formats=vac.get("work_formats"),
-                        tags=vac.get("tags"),
-                        compatibility_score=compat_score,
-                    )
-                )
+                session.add(_build_autoparsed_vacancy(vac, company_id, compat_score))
                 new_count += 1
 
             company_repo = AutoparseCompanyRepository(session)

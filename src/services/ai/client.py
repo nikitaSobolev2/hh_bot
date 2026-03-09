@@ -7,30 +7,14 @@ from openai import AsyncOpenAI
 
 from src.config import settings
 from src.core.logging import get_logger
+from src.services.ai.prompts import (
+    build_compatibility_system_prompt,
+    build_compatibility_user_content,
+)
 
 logger = get_logger(__name__)
 
 MAX_DESCRIPTION_LENGTH = 8000
-_COMPAT_DESCRIPTION_LIMIT = 4000
-
-_COMPATIBILITY_SYSTEM_PROMPT = (
-    "Ты — профессиональный HR-аналитик.\n"
-    "Твоя задача: оценить совместимость кандидата и вакансии.\n"
-    "Ты получаешь:\n"
-    "1. Название вакансии, требуемые навыки и описание.\n"
-    "2. Технический стек кандидата и описание его опыта работы.\n\n"
-    "[ПРАВИЛА]\n"
-    "1. Сравни стек кандидата с требуемыми навыками вакансии.\n"
-    "   Каждая совпадающая или близко связанная технология добавляет баллы.\n"
-    "2. Оцени релевантность опыта: соответствует ли уровень и домен\n"
-    "   кандидата требованиям вакансии?\n"
-    "3. Название вакансии задаёт контекст важности каждого навыка.\n"
-    "4. Верни ТОЛЬКО одно целое число от 0 до 100. Без пояснений, без лишнего текста.\n"
-    "   - 0-20: почти нет совпадений\n"
-    "   - 21-50: частичное совпадение, не хватает ключевых требований\n"
-    "   - 51-75: хорошее совпадение, большинство требований покрыто\n"
-    "   - 76-100: сильное совпадение, покрывает почти все требования"
-)
 
 
 class AIClient:
@@ -110,21 +94,24 @@ class AIClient:
         user_tech_stack: list[str],
         user_work_experience: str,
     ) -> float:
-        user_content = (
-            f"Вакансия: {vacancy_title}\n"
-            f"Требуемые навыки: {', '.join(vacancy_skills)}\n"
-            f"Описание (сокращённое): {vacancy_description[:_COMPAT_DESCRIPTION_LIMIT]}\n\n"
-            f"Стек кандидата: {', '.join(user_tech_stack)}\n"
-            f"Опыт кандидата: {user_work_experience}"
-        )
+        messages = [
+            {"role": "system", "content": build_compatibility_system_prompt()},
+            {
+                "role": "user",
+                "content": build_compatibility_user_content(
+                    vacancy_title=vacancy_title,
+                    vacancy_skills=vacancy_skills,
+                    vacancy_description=vacancy_description,
+                    user_tech_stack=user_tech_stack,
+                    user_work_experience=user_work_experience,
+                ),
+            },
+        ]
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=60,
-                messages=[
-                    {"role": "system", "content": _COMPATIBILITY_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
+                messages=messages,
                 max_tokens=10,
                 temperature=0.1,
             )

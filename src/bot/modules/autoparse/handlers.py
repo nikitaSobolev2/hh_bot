@@ -3,13 +3,12 @@
 import contextlib
 from datetime import UTC, datetime, timedelta
 
+import redis as redis_sync
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
-
-import redis as redis_sync
 
 from src.bot.modules.autoparse import services as ap_service
 from src.bot.modules.autoparse.callbacks import (
@@ -374,6 +373,9 @@ async def run_now(
         return
 
     company = await ap_service.mark_parsing_started(session, company.id)
+    if company is None:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     run_autoparse_company.delay(company.id)
     await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
 
@@ -398,8 +400,8 @@ async def show_new_vacancies_now(
     user: User,
     i18n: I18nContext,
 ) -> None:
-    from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
     from src.worker.app import celery_app
+    from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
 
     r = redis_sync.Redis.from_url(settings.redis_url)
     task_key = f"{_DELIVER_TASK_PREFIX}{callback_data.company_id}:{user.id}"

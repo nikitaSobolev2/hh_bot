@@ -1,8 +1,53 @@
-"""Prompt builders for AI key-phrase generation."""
+"""Prompt builders for AI requests."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+_COMPAT_DESCRIPTION_LIMIT = 4000
+
+
+def build_compatibility_system_prompt() -> str:
+    """Return the system prompt for candidate-vacancy compatibility scoring."""
+    return (
+        "Ты — Senior Technical Recruitment Analyst с 30-летним опытом оценки соответствия "
+        "инженерных кандидатов техническим вакансиям.\n"
+        "Твоя задача: вычислить процент совместимости кандидата с вакансией.\n\n"
+        "Ты получаешь:\n"
+        "1. Вакансия: название, требуемые навыки, описание.\n"
+        "2. Кандидат: технический стек, краткое описание опыта работы.\n\n"
+        "[ПРАВИЛА ОЦЕНКИ]\n"
+        "- Каждая совпадающая или смежная технология увеличивает балл.\n"
+        "- Релевантность области и уровня опыта кандидата вакансии важна.\n"
+        "- Название вакансии задаёт вес каждого навыка.\n"
+        "- Частичные совпадения (близкие технологии, смежные домены)"
+        " учитываются пропорционально.\n\n"
+        "[ПРАВИЛО ВЫВОДА]\n"
+        "Ответь ТОЛЬКО одним целым числом от 0 до 100. Без текста, без пояснений, без единиц. "
+        "Только число.\n\n"
+        "Шкала:\n"
+        "0-20: почти нет совпадений\n"
+        "21-50: частичное совпадение, не хватает ключевых требований\n"
+        "51-75: хорошее совпадение, большинство требований покрыто\n"
+        "76-100: сильное совпадение, покрывает почти все требования"
+    )
+
+
+def build_compatibility_user_content(
+    vacancy_title: str,
+    vacancy_skills: list[str],
+    vacancy_description: str,
+    user_tech_stack: list[str],
+    user_work_experience: str,
+) -> str:
+    """Return the user message for the compatibility scoring request."""
+    return (
+        f"Вакансия: {vacancy_title}\n"
+        f"Требуемые навыки: {', '.join(vacancy_skills)}\n"
+        f"Описание (сокращённое): {vacancy_description[:_COMPAT_DESCRIPTION_LIMIT]}\n\n"
+        f"Стек кандидата: {', '.join(user_tech_stack)}\n"
+        f"Опыт кандидата: {user_work_experience}"
+    )
 
 
 @dataclass(frozen=True)

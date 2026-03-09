@@ -178,9 +178,7 @@ def autoparse_detail_keyboard(
         [
             InlineKeyboardButton(
                 text=i18n.get("autoparse-download-title"),
-                callback_data=AutoparseCallback(
-                    action="download", company_id=company.id
-                ).pack(),
+                callback_data=AutoparseCallback(action="download", company_id=company.id).pack(),
             )
         ],
         [
@@ -195,9 +193,7 @@ def autoparse_detail_keyboard(
             [
                 InlineKeyboardButton(
                     text=i18n.get("autoparse-run-now"),
-                    callback_data=AutoparseCallback(
-                        action="run_now", company_id=company.id
-                    ).pack(),
+                    callback_data=AutoparseCallback(action="run_now", company_id=company.id).pack(),
                 )
             ]
         )
