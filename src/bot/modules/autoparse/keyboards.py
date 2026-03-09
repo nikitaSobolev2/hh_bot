@@ -9,14 +9,17 @@ from src.bot.modules.autoparse.callbacks import (
     AutoparseCallback,
     AutoparseDownloadCallback,
     AutoparseSettingsCallback,
+    AutoparseWorkExpCallback,
 )
 from src.models.autoparse import AutoparseCompany
 from src.models.parsing import ParsingCompany
+from src.models.work_experience import UserWorkExperience
 
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
 
 _PER_PAGE = 5
+MAX_WORK_EXPERIENCES = 6
 
 
 def autoparse_hub_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
@@ -286,6 +289,60 @@ def cancel_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=i18n.get("btn-cancel"),
                     callback_data=AutoparseCallback(action="hub").pack(),
+                )
+            ]
+        ]
+    )
+
+
+def autoparse_work_exp_keyboard(
+    experiences: list[UserWorkExperience],
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for exp in experiences:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"\u274c {i18n.get('btn-remove')} {exp.company_name}",
+                    callback_data=AutoparseWorkExpCallback(
+                        action="remove",
+                        work_exp_id=exp.id,
+                    ).pack(),
+                )
+            ]
+        )
+
+    if len(experiences) < MAX_WORK_EXPERIENCES:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-add-company"),
+                    callback_data=AutoparseWorkExpCallback(action="add").pack(),
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action="settings").pack(),
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cancel_add_work_exp_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=AutoparseWorkExpCallback(action="cancel_add").pack(),
                 )
             ]
         ]

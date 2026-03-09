@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
+from src.models.work_experience import UserWorkExperience
 from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
 from src.repositories.user import UserRepository
 
@@ -169,3 +170,15 @@ async def update_user_autoparse_settings(
     current.update(kwargs)
     await user_repo.update(user, autoparse_settings=current)
     await session.commit()
+
+
+def derive_tech_stack_from_experiences(experiences: list[UserWorkExperience]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for exp in experiences:
+        for tech in exp.stack.split(","):
+            normalized = tech.strip()
+            if normalized and normalized.lower() not in seen:
+                seen.add(normalized.lower())
+                result.append(normalized)
+    return result

@@ -10,6 +10,7 @@ class AutoparseForm(StatesGroup):
 
 
 class AutoparseSettingsForm(StatesGroup):
-    work_experience = State()
+    work_exp_company_name = State()
+    work_exp_stack = State()
     send_time = State()
     tech_stack = State()

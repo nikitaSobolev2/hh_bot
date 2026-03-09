@@ -502,6 +502,7 @@ autoparse-settings-title = ⚙️ Autoparse Settings
 autoparse-settings-work-exp = 💼 Work Experience
 autoparse-settings-send-time = 🕐 Send Time
 autoparse-settings-tech-stack = 🛠️ Tech Stack
+autoparse-settings-stack-auto = auto from work experience
 autoparse-settings-saved = ✅ Settings saved.
 autoparse-enter-work-exp = Describe your work experience (position, years, domains):
 autoparse-enter-send-time = Enter time to send results (format HH:MM):

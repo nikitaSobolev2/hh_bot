@@ -502,6 +502,7 @@ autoparse-settings-title = ⚙️ Настройки автопарсинга
 autoparse-settings-work-exp = 💼 Опыт работы
 autoparse-settings-send-time = 🕐 Время отправки
 autoparse-settings-tech-stack = 🛠️ Стек технологий
+autoparse-settings-stack-auto = авто из опыта работы
 autoparse-settings-saved = ✅ Настройки сохранены.
 autoparse-enter-work-exp = Опишите ваш опыт работы (должность, годы, домены):
 autoparse-enter-send-time = Введите время отправки результатов (формат ЧЧ:ММ):

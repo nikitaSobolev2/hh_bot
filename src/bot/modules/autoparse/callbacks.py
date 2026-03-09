@@ -14,3 +14,8 @@ class AutoparseDownloadCallback(CallbackData, prefix="apd"):
 
 class AutoparseSettingsCallback(CallbackData, prefix="aps"):
     action: str
+
+
+class AutoparseWorkExpCallback(CallbackData, prefix="apwe"):
+    action: str
+    work_exp_id: int = 0

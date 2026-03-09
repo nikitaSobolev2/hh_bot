@@ -66,11 +66,13 @@ def run_autoparse_company(self, company_id: int) -> dict:
 
 
 async def _run_autoparse_company_async(session_factory, task, company_id: int) -> dict:
+    from src.bot.modules.autoparse.services import derive_tech_stack_from_experiences
     from src.models.autoparse import AutoparsedVacancy
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
     from src.repositories.parsing import ParsedVacancyRepository
     from src.repositories.user import UserRepository
+    from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
     from src.services.parser.hh_parser_service import HHParserService
     from src.worker.circuit_breaker import CircuitBreaker
@@ -115,6 +117,9 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
             user = await user_repo.get_by_id(company.user_id)
             ap_settings = (user.autoparse_settings or {}) if user else {}
 
+            we_repo = WorkExperienceRepository(session)
+            work_experiences = await we_repo.get_active_by_user(company.user_id)
+
         parser = HHParserService()
         results = await parser.parse_vacancies(
             company.search_url,
@@ -123,8 +128,21 @@ async def _run_autoparse_company_async(session_factory, task, company_id: int) -
             known_hh_ids=global_ids,
         )
 
-        user_stack = ap_settings.get("tech_stack", [])
-        user_exp = ap_settings.get("work_experience", "")
+        custom_stack = ap_settings.get("tech_stack", [])
+        if custom_stack:
+            user_stack = custom_stack
+        elif work_experiences:
+            user_stack = derive_tech_stack_from_experiences(work_experiences)
+        else:
+            user_stack = []
+
+        if work_experiences:
+            user_exp = "\n".join(
+                f"{e.company_name} — {e.stack}" for e in work_experiences
+            )
+        else:
+            user_exp = ""
+
         has_profile = bool(user_stack or user_exp)
         ai_client = AIClient() if has_profile else None
 

@@ -13,18 +13,23 @@ from src.bot.modules.autoparse.callbacks import (
     AutoparseCallback,
     AutoparseDownloadCallback,
     AutoparseSettingsCallback,
+    AutoparseWorkExpCallback,
 )
 from src.bot.modules.autoparse.keyboards import (
+    MAX_WORK_EXPERIENCES,
     autoparse_detail_keyboard,
     autoparse_hub_keyboard,
     autoparse_list_keyboard,
     autoparse_settings_keyboard,
+    autoparse_work_exp_keyboard,
+    cancel_add_work_exp_keyboard,
     cancel_keyboard,
     confirm_delete_keyboard,
     download_format_keyboard,
     template_list_keyboard,
 )
 from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
+from src.bot.modules.parsing import services as parsing_service
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.parsing import ParsingCompanyRepository
@@ -352,40 +357,156 @@ async def settings_hub(
     i18n: I18nContext,
 ) -> None:
     current = await ap_service.get_user_autoparse_settings(session, user.id)
+    experiences = await parsing_service.get_active_work_experiences(session, user.id)
+
+    if experiences:
+        exp_lines = [f"  \u2022 <b>{e.company_name}</b> \u2014 {e.stack}" for e in experiences]
+        exp_display = "\n" + "\n".join(exp_lines)
+    else:
+        exp_display = " —"
+
+    custom_stack = current.get("tech_stack", [])
+    if custom_stack:
+        stack_display = ", ".join(custom_stack)
+    elif experiences:
+        derived = ap_service.derive_tech_stack_from_experiences(experiences)
+        stack_display = f"{', '.join(derived)} ({i18n.get('autoparse-settings-stack-auto')})"
+    else:
+        stack_display = "—"
+
     text = (
         f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
-        f"Work experience: {current.get('work_experience') or '—'}\n"
-        f"Tech stack: {', '.join(current.get('tech_stack', [])) or '—'}\n"
-        f"Send time: {current.get('send_time', '12:00')}"
+        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
+        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
+        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}"
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=autoparse_settings_keyboard(i18n))
     await callback.answer()
 
 
+async def _show_ap_work_exp(
+    message,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    *,
+    edit: bool = True,
+) -> None:
+    experiences = await parsing_service.get_active_work_experiences(session, user.id)
+    text = f"<b>{i18n.get('autoparse-settings-work-exp')}</b>\n\n{i18n.get('work-exp-prompt')}"
+    if experiences:
+        lines = [f"  \u2022 <b>{e.company_name}</b> \u2014 {e.stack}" for e in experiences]
+        text += "\n\n" + "\n".join(lines)
+    kb = autoparse_work_exp_keyboard(experiences, i18n)
+    if edit:
+        with contextlib.suppress(TelegramBadRequest):
+            await message.edit_text(text, reply_markup=kb)
+    else:
+        await message.answer(text, reply_markup=kb)
+
+
 @router.callback_query(AutoparseSettingsCallback.filter(F.action == "work_exp"))
-async def settings_work_exp(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
-    await state.set_state(AutoparseSettingsForm.work_experience)
+async def settings_work_exp(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await _show_ap_work_exp(callback.message, user, session, i18n)
+    await callback.answer()
+
+
+@router.callback_query(AutoparseWorkExpCallback.filter(F.action == "add"))
+async def ap_work_exp_add(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    active_count = await parsing_service.count_active_work_experiences(session, user.id)
+    if active_count >= MAX_WORK_EXPERIENCES:
+        await callback.answer(i18n.get("work-exp-max-reached"), show_alert=True)
+        return
+    await state.set_state(AutoparseSettingsForm.work_exp_company_name)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
-            i18n.get("autoparse-settings-work-exp") + "\n\n" + i18n.get("autoparse-enter-work-exp"),
-            reply_markup=cancel_keyboard(i18n),
+            i18n.get("work-exp-enter-name"),
+            reply_markup=cancel_add_work_exp_keyboard(i18n),
         )
     await callback.answer()
 
 
-@router.message(AutoparseSettingsForm.work_experience)
-async def receive_work_exp(
-    message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
+@router.message(AutoparseSettingsForm.work_exp_company_name)
+async def ap_fsm_work_exp_company_name(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
 ) -> None:
-    await ap_service.update_user_autoparse_settings(
-        session, user.id, work_experience=message.text.strip()
-    )
-    await state.clear()
+    name = message.text.strip() if message.text else ""
+    if not name or len(name) > 255:
+        await message.answer(i18n.get("work-exp-name-invalid"))
+        return
+    await state.update_data(ap_we_company_name=name)
+    await state.set_state(AutoparseSettingsForm.work_exp_stack)
     await message.answer(
-        i18n.get("autoparse-settings-saved"),
-        reply_markup=autoparse_hub_keyboard(i18n),
+        i18n.get("work-exp-enter-stack", company=name),
+        reply_markup=cancel_add_work_exp_keyboard(i18n),
     )
+
+
+@router.message(AutoparseSettingsForm.work_exp_stack)
+async def ap_fsm_work_exp_stack(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    stack = message.text.strip() if message.text else ""
+    if not stack:
+        await message.answer(i18n.get("work-exp-stack-invalid"))
+        return
+    data = await state.get_data()
+    company_name = data["ap_we_company_name"]
+    await state.clear()
+    await parsing_service.add_work_experience(session, user.id, company_name, stack)
+    await _show_ap_work_exp(message, user, session, i18n, edit=False)
+
+
+@router.callback_query(AutoparseWorkExpCallback.filter(F.action == "remove"))
+async def ap_work_exp_remove(
+    callback: CallbackQuery,
+    callback_data: AutoparseWorkExpCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    deactivated = await parsing_service.deactivate_work_experience(
+        session, callback_data.work_exp_id, user.id
+    )
+    if not deactivated:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+    await _show_ap_work_exp(callback.message, user, session, i18n)
+    await callback.answer()
+
+
+@router.callback_query(AutoparseWorkExpCallback.filter(F.action == "cancel_add"))
+async def ap_work_exp_cancel_add(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await _show_ap_work_exp(callback.message, user, session, i18n)
+    await callback.answer()
 
 
 @router.callback_query(AutoparseSettingsCallback.filter(F.action == "send_time"))
