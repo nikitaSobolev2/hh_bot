@@ -9,3 +9,9 @@ class SettingsCallback(CallbackData, prefix="settings"):
 class BlacklistCallback(CallbackData, prefix="bl"):
     action: str
     context: str = ""
+
+
+class TimezoneCallback(CallbackData, prefix="tz"):
+    action: str  # "page", "select", "search"
+    page: int = 0
+    value: str = ""

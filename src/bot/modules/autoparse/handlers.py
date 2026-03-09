@@ -1,6 +1,9 @@
 """Handlers for the Autoparse feature."""
 
+import contextlib
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,10 +38,11 @@ _PER_PAGE = 5
 
 
 async def show_autoparse_hub(callback: CallbackQuery, i18n: I18nContext) -> None:
-    await callback.message.edit_text(
-        f"<b>{i18n.get('autoparse-hub-title')}</b>\n\n{i18n.get('autoparse-hub-subtitle')}",
-        reply_markup=autoparse_hub_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            f"<b>{i18n.get('autoparse-hub-title')}</b>\n\n{i18n.get('autoparse-hub-subtitle')}",
+            reply_markup=autoparse_hub_keyboard(i18n),
+        )
 
 
 @router.callback_query(AutoparseCallback.filter(F.action == "hub"))
@@ -68,10 +72,11 @@ async def create_start(
     display = companies[:_PER_PAGE]
 
     await state.set_state(AutoparseForm.select_template)
-    await callback.message.edit_text(
-        i18n.get("autoparse-select-template"),
-        reply_markup=template_list_keyboard(display, page, has_more, i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-select-template"),
+            reply_markup=template_list_keyboard(display, page, has_more, i18n),
+        )
     await callback.answer()
 
 
@@ -95,20 +100,22 @@ async def template_selected(
         keyword_filter=company.keyword_filter,
     )
     await state.set_state(AutoparseForm.skills)
-    await callback.message.edit_text(
-        i18n.get("autoparse-enter-skills"),
-        reply_markup=cancel_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-enter-skills"),
+            reply_markup=cancel_keyboard(i18n),
+        )
     await callback.answer()
 
 
 @router.callback_query(AutoparseCallback.filter(F.action == "skip_template"))
 async def skip_template(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
     await state.set_state(AutoparseForm.vacancy_title)
-    await callback.message.edit_text(
-        i18n.get("autoparse-enter-title"),
-        reply_markup=cancel_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-enter-title"),
+            reply_markup=cancel_keyboard(i18n),
+        )
     await callback.answer()
 
 
@@ -188,18 +195,20 @@ async def list_companies(
         session, user.id, page, _PER_PAGE
     )
     if not companies and page == 0:
-        await callback.message.edit_text(
-            i18n.get("autoparse-empty-list"),
-            reply_markup=autoparse_hub_keyboard(i18n),
-        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-empty-list"),
+                reply_markup=autoparse_hub_keyboard(i18n),
+            )
         await callback.answer()
         return
 
     has_more = (page + 1) * _PER_PAGE < total
-    await callback.message.edit_text(
-        i18n.get("autoparse-list-title"),
-        reply_markup=autoparse_list_keyboard(companies, page, has_more, i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-list-title"),
+            reply_markup=autoparse_list_keyboard(companies, page, has_more, i18n),
+        )
     await callback.answer()
 
 
@@ -220,10 +229,11 @@ async def company_detail(
 
     count = await ap_service.get_vacancy_count(session, company.id)
     text = ap_service.format_company_detail(company, count, i18n)
-    await callback.message.edit_text(
-        text,
-        reply_markup=autoparse_detail_keyboard(company, i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=autoparse_detail_keyboard(company, i18n),
+        )
     await callback.answer()
 
 
@@ -247,9 +257,10 @@ async def toggle_company(
     if company:
         count = await ap_service.get_vacancy_count(session, company.id)
         text = ap_service.format_company_detail(company, count, i18n)
-        await callback.message.edit_text(
-            text, reply_markup=autoparse_detail_keyboard(company, i18n)
-        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                text, reply_markup=autoparse_detail_keyboard(company, i18n)
+            )
 
 
 # ── Delete ──────────────────────────────────────────────────────────
@@ -261,10 +272,11 @@ async def delete_prompt(
     callback_data: AutoparseCallback,
     i18n: I18nContext,
 ) -> None:
-    await callback.message.edit_text(
-        i18n.get("autoparse-confirm-delete"),
-        reply_markup=confirm_delete_keyboard(callback_data.company_id, i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-confirm-delete"),
+            reply_markup=confirm_delete_keyboard(callback_data.company_id, i18n),
+        )
     await callback.answer()
 
 
@@ -276,10 +288,11 @@ async def delete_confirmed(
     i18n: I18nContext,
 ) -> None:
     await ap_service.soft_delete_autoparse_company(session, callback_data.company_id)
-    await callback.message.edit_text(
-        i18n.get("autoparse-deleted"),
-        reply_markup=autoparse_hub_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-deleted"),
+            reply_markup=autoparse_hub_keyboard(i18n),
+        )
     await callback.answer()
 
 
@@ -292,10 +305,11 @@ async def download_menu(
     callback_data: AutoparseCallback,
     i18n: I18nContext,
 ) -> None:
-    await callback.message.edit_text(
-        i18n.get("autoparse-download-title"),
-        reply_markup=download_format_keyboard(callback_data.company_id, i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-download-title"),
+            reply_markup=download_format_keyboard(callback_data.company_id, i18n),
+        )
     await callback.answer()
 
 
@@ -344,17 +358,19 @@ async def settings_hub(
         f"Tech stack: {', '.join(current.get('tech_stack', [])) or '—'}\n"
         f"Send time: {current.get('send_time', '12:00')}"
     )
-    await callback.message.edit_text(text, reply_markup=autoparse_settings_keyboard(i18n))
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=autoparse_settings_keyboard(i18n))
     await callback.answer()
 
 
 @router.callback_query(AutoparseSettingsCallback.filter(F.action == "work_exp"))
 async def settings_work_exp(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
     await state.set_state(AutoparseSettingsForm.work_experience)
-    await callback.message.edit_text(
-        i18n.get("autoparse-settings-work-exp") + "\n\n" + i18n.get("autoparse-enter-work-exp"),
-        reply_markup=cancel_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-settings-work-exp") + "\n\n" + i18n.get("autoparse-enter-work-exp"),
+            reply_markup=cancel_keyboard(i18n),
+        )
     await callback.answer()
 
 
@@ -375,10 +391,13 @@ async def receive_work_exp(
 @router.callback_query(AutoparseSettingsCallback.filter(F.action == "send_time"))
 async def settings_send_time(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
     await state.set_state(AutoparseSettingsForm.send_time)
-    await callback.message.edit_text(
-        i18n.get("autoparse-settings-send-time") + "\n\n" + i18n.get("autoparse-enter-send-time"),
-        reply_markup=cancel_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-settings-send-time")
+            + "\n\n"
+            + i18n.get("autoparse-enter-send-time"),
+            reply_markup=cancel_keyboard(i18n),
+        )
     await callback.answer()
 
 
@@ -403,10 +422,13 @@ async def settings_tech_stack(
     callback: CallbackQuery, state: FSMContext, i18n: I18nContext
 ) -> None:
     await state.set_state(AutoparseSettingsForm.tech_stack)
-    await callback.message.edit_text(
-        i18n.get("autoparse-settings-tech-stack") + "\n\n" + i18n.get("autoparse-enter-tech-stack"),
-        reply_markup=cancel_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-settings-tech-stack")
+            + "\n\n"
+            + i18n.get("autoparse-enter-tech-stack"),
+            reply_markup=cancel_keyboard(i18n),
+        )
     await callback.answer()
 
 
