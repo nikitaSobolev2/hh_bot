@@ -251,7 +251,7 @@ class TestDeliverLastDeliveredAt:
         user: MagicMock,
         company: MagicMock,
         vacancies: list,
-    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+    ) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
         user_repo = MagicMock()
         user_repo.get_by_id = AsyncMock(return_value=user)
 
@@ -261,15 +261,20 @@ class TestDeliverLastDeliveredAt:
 
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(return_value=vacancies)
+        vacancy_repo.get_by_ids = AsyncMock(return_value=[])
 
-        return user_repo, company_repo, vacancy_repo
+        feed_repo = MagicMock()
+        feed_repo.get_all_reacted_vacancy_ids = AsyncMock(return_value=set())
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value=set())
+
+        return user_repo, company_repo, vacancy_repo, feed_repo
 
     @pytest.mark.asyncio
     async def test_uses_last_delivered_at_as_since_when_set(self):
         last_delivered = datetime(2026, 3, 9, 10, 0, 0)
         user = self._make_user()
         company = self._make_company(last_delivered_at=last_delivered)
-        user_repo, company_repo, vacancy_repo = self._make_repos(
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
             user=user, company=company, vacancies=[]
         )
 
@@ -283,6 +288,10 @@ class TestDeliverLastDeliveredAt:
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
             ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
         ):
             await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
@@ -295,7 +304,7 @@ class TestDeliverLastDeliveredAt:
     async def test_falls_back_to_24h_window_when_last_delivered_at_is_none(self):
         user = self._make_user()
         company = self._make_company(last_delivered_at=None)
-        user_repo, company_repo, vacancy_repo = self._make_repos(
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
             user=user, company=company, vacancies=[]
         )
 
@@ -311,6 +320,10 @@ class TestDeliverLastDeliveredAt:
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
             ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
         ):
             await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
@@ -324,7 +337,7 @@ class TestDeliverLastDeliveredAt:
     async def test_calls_get_new_since_not_get_by_company(self):
         user = self._make_user()
         company = self._make_company()
-        user_repo, company_repo, vacancy_repo = self._make_repos(
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
             user=user, company=company, vacancies=[]
         )
 
@@ -337,6 +350,10 @@ class TestDeliverLastDeliveredAt:
             patch(
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
             ),
         ):
             await _deliver_results_async(
@@ -350,7 +367,7 @@ class TestDeliverLastDeliveredAt:
     async def test_returns_no_new_vacancies_when_get_new_since_is_empty(self):
         user = self._make_user()
         company = self._make_company()
-        user_repo, company_repo, vacancy_repo = self._make_repos(
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
             user=user, company=company, vacancies=[]
         )
 
@@ -363,6 +380,10 @@ class TestDeliverLastDeliveredAt:
             patch(
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
             ),
         ):
             result = await _deliver_results_async(
@@ -375,9 +396,10 @@ class TestDeliverLastDeliveredAt:
     async def test_does_not_update_last_delivered_at_when_no_new_vacancies(self):
         user = self._make_user()
         company = self._make_company()
-        user_repo, company_repo, vacancy_repo = self._make_repos(
+        user_repo, company_repo, vacancy_repo, _ = self._make_repos(
             user=user, company=company, vacancies=[]
         )
+        feed_repo = self._make_feed_repo()
 
         with (
             patch("src.repositories.user.UserRepository", return_value=user_repo),
@@ -389,6 +411,10 @@ class TestDeliverLastDeliveredAt:
                 "src.repositories.autoparse.AutoparsedVacancyRepository",
                 return_value=vacancy_repo,
             ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
         ):
             await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
@@ -396,8 +422,14 @@ class TestDeliverLastDeliveredAt:
 
         company_repo.update.assert_not_called()
 
-    def _make_feed_repo(self, *, seen_ids: set | None = None) -> MagicMock:
+    def _make_feed_repo(
+        self,
+        *,
+        reacted_ids: set | None = None,
+        seen_ids: set | None = None,
+    ) -> MagicMock:
         feed_repo = MagicMock()
+        feed_repo.get_all_reacted_vacancy_ids = AsyncMock(return_value=reacted_ids or set())
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value=seen_ids or set())
         return feed_repo
 
@@ -408,10 +440,9 @@ class TestDeliverLastDeliveredAt:
         vacancy = self._make_vacancy()
         vacancy.id = 1
         vacancies = [vacancy]
-        user_repo, company_repo, vacancy_repo = self._make_repos(
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
             user=user, company=company, vacancies=vacancies
         )
-        feed_repo = self._make_feed_repo()
 
         before = datetime.now(UTC).replace(tzinfo=None)
 
@@ -582,10 +613,11 @@ class TestDeliverSeenIdsFilter:
         return v
 
     @pytest.mark.asyncio
-    async def test_excludes_vacancies_already_in_previous_feed_sessions(self):
+    async def test_excludes_vacancies_already_reacted_to_in_previous_sessions(self):
+        """Vacancies the user explicitly liked or disliked are not re-delivered."""
         user = self._make_user()
         company = self._make_company()
-        seen_vacancy = self._make_vacancy(1)
+        reacted_vacancy = self._make_vacancy(1)
         new_vacancy = self._make_vacancy(2)
 
         user_repo = MagicMock()
@@ -594,8 +626,10 @@ class TestDeliverSeenIdsFilter:
         company_repo.get_by_id = AsyncMock(return_value=company)
         company_repo.update = AsyncMock()
         vacancy_repo = MagicMock()
-        vacancy_repo.get_new_since = AsyncMock(return_value=[seen_vacancy, new_vacancy])
+        vacancy_repo.get_new_since = AsyncMock(return_value=[reacted_vacancy, new_vacancy])
+        vacancy_repo.get_by_ids = AsyncMock(return_value=[])
         feed_repo = MagicMock()
+        feed_repo.get_all_reacted_vacancy_ids = AsyncMock(return_value={1})
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
 
         with (
@@ -631,7 +665,8 @@ class TestDeliverSeenIdsFilter:
         assert passed_ids == [2]
 
     @pytest.mark.asyncio
-    async def test_returns_no_new_vacancies_when_all_are_already_seen(self):
+    async def test_returns_no_new_vacancies_when_all_were_reacted_to(self):
+        """All new vacancies already reacted to → no_new_vacancies."""
         user = self._make_user()
         company = self._make_company()
         vacancy = self._make_vacancy(1)
@@ -643,7 +678,9 @@ class TestDeliverSeenIdsFilter:
         company_repo.update = AsyncMock()
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(return_value=[vacancy])
+        vacancy_repo.get_by_ids = AsyncMock(return_value=[])
         feed_repo = MagicMock()
+        feed_repo.get_all_reacted_vacancy_ids = AsyncMock(return_value={1})
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
 
         with (
@@ -668,7 +705,8 @@ class TestDeliverSeenIdsFilter:
         assert result == {"status": "no_new_vacancies"}
 
     @pytest.mark.asyncio
-    async def test_skips_seen_ids_query_when_get_new_since_returns_empty(self):
+    async def test_returns_no_new_vacancies_when_get_new_since_empty_and_no_unreviewed(self):
+        """No new vacancies and no unreviewed queued vacancies → no_new_vacancies."""
         user = self._make_user()
         company = self._make_company()
 
@@ -678,7 +716,9 @@ class TestDeliverSeenIdsFilter:
         company_repo.get_by_id = AsyncMock(return_value=company)
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(return_value=[])
+        vacancy_repo.get_by_ids = AsyncMock(return_value=[])
         feed_repo = MagicMock()
+        feed_repo.get_all_reacted_vacancy_ids = AsyncMock(return_value=set())
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value=set())
 
         with (
@@ -696,11 +736,11 @@ class TestDeliverSeenIdsFilter:
                 return_value=feed_repo,
             ),
         ):
-            await _deliver_results_async(
+            result = await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
             )
 
-        feed_repo.get_all_seen_vacancy_ids.assert_not_called()
+        assert result == {"status": "no_new_vacancies"}
 
 
 class TestGetAllSeenVacancyIds:

@@ -390,10 +390,23 @@ async def _deliver_results_async(
         )
         min_compat = ap_settings.get("min_compatibility_percent", 50)
         new_vacancies = await vacancy_repo.get_new_since(company_id, since, min_compat)
-        if new_vacancies:
-            feed_repo = VacancyFeedSessionRepository(session)
-            seen_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
-            new_vacancies = [v for v in new_vacancies if v.id not in seen_ids]
+
+        feed_repo = VacancyFeedSessionRepository(session)
+        reacted_ids = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
+        queued_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
+
+        # Exclude vacancies the user has already explicitly reviewed.
+        new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
+
+        # Also re-surface vacancies that were queued in a previous session but
+        # never reached because the user stopped early.
+        unreviewed_ids = queued_ids - reacted_ids
+        if unreviewed_ids:
+            unreviewed = await vacancy_repo.get_by_ids(list(unreviewed_ids), min_compat)
+            already_included = {v.id for v in new_vacancies}
+            for v in unreviewed:
+                if v.id not in already_included:
+                    new_vacancies.append(v)
 
     if not new_vacancies:
         return {"status": "no_new_vacancies"}

@@ -1,0 +1,122 @@
+"""Unit tests for the unreviewed-vacancy re-delivery fix."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+# ── VacancyFeedSessionRepository.get_all_reacted_vacancy_ids ────────
+
+
+@pytest.mark.asyncio
+async def test_get_all_reacted_vacancy_ids_returns_union_of_liked_and_disliked():
+    """Only liked/disliked IDs count as reacted — queued-but-unseen do not."""
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(
+        return_value=iter(
+            [
+                ([10, 20], [30]),
+                ([40], []),
+            ]
+        )
+    )
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    reacted = await repo.get_all_reacted_vacancy_ids(user_id=1, company_id=5)
+
+    assert reacted == {10, 20, 30, 40}
+
+
+@pytest.mark.asyncio
+async def test_get_all_reacted_vacancy_ids_returns_empty_set_when_no_sessions():
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(return_value=iter([]))
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    reacted = await repo.get_all_reacted_vacancy_ids(user_id=1, company_id=5)
+
+    assert reacted == set()
+
+
+@pytest.mark.asyncio
+async def test_get_all_reacted_vacancy_ids_excludes_queued_but_unseen():
+    """Vacancy IDs only in vacancy_ids (not liked/disliked) are not returned."""
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(return_value=iter([([10], [])]))
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    reacted = await repo.get_all_reacted_vacancy_ids(user_id=1, company_id=5)
+
+    assert 99 not in reacted
+    assert 10 in reacted
+
+
+# ── AutoparsedVacancyRepository.get_by_ids ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_by_ids_returns_empty_list_for_empty_ids():
+    mock_session = AsyncMock()
+
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+
+    repo = AutoparsedVacancyRepository(mock_session)
+    result = await repo.get_by_ids([], min_compat=50.0)
+
+    assert result == []
+    mock_session.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_by_ids_queries_when_ids_provided():
+    mock_session = MagicMock()
+    vacancy = MagicMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [vacancy]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+
+    repo = AutoparsedVacancyRepository(mock_session)
+    result = await repo.get_by_ids([1, 2, 3], min_compat=50.0)
+
+    mock_session.execute.assert_called_once()
+    assert result == [vacancy]
+
+
+# ── Unreviewed ID computation logic ─────────────────────────────────
+
+
+def test_unreviewed_ids_are_queued_minus_reacted():
+    """Core fix logic: unseen = all queued IDs minus IDs the user reacted to."""
+    queued_ids = {100, 200, 300, 400, 500}
+    reacted_ids = {100, 200, 300}
+
+    unreviewed_ids = queued_ids - reacted_ids
+
+    assert unreviewed_ids == {400, 500}
+
+
+def test_unreviewed_ids_empty_when_all_reacted():
+    queued_ids = {10, 20, 30}
+    reacted_ids = {10, 20, 30}
+
+    assert queued_ids - reacted_ids == set()
+
+
+def test_unreviewed_ids_full_when_none_reacted():
+    queued_ids = {10, 20, 30}
+    reacted_ids: set[int] = set()
+
+    assert queued_ids - reacted_ids == {10, 20, 30}

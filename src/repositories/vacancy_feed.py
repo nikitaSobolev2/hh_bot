@@ -10,7 +10,11 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
         super().__init__(session, VacancyFeedSession)
 
     async def get_all_seen_vacancy_ids(self, user_id: int, company_id: int) -> set[int]:
-        """Return all vacancy IDs from every feed session for this user and company."""
+        """Return all vacancy IDs queued in any feed session for this user and company.
+
+        Includes vacancies that were queued but never reacted to.  Use
+        get_all_reacted_vacancy_ids when you only want truly-reviewed IDs.
+        """
         stmt = select(VacancyFeedSession.vacancy_ids).where(
             VacancyFeedSession.user_id == user_id,
             VacancyFeedSession.autoparse_company_id == company_id,
@@ -20,3 +24,24 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
         for (ids,) in result:
             seen.update(ids)
         return seen
+
+    async def get_all_reacted_vacancy_ids(self, user_id: int, company_id: int) -> set[int]:
+        """Return IDs of vacancies the user has explicitly liked or disliked.
+
+        Unlike get_all_seen_vacancy_ids this excludes vacancies that were
+        queued in a session but never reached via the feed (e.g. the user
+        stopped early).
+        """
+        stmt = select(
+            VacancyFeedSession.liked_ids,
+            VacancyFeedSession.disliked_ids,
+        ).where(
+            VacancyFeedSession.user_id == user_id,
+            VacancyFeedSession.autoparse_company_id == company_id,
+        )
+        result = await self._session.execute(stmt)
+        reacted: set[int] = set()
+        for liked, disliked in result:
+            reacted.update(liked)
+            reacted.update(disliked)
+        return reacted
