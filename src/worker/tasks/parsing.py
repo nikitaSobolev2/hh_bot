@@ -160,7 +160,6 @@ async def _run_parsing_company_async(
     telegram_chat_id: int = 0,
 ) -> dict:
     from src.repositories.app_settings import AppSettingRepository
-    from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.blacklist import BlacklistRepository
     from src.repositories.parsing import ParsingCompanyRepository
     from src.repositories.task import CeleryTaskRepository
@@ -215,10 +214,6 @@ async def _run_parsing_company_async(
                     user_id,
                     company.vacancy_title,
                 )
-
-            ap_repo = AutoparsedVacancyRepository(session)
-            cached_ids = await ap_repo.get_all_known_hh_ids()
-            blacklisted_ids |= cached_ids
 
         tracker = _make_tracker(bot, telegram_chat_id, company, locale)
 

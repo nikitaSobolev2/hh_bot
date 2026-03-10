@@ -33,6 +33,68 @@ class TestExtractVacanciesFromPage:
         assert "?" not in results[0]["url"]
 
 
+class TestCollectNewFromPage:
+    def _make_item(self, vacancy_id: str) -> dict:
+        return {
+            "url": f"https://hh.ru/vacancy/{vacancy_id}",
+            "title": f"Vacancy {vacancy_id}",
+            "hh_vacancy_id": vacancy_id,
+        }
+
+    def test_adds_unseen_non_blacklisted_items(self):
+        collected: list = []
+        seen: set = set()
+        items = [self._make_item("1"), self._make_item("2")]
+
+        new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
+            items, seen, blacklisted=set(), collected=collected, target_count=10
+        )
+
+        assert new_count == 2
+        assert had_unseen is True
+        assert blacklisted_skipped == 0
+        assert len(collected) == 2
+
+    def test_counts_blacklisted_items_separately(self):
+        collected: list = []
+        seen: set = set()
+        items = [self._make_item("1"), self._make_item("2"), self._make_item("3")]
+
+        new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
+            items, seen, blacklisted={"1", "2"}, collected=collected, target_count=10
+        )
+
+        assert new_count == 1
+        assert had_unseen is True
+        assert blacklisted_skipped == 2
+        assert len(collected) == 1
+
+    def test_skips_already_seen_urls_without_counting_as_blacklisted(self):
+        item = self._make_item("1")
+        seen = {item["url"]}
+        collected: list = []
+
+        new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
+            [item], seen, blacklisted={"1"}, collected=collected, target_count=10
+        )
+
+        assert new_count == 0
+        assert had_unseen is False
+        assert blacklisted_skipped == 0
+
+    def test_stops_at_target_count(self):
+        collected: list = []
+        seen: set = set()
+        items = [self._make_item(str(i)) for i in range(5)]
+
+        new_count, _, _ = HHScraper._collect_new_from_page(
+            items, seen, blacklisted=set(), collected=collected, target_count=3
+        )
+
+        assert new_count == 3
+        assert len(collected) == 3
+
+
 class TestBuildPageUrl:
     def test_adds_page_param(self):
         url = HHScraper._build_page_url("https://hh.ru/search/vacancy?text=Python", 3)

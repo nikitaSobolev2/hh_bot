@@ -193,13 +193,16 @@ class HHScraper:
         blacklisted: set[str],
         collected: list[dict[str, str]],
         target_count: int,
-    ) -> tuple[int, bool]:
+    ) -> tuple[int, bool, int]:
         """Filter and append new vacancies from a single page.
 
-        Returns (new_count, page_had_unseen) where page_had_unseen indicates
-        the page contained vacancies not seen before (regardless of blacklist).
+        Returns (new_count, page_had_unseen, blacklisted_skipped) where:
+        - new_count: vacancies added to collected this page
+        - page_had_unseen: page had vacancies not in seen_urls (loop-continuation signal)
+        - blacklisted_skipped: unseen vacancies dropped because they are blacklisted
         """
         new_count = 0
+        blacklisted_skipped = 0
         page_had_unseen = False
         for item in page_results:
             if item["url"] in seen_urls:
@@ -207,12 +210,13 @@ class HHScraper:
             seen_urls.add(item["url"])
             page_had_unseen = True
             if item["hh_vacancy_id"] in blacklisted:
+                blacklisted_skipped += 1
                 continue
             collected.append(item)
             new_count += 1
             if len(collected) >= target_count:
                 break
-        return new_count, page_had_unseen
+        return new_count, page_had_unseen, blacklisted_skipped
 
     async def collect_vacancy_urls(
         self,
@@ -242,7 +246,7 @@ class HHScraper:
                     break
 
                 page_results = self._extract_vacancies_from_page(soup, keyword)
-                new_count, page_had_unseen = self._collect_new_from_page(
+                new_count, page_had_unseen, blacklisted_skipped = self._collect_new_from_page(
                     page_results,
                     seen_urls,
                     blacklisted,
@@ -257,6 +261,7 @@ class HHScraper:
                     url=url,
                     raw_blocks=len(raw_blocks),
                     keyword_matched=len(page_results),
+                    blacklisted_skipped=blacklisted_skipped,
                     new=new_count,
                     total=len(collected),
                     target=target_count,
