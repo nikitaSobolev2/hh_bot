@@ -117,6 +117,14 @@ parsing-blacklist-check =
 
 parsing-not-found = Not found
 
+parsing-retry-count-prompt =
+    <b>🔄 Retry Parsing</b>
+
+    How many vacancies to process?
+    (default: { $default })
+
+    Enter a number or press the button below:
+
 parsing-restarted =
     <b>🔄 Parsing restarted!</b>
 
@@ -169,6 +177,7 @@ btn-skip-count = ⏭ Skip (up to 30)
 btn-skip-blacklisted = ✅ Skip blacklisted
 btn-include-all = 🔄 Include all
 btn-try-again = 🔄 Try Again
+btn-use-default = ✓ Use default ({ $count })
 
 # ── Pagination ───────────────────────────────────────────
 btn-prev = ◀️ Prev

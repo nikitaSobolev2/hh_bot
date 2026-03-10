@@ -216,6 +216,31 @@ def retry_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
     )
 
 
+def retry_count_keyboard(
+    company_id: int, default_count: int, i18n: I18nContext
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-use-default", count=str(default_count)),
+                    callback_data=ParsingCallback(
+                        action="retry_use_default", company_id=company_id
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=ParsingCallback(
+                        action="retry_cancel", company_id=company_id
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
 def language_selection_keyboard(
     company_id: int,
     count: int,

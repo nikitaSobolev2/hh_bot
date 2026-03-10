@@ -63,6 +63,7 @@ async def clone_and_dispatch(
     source_company_id: int,
     user_id: int,
     telegram_chat_id: int = 0,
+    target_count: int | None = None,
 ) -> int:
     repo = ParsingCompanyRepository(session)
     source = await repo.get_by_id(source_company_id)
@@ -75,7 +76,7 @@ async def clone_and_dispatch(
         vacancy_title=source.vacancy_title,
         search_url=source.search_url,
         keyword_filter=source.keyword_filter or "",
-        target_count=source.target_count,
+        target_count=target_count if target_count is not None else source.target_count,
     )
     dispatch_parsing_task(
         new_id,

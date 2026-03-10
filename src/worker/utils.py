@@ -32,6 +32,20 @@ def _create_task_session_factory() -> tuple[AsyncEngine, async_sessionmaker[Asyn
     return eng, factory
 
 
+def _suppress_closed_loop_errors(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Silently drop 'Event loop is closed' errors from httpx background cleanup tasks.
+
+    When asyncio.run() closes the event loop, httpx's TLS connection cleanup
+    creates background tasks via create_task().  Those tasks fail with
+    RuntimeError('Event loop is closed') when garbage-collected.  This handler
+    swallows those benign warnings so they don't pollute Celery logs.
+    """
+    exc = context.get("exception")
+    if isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
+        return
+    loop.default_exception_handler(context)
+
+
 def run_async(
     task_fn: Callable[[async_sessionmaker[AsyncSession]], Coroutine[Any, Any, Any]],
 ) -> Any:
@@ -42,10 +56,13 @@ def run_async(
     """
 
     async def _run() -> Any:
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(_suppress_closed_loop_errors)
         engine, session_factory = _create_task_session_factory()
         try:
             return await task_fn(session_factory)
         finally:
             await engine.dispose()
+            await asyncio.sleep(0)  # flush pending httpx cleanup callbacks
 
     return asyncio.run(_run())

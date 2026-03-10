@@ -23,6 +23,7 @@ from src.bot.modules.parsing.keyboards import (
     language_selection_keyboard,
     parsing_list_keyboard,
     per_company_count_keyboard,
+    retry_count_keyboard,
     retry_keyboard,
     style_selection_keyboard,
     work_experience_keyboard,
@@ -246,6 +247,7 @@ async def parsing_retry(
     callback_data: ParsingCallback,
     user: User,
     session: AsyncSession,
+    state: FSMContext,
     i18n: I18nContext,
 ) -> None:
     company = await parsing_service.get_company_by_id(session, callback_data.company_id)
@@ -254,25 +256,107 @@ async def parsing_retry(
         await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
+    await state.set_state(ParsingForm.retry_count)
+    await state.update_data(
+        retry_company_id=company.id,
+        retry_default_count=company.target_count,
+    )
+    await callback.message.edit_text(
+        i18n.get("parsing-retry-count-prompt", default=str(company.target_count)),
+        reply_markup=retry_count_keyboard(company.id, company.target_count, i18n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "retry_cancel"))
+async def parsing_retry_cancel(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await show_parsing_list(callback, user, i18n, session)
+    await callback.answer()
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "retry_use_default"))
+async def parsing_retry_use_default(
+    callback: CallbackQuery,
+    callback_data: ParsingCallback,
+    user: User,
+    session: AsyncSession,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    await state.clear()
+
+    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+
+    target_count = data.get("retry_default_count", company.target_count)
+    await _launch_retry(callback.message, user, session, i18n, company, target_count)
+    await callback.answer()
+
+
+@router.message(ParsingForm.retry_count)
+async def fsm_retry_count(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer(i18n.get("parsing-positive-number"))
+        return
+
+    count = int(text)
+    if count > 200:
+        await message.answer(i18n.get("parsing-max-200"))
+        return
+
+    data = await state.get_data()
+    company_id = data.get("retry_company_id")
+    await state.clear()
+
+    company = await parsing_service.get_company_by_id(session, company_id)
+    if not company or company.user_id != user.id:
+        await message.answer(i18n.get("parsing-not-found"))
+        return
+
+    await _launch_retry(message, user, session, i18n, company, count)
+
+
+async def _launch_retry(
+    message: Message,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    company: "ParsingCompany",  # noqa: F821
+    target_count: int,
+) -> None:
     new_company_id = await parsing_service.clone_and_dispatch(
         session,
         company.id,
         user.id,
-        telegram_chat_id=callback.message.chat.id,
+        telegram_chat_id=message.chat.id,
+        target_count=target_count,
     )
-
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
-    await callback.message.edit_text(
-        i18n.get(
-            "parsing-restarted",
-            title=company.vacancy_title,
-            count=str(company.target_count),
-            filter=filter_val,
-            new_id=str(new_company_id),
-        ),
-        reply_markup=back_to_menu_keyboard(i18n),
+    text = i18n.get(
+        "parsing-restarted",
+        title=company.vacancy_title,
+        count=str(target_count),
+        filter=filter_val,
+        new_id=str(new_company_id),
     )
-    await callback.answer()
+    await message.answer(text, reply_markup=back_to_menu_keyboard(i18n))
 
 
 @router.callback_query(FormatCallback.filter())
