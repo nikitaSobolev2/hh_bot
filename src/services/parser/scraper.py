@@ -114,6 +114,8 @@ class HHScraper:
         found: list[dict] = []
         blocks = soup.select('[data-qa="vacancy-serp__vacancy"]')
 
+        logger.debug("Vacancy blocks on page", blocks_found=len(blocks))
+
         for block in blocks:
             link_el = None
             for a_tag in block.find_all("a", href=True):
@@ -121,6 +123,7 @@ class HHScraper:
                     link_el = a_tag
                     break
             if link_el is None:
+                logger.debug("Vacancy block skipped — no matching link")
                 continue
 
             href = link_el["href"]
@@ -128,7 +131,15 @@ class HHScraper:
             clean_url = urlunparse(parsed._replace(query="", fragment=""))
             title = link_el.get_text(separator=" ", strip=True)
 
-            if matches_keyword_expression(title, keyword):
+            keyword_matched = matches_keyword_expression(title, keyword)
+            logger.debug(
+                "Vacancy candidate",
+                title=title,
+                url=clean_url,
+                keyword_matched=keyword_matched,
+            )
+
+            if keyword_matched:
                 vacancy_id = self._extract_vacancy_id(clean_url)
                 if vacancy_id:
                     item: dict = {
@@ -220,12 +231,14 @@ class HHScraper:
         async with httpx.AsyncClient() as client:
             while len(collected) < target_count:
                 url = self._build_page_url(base_url, page)
+                logger.info("Fetching search page", url=url, page=page + 1)
                 soup = await self._fetch_page(client, url)
                 if soup is None:
                     break
 
-                if not soup.select('[data-qa="vacancy-serp__vacancy"]'):
-                    logger.info("No vacancy blocks on page", page=page + 1)
+                raw_blocks = soup.select('[data-qa="vacancy-serp__vacancy"]')
+                if not raw_blocks:
+                    logger.info("No vacancy blocks on page", page=page + 1, url=url)
                     break
 
                 page_results = self._extract_vacancies_from_page(soup, keyword)
@@ -241,6 +254,9 @@ class HHScraper:
                 logger.info(
                     "Search page scraped",
                     page=page + 1,
+                    url=url,
+                    raw_blocks=len(raw_blocks),
+                    keyword_matched=len(page_results),
                     new=new_count,
                     total=len(collected),
                     target=target_count,
