@@ -54,6 +54,8 @@ services:
       redis:
         condition: service_healthy
     command: celery -A src.worker.app worker --loglevel=info --concurrency=4
+    deploy:
+      replicas: 5
 
 volumes:
   pg_data:
