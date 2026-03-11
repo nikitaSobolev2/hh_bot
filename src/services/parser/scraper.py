@@ -300,13 +300,19 @@ class HHScraper:
         if soup is None:
             return {}
 
+        title_el = soup.find(attrs={"data-qa": "vacancy-title"})
+        title = title_el.get_text(strip=True) if title_el else ""
+
         desc_el = soup.find(attrs={"data-qa": "vacancy-description"})
         description = desc_el.get_text(separator="\n", strip=True) if desc_el else ""
+
+        company_el = soup.find(attrs={"data-qa": "vacancy-company-name"})
+        company_name = company_el.get_text(strip=True) if company_el else ""
 
         skill_elements = soup.select('[data-qa="skills-element"] > div')
         skills = [el.get_text(strip=True) for el in skill_elements if el.get_text(strip=True)]
 
-        result: dict = {"description": description, "skills": skills}
+        result: dict = {"description": description, "skills": skills, "title": title, "company_name": company_name}
 
         for field, data_qa in self._VACANCY_DETAIL_SELECTORS.items():
             el = soup.find(attrs={"data-qa": data_qa})
