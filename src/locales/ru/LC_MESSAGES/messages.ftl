@@ -698,3 +698,10 @@ iv-delete-confirm-prompt = Вы уверены? Запись будет скры
 btn-iv-delete-confirm = Да, удалить
 iv-deleted = Собеседование удалено.
 iv-not-found = Запись не найдена.
+
+# Progress bars
+progress-title = ⏳ Обработка задач
+progress-completed-title = ✅ Все задачи выполнены!
+progress-bar-scraping = 🌐 Парсинг
+progress-bar-keywords = 🧠 Ключевые слова
+progress-bar-ai = 🧠 AI-совместимость

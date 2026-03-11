@@ -697,3 +697,10 @@ iv-delete-confirm-prompt = Are you sure? This record will be hidden from your li
 btn-iv-delete-confirm = Yes, delete
 iv-deleted = Interview deleted.
 iv-not-found = Record not found.
+
+# Progress bars
+progress-title = ⏳ Processing tasks
+progress-completed-title = ✅ All tasks completed!
+progress-bar-scraping = 🌐 Scraping
+progress-bar-keywords = 🧠 Keywords
+progress-bar-ai = 🧠 AI Analysis

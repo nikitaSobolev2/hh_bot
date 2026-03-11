@@ -1,7 +1,7 @@
-"""Tests for _AutoparseProgressTracker and on_vacancy_scraped callback."""
+"""Tests for autoparse progress integration and on_vacancy_scraped callback."""
 
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -10,186 +10,192 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_tracker(
+def _key_router(*, pin=None, task=None):
+    """Return an async callable routing redis.get calls by key prefix."""
+
+    async def _get(key: str):
+        if "progress:pin:" in key:
+            return pin
+        if "progress:task:" in key:
+            return task
+        return None
+
+    return _get
+
+
+def _make_progress_service(
     chat_id: int = 100,
-    vacancy_title: str = "Fullstack Dev",
-    target_count: int = 50,
-    keyword_filter: str = "backend|node",
     locale: str = "ru",
+    *,
+    pin=None,
+    task=None,
+    task_keys=None,
+    task_values=None,
 ):
-    """Return a tracker instance with a mocked bot."""
-    from src.worker.tasks.autoparse import _AutoparseProgressTracker
+    """Return a ProgressService with a key-aware mocked Redis client."""
+    from src.services.progress_service import ProgressService
 
     bot = MagicMock()
-    bot.send_message_draft = AsyncMock()
+    msg = MagicMock()
+    msg.message_id = 42
+    bot.send_message = AsyncMock(return_value=msg)
+    bot.edit_message_text = AsyncMock()
+    bot.pin_chat_message = AsyncMock()
+    bot.unpin_chat_message = AsyncMock()
+    bot.delete_message = AsyncMock()
 
-    tracker = _AutoparseProgressTracker(
-        bot,
-        chat_id,
-        vacancy_title=vacancy_title,
-        target_count=target_count,
-        keyword_filter=keyword_filter,
-        locale=locale,
-    )
-    # Bypass throttle so first call always sends.
-    tracker._last_send = 0.0
-    return tracker, bot
+    redis_mock = MagicMock()
+    redis_mock.get = _key_router(pin=pin, task=task)
+    redis_mock.set = AsyncMock(return_value=True)
+    redis_mock.delete = AsyncMock()
+    redis_mock.keys = AsyncMock(return_value=task_keys or [])
+    redis_mock.mget = AsyncMock(return_value=task_values or [])
 
-
-# ---------------------------------------------------------------------------
-# Counter tests
-# ---------------------------------------------------------------------------
-
-
-class TestUpdateScraped:
-    """update_scraped updates counters and sends a draft."""
-
-    @pytest.mark.asyncio
-    async def test_updates_scraped_counter(self):
-        tracker, _ = _make_tracker()
-        await tracker.update_scraped(5, 50)
-        assert tracker._scraped == 5
-        assert tracker._scraped_total == 50
-
-    @pytest.mark.asyncio
-    async def test_calls_send_message_draft(self):
-        tracker, bot = _make_tracker()
-        await tracker.update_scraped(1, 50)
-        bot.send_message_draft.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_monotonic_guard_does_not_decrease_counter(self):
-        tracker, _ = _make_tracker()
-        tracker._scraped = 10
-        await tracker.update_scraped(5, 50)
-        assert tracker._scraped == 10, "Lower current must not overwrite a higher counter"
-
-    @pytest.mark.asyncio
-    async def test_advances_when_higher(self):
-        tracker, _ = _make_tracker()
-        tracker._scraped = 3
-        await tracker.update_scraped(7, 50)
-        assert tracker._scraped == 7
-
-
-class TestUpdateAnalyzed:
-    """update_analyzed updates counters and sends a draft."""
-
-    @pytest.mark.asyncio
-    async def test_updates_analyzed_counter(self):
-        tracker, _ = _make_tracker()
-        await tracker.update_analyzed(3, 20)
-        assert tracker._analyzed == 3
-        assert tracker._analyzed_total == 20
-
-    @pytest.mark.asyncio
-    async def test_calls_send_message_draft(self):
-        tracker, bot = _make_tracker()
-        await tracker.update_analyzed(2, 20)
-        bot.send_message_draft.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_monotonic_guard_does_not_decrease_counter(self):
-        tracker, _ = _make_tracker()
-        tracker._analyzed = 15
-        await tracker.update_analyzed(8, 20)
-        assert tracker._analyzed == 15
-
-    @pytest.mark.asyncio
-    async def test_advances_when_higher(self):
-        tracker, _ = _make_tracker()
-        tracker._analyzed = 5
-        await tracker.update_analyzed(12, 20)
-        assert tracker._analyzed == 12
+    svc = ProgressService(bot, chat_id, redis_mock, locale)
+    return svc, bot, redis_mock
 
 
 # ---------------------------------------------------------------------------
-# finish() bypasses throttle
+# update_bar — scraping bar (index 0) via ProgressService
 # ---------------------------------------------------------------------------
 
 
-class TestFinish:
-    """finish() must send a draft even when the throttle window is active."""
+class TestUpdateScrapingBar:
+    """update_bar with bar_index=0 advances the scraping counter monotonically."""
 
     @pytest.mark.asyncio
-    async def test_sends_draft_when_throttle_active(self):
-        tracker, bot = _make_tracker()
-        # Simulate a very recent send so the throttle would normally block.
-        tracker._last_send = time.monotonic()
-        await tracker.finish()
-        bot.send_message_draft.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Message text content
-# ---------------------------------------------------------------------------
-
-
-class TestBuildText:
-    """_build_text produces the expected content."""
-
-    def test_ai_bar_absent_when_analyzed_total_is_zero(self):
-        tracker, _ = _make_tracker()
-        text = tracker._build_text(10, 50, 0, 0)
-        assert "AI-совместимость" not in text
-        assert "AI Analysis" not in text
-
-    def test_ai_bar_present_when_analyzed_total_positive(self):
-        tracker, _ = _make_tracker()
-        text = tracker._build_text(10, 50, 5, 20)
-        assert "AI-совместимость" in text
-
-    def test_scraping_bar_always_present(self):
-        tracker, _ = _make_tracker()
-        text = tracker._build_text(10, 50, 0, 0)
-        assert "Парсинг" in text
-
-    def test_keyword_filter_included_when_set(self):
-        tracker, _ = _make_tracker(keyword_filter="backend|node")
-        text = tracker._build_text(0, 50, 0, 0)
-        assert "backend|node" in text
-
-    def test_keyword_filter_omitted_when_empty(self):
-        tracker, _ = _make_tracker(keyword_filter="")
-        text = tracker._build_text(0, 50, 0, 0)
-        assert "🔎" not in text
-
-    def test_vacancy_title_included(self):
-        tracker, _ = _make_tracker(vacancy_title="Python Dev")
-        text = tracker._build_text(0, 50, 0, 0)
-        assert "Python Dev" in text
-
-    def test_english_locale_labels(self):
-        tracker, _ = _make_tracker(locale="en")
-        text = tracker._build_text(10, 50, 5, 20)
-        assert "Processing vacancies" in text
-        assert "AI Analysis" in text
-
-
-# ---------------------------------------------------------------------------
-# draft_id is deterministic
-# ---------------------------------------------------------------------------
-
-
-class TestDraftId:
-    def test_same_chat_id_same_draft_id(self):
-        from src.worker.tasks.autoparse import _AutoparseProgressTracker
-
-        t1 = _AutoparseProgressTracker(
-            MagicMock(), 999, vacancy_title="X", target_count=10, keyword_filter=""
+    async def test_advances_scraping_counter(self):
+        state = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [
+                {"label": "🌐 Scraping", "current": 0, "total": 50},
+                {"label": "🧠 AI", "current": 0, "total": 0},
+            ],
+        }
+        svc, _bot, redis = _make_progress_service(
+            pin="42",
+            task=json.dumps(state),
+            task_keys=["progress:task:100:autoparse:1"],
+            task_values=[json.dumps(state)],
         )
-        t2 = _AutoparseProgressTracker(
-            MagicMock(), 999, vacancy_title="Y", target_count=50, keyword_filter="k"
-        )
-        assert t1._draft_id == t2._draft_id
 
-    def test_draft_id_in_valid_range(self):
-        from src.worker.tasks.autoparse import _AutoparseProgressTracker
+        await svc.update_bar("autoparse:1", 0, 5, 50)
 
-        tracker = _AutoparseProgressTracker(
-            MagicMock(), 123456789, vacancy_title="X", target_count=5, keyword_filter=""
+        set_calls = redis.set.call_args_list
+        task_call = next(c for c in set_calls if "progress:task" in str(c.args[0]))
+        saved = json.loads(task_call.args[1])
+        assert saved["bars"][0]["current"] == 5
+
+    @pytest.mark.asyncio
+    async def test_monotonic_guard_scraping(self):
+        state = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [
+                {"label": "🌐 Scraping", "current": 10, "total": 50},
+            ],
+        }
+        svc, _bot, redis = _make_progress_service(pin=None, task=json.dumps(state))
+
+        await svc.update_bar("autoparse:1", 0, 5, 50)
+
+        set_calls = redis.set.call_args_list
+        task_call = next(c for c in set_calls if "progress:task" in str(c.args[0]))
+        saved = json.loads(task_call.args[1])
+        assert saved["bars"][0]["current"] == 10, "Counter must not go backwards"
+
+
+# ---------------------------------------------------------------------------
+# update_bar — AI analysis bar (index 1) via ProgressService
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateAiBar:
+    """update_bar with bar_index=1 advances the AI analysis counter monotonically."""
+
+    @pytest.mark.asyncio
+    async def test_advances_ai_counter(self):
+        state = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [
+                {"label": "🌐 Scraping", "current": 50, "total": 50},
+                {"label": "🧠 AI", "current": 0, "total": 20},
+            ],
+        }
+        svc, _bot, redis = _make_progress_service(
+            pin="42",
+            task=json.dumps(state),
+            task_keys=["progress:task:100:autoparse:1"],
+            task_values=[json.dumps(state)],
         )
-        assert 1 <= tracker._draft_id <= 2**31 - 1
+
+        await svc.update_bar("autoparse:1", 1, 3, 20)
+
+        set_calls = redis.set.call_args_list
+        task_call = next(c for c in set_calls if "progress:task" in str(c.args[0]))
+        saved = json.loads(task_call.args[1])
+        assert saved["bars"][1]["current"] == 3
+
+    @pytest.mark.asyncio
+    async def test_monotonic_guard_ai(self):
+        state = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [
+                {"label": "🌐 Scraping", "current": 50, "total": 50},
+                {"label": "🧠 AI", "current": 15, "total": 20},
+            ],
+        }
+        svc, _bot, redis = _make_progress_service(pin=None, task=json.dumps(state))
+
+        await svc.update_bar("autoparse:1", 1, 8, 20)
+
+        set_calls = redis.set.call_args_list
+        task_call = next(c for c in set_calls if "progress:task" in str(c.args[0]))
+        saved = json.loads(task_call.args[1])
+        assert saved["bars"][1]["current"] == 15, "Counter must not go backwards"
+
+
+# ---------------------------------------------------------------------------
+# finish_task — final state and completion
+# ---------------------------------------------------------------------------
+
+
+class TestFinishTask:
+    """finish_task marks task done and triggers summary when all tasks complete."""
+
+    @pytest.mark.asyncio
+    async def test_marks_completed_and_sets_bars_to_100(self):
+        initial = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [
+                {"label": "🌐 Scraping", "current": 40, "total": 50},
+            ],
+        }
+        completed_state = {
+            "title": "Dev",
+            "status": "completed",
+            "bars": [
+                {"label": "🌐 Scraping", "current": 50, "total": 50},
+            ],
+        }
+        svc, _bot, redis = _make_progress_service(
+            pin="42",
+            task=json.dumps(initial),
+            task_keys=["progress:task:100:autoparse:1"],
+            task_values=[json.dumps(completed_state)],
+        )
+
+        await svc.finish_task("autoparse:1")
+
+        set_calls = redis.set.call_args_list
+        task_call = next(c for c in set_calls if "progress:task" in str(c.args[0]))
+        saved = json.loads(task_call.args[1])
+        assert saved["status"] == "completed"
+        assert saved["bars"][0]["current"] == 50
 
 
 # ---------------------------------------------------------------------------
@@ -280,30 +286,54 @@ class TestOnVacancyScrapedCallback:
 
 
 # ---------------------------------------------------------------------------
-# Flood / bad-request handling
+# Telegram error handling — ProgressService catches API errors gracefully
 # ---------------------------------------------------------------------------
 
 
-class TestDraftSendErrorHandling:
+class TestTelegramErrorHandling:
     """TelegramRetryAfter and TelegramBadRequest are caught and do not raise."""
 
     @pytest.mark.asyncio
-    async def test_retry_after_is_caught(self):
+    async def test_retry_after_is_caught_on_edit(self):
+        from unittest.mock import patch
+
         from aiogram.exceptions import TelegramRetryAfter
 
-        tracker, bot = _make_tracker()
+        state = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [{"label": "🌐 Scraping", "current": 5, "total": 50}],
+        }
+        svc, bot, redis = _make_progress_service(
+            pin="42",
+            task=json.dumps(state),
+            task_keys=["progress:task:100:autoparse:1"],
+            task_values=[json.dumps(state)],
+        )
+
         exc = TelegramRetryAfter(retry_after=1, message="", method=MagicMock())
-        bot.send_message_draft = AsyncMock(side_effect=exc)
+        bot.edit_message_text = AsyncMock(side_effect=exc)
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
-            await tracker.update_scraped(1, 10)  # must not raise
+            await svc.update_bar("autoparse:1", 0, 5, 50)  # must not raise
 
     @pytest.mark.asyncio
-    async def test_bad_request_is_caught(self):
+    async def test_bad_request_on_edit_is_caught(self):
         from aiogram.exceptions import TelegramBadRequest
 
-        tracker, bot = _make_tracker()
-        exc = TelegramBadRequest(message="", method=MagicMock())
-        bot.send_message_draft = AsyncMock(side_effect=exc)
+        state = {
+            "title": "Dev",
+            "status": "running",
+            "bars": [{"label": "🌐 Scraping", "current": 5, "total": 50}],
+        }
+        svc, bot, redis = _make_progress_service(
+            pin="42",
+            task=json.dumps(state),
+            task_keys=["progress:task:100:autoparse:1"],
+            task_values=[json.dumps(state)],
+        )
 
-        await tracker.update_scraped(1, 10)  # must not raise
+        exc = TelegramBadRequest(message="", method=MagicMock())
+        bot.edit_message_text = AsyncMock(side_effect=exc)
+
+        await svc.update_bar("autoparse:1", 0, 5, 50)  # must not raise

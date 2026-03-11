@@ -1,9 +1,5 @@
 """Celery task for the full parsing pipeline."""
 
-import asyncio
-import contextlib
-import json
-import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
@@ -15,225 +11,6 @@ from src.worker.app import celery_app
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
-
-_PROGRESS_BAR_WIDTH = 20
-_PROGRESS_THROTTLE_MS = 500
-
-_PROGRESS_LABELS: dict[str, dict[str, str]] = {
-    "ru": {
-        "title": "Обработка вакансий",
-        "vacancies": "вакансий",
-        "scraping": "Парсинг",
-        "keywords": "Ключевые слова",
-    },
-    "en": {
-        "title": "Processing vacancies",
-        "vacancies": "vacancies",
-        "scraping": "Scraping",
-        "keywords": "Keywords",
-    },
-}
-
-
-def _bar(current: int, total: int) -> str:
-    """Render a single progress bar segment: ``<code>██░░</code> 50%``."""
-    pct = round(current / total * 100) if total else 0
-    filled = round(_PROGRESS_BAR_WIDTH * current / total) if total else 0
-    blocks = "\u2588" * filled + "\u2591" * (_PROGRESS_BAR_WIDTH - filled)
-    return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{current}/{total}</i>"
-
-
-_PROGRESS_SLOT_TTL = 600  # seconds — safety TTL for Redis slots
-
-
-class _ProgressTracker:
-    """Sends live dual-progress-bar updates to Telegram via ``send_message_draft``.
-
-    Multiple concurrent trackers for the same ``chat_id`` share a single
-    deterministic ``draft_id`` and a Redis-backed slot so they compose into
-    one combined draft message instead of overwriting each other.
-    """
-
-    def __init__(
-        self,
-        bot: "Bot",  # noqa: F821
-        chat_id: int,
-        *,
-        slot_key: str,
-        vacancy_title: str,
-        target_count: int,
-        keyword_filter: str,
-        locale: str = "ru",
-    ) -> None:
-        self._bot = bot
-        self._chat_id = chat_id
-        self._slot_key = slot_key
-        # All trackers for the same chat share the same draft slot in Telegram.
-        self._draft_id = abs(chat_id) % (2**31 - 1) + 1
-        self._vacancy_title = vacancy_title
-        self._target_count = target_count
-        self._keyword_filter = keyword_filter
-        self._labels = _PROGRESS_LABELS.get(locale, _PROGRESS_LABELS["ru"])
-        self._scraped = 0
-        self._keywords = 0
-        self._total = 0
-        self._last_send: float = 0.0
-        self._lock = asyncio.Lock()
-        self._redis = None
-
-    # ------------------------------------------------------------------
-    # Public callbacks
-    # ------------------------------------------------------------------
-
-    async def update_scraped(self, current: int, total: int) -> None:
-        async with self._lock:
-            if current > self._scraped:
-                self._scraped = current
-            self._total = total
-        await self._send_draft(is_last=False)
-
-    async def update_keywords(self, current: int, total: int) -> None:
-        is_last = current >= total
-        async with self._lock:
-            if current > self._keywords:
-                self._keywords = current
-            self._total = total
-        await self._send_draft(is_last=is_last)
-
-    # ------------------------------------------------------------------
-    # Redis slot helpers
-    # ------------------------------------------------------------------
-
-    def _get_redis(self):
-        if self._redis is None:
-            import redis.asyncio as aioredis
-
-            from src.config import settings as app_settings
-
-            self._redis = aioredis.Redis.from_url(app_settings.redis_url, decode_responses=True)
-        return self._redis
-
-    def _redis_slot_key(self) -> str:
-        return f"progress:{self._chat_id}:{self._slot_key}"
-
-    async def _write_slot(self, scraped: int, keywords: int, total: int) -> None:
-        data = {
-            "scraped": scraped,
-            "keywords": keywords,
-            "total": total,
-            "title": self._vacancy_title,
-            "target_count": self._target_count,
-            "keyword_filter": self._keyword_filter,
-        }
-        await self._get_redis().set(self._redis_slot_key(), json.dumps(data), ex=_PROGRESS_SLOT_TTL)
-
-    async def _delete_slot(self) -> None:
-        await self._get_redis().delete(self._redis_slot_key())
-
-    async def _read_all_slots(self) -> list[dict]:
-        r = self._get_redis()
-        keys = await r.keys(f"progress:{self._chat_id}:*")
-        if not keys:
-            return []
-        values = await r.mget(*keys)
-        slots = []
-        for raw in values:
-            if raw:
-                with contextlib.suppress(Exception):
-                    slots.append(json.loads(raw))
-        return slots
-
-    # ------------------------------------------------------------------
-    # Draft sending
-    # ------------------------------------------------------------------
-
-    async def _send_draft(self, *, is_last: bool) -> None:
-        from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-
-        now = time.monotonic()
-        async with self._lock:
-            elapsed_ms = (now - self._last_send) * 1000
-            if elapsed_ms < _PROGRESS_THROTTLE_MS and not is_last:
-                return
-            self._last_send = time.monotonic()
-            scraped, keywords, total = self._scraped, self._keywords, self._total
-
-        await self._write_slot(scraped, keywords, total)
-        slots = await self._read_all_slots()
-        text = (
-            self._build_combined_text(slots)
-            if slots
-            else self._build_slot_text(scraped, keywords, total)
-        )
-
-        try:
-            await self._bot.send_message_draft(
-                chat_id=self._chat_id,
-                draft_id=self._draft_id,
-                text=text,
-                parse_mode="HTML",
-            )
-        except TelegramRetryAfter as exc:
-            logger.warning("Progress draft flood control", retry_after=exc.retry_after)
-            await asyncio.sleep(exc.retry_after)
-        except TelegramBadRequest as exc:
-            logger.warning("Progress draft failed", error=str(exc))
-
-        if is_last:
-            await self._delete_slot()
-
-    # ------------------------------------------------------------------
-    # Text builders
-    # ------------------------------------------------------------------
-
-    def _build_slot_text(self, scraped: int, keywords: int, total: int) -> str:
-        lb = self._labels
-        lines = [
-            f"<b>\u23f3 {lb['title']}</b>",
-            "",
-            f"<b>\U0001f4cb</b> {self._vacancy_title}",
-            f"<b>\U0001f3af</b> {self._target_count} {lb['vacancies']}",
-        ]
-        if self._keyword_filter:
-            lines.append(f"<b>\U0001f50e</b> {self._keyword_filter}")
-        lines += [
-            "",
-            f"\U0001f310 {lb['scraping']}",
-            _bar(scraped, total),
-            "",
-            f"\U0001f9e0 {lb['keywords']}",
-            _bar(keywords, total),
-        ]
-        return "\n".join(lines)
-
-    def _build_combined_text(self, slots: list[dict]) -> str:
-        lb = self._labels
-        parts = []
-        for slot in slots:
-            scraped = slot.get("scraped", 0)
-            keywords = slot.get("keywords", 0)
-            total = slot.get("total", 0)
-            title = slot.get("title", "")
-            target_count = slot.get("target_count", 0)
-            keyword_filter = slot.get("keyword_filter", "")
-            lines = [
-                f"<b>\u23f3 {lb['title']}</b>",
-                "",
-                f"<b>\U0001f4cb</b> {title}",
-                f"<b>\U0001f3af</b> {target_count} {lb['vacancies']}",
-            ]
-            if keyword_filter:
-                lines.append(f"<b>\U0001f50e</b> {keyword_filter}")
-            lines += [
-                "",
-                f"\U0001f310 {lb['scraping']}",
-                _bar(scraped, total),
-                "",
-                f"\U0001f9e0 {lb['keywords']}",
-                _bar(keywords, total),
-            ]
-            parts.append("\n".join(lines))
-        return "\n\n\u2500\u2500\u2500\n\n".join(parts)
 
 
 @celery_app.task(
@@ -325,16 +102,17 @@ async def _run_parsing_company_async(
                     company.vacancy_title,
                 )
 
-        tracker = _make_tracker(bot, telegram_chat_id, company, locale)
+        task_key = f"parse:{parsing_company_id}"
+        progress = await _start_progress(bot, telegram_chat_id, company, locale)
 
         async def _on_page_scraped(current: int, total: int) -> None:
-            if tracker:
-                await tracker.update_scraped(current, total)
+            if progress:
+                await progress.update_bar(task_key, 0, current, total)
 
         async def _on_vacancy_processed(current: int, total: int) -> None:
             await _report_progress(session_factory, parsing_company_id, current, total)
-            if tracker:
-                await tracker.update_keywords(current, total)
+            if progress:
+                await progress.update_bar(task_key, 1, current, total)
 
         compat_filter = None
         if company.use_compatibility_check and company.compatibility_threshold is not None:
@@ -363,6 +141,9 @@ async def _run_parsing_company_async(
             idempotency_key,
         )
         cb.record_success()
+
+        if progress:
+            await progress.finish_task(task_key)
 
         try:
             await _notify_user(
@@ -415,23 +196,28 @@ async def _init_bot_and_locale(
     return _create_bot(), locale
 
 
-def _make_tracker(
+async def _start_progress(
     bot: "Bot | None",  # noqa: F821
     chat_id: int,
     company: "ParsingCompany",  # noqa: F821
     locale: str,
-) -> _ProgressTracker | None:
+) -> "ProgressService | None":  # noqa: F821
+    """Create a ProgressService and register the parsing task bars."""
     if not bot or not chat_id:
         return None
-    return _ProgressTracker(
-        bot,
-        chat_id,
-        slot_key=str(company.id),
-        vacancy_title=company.vacancy_title,
-        target_count=company.target_count,
-        keyword_filter=company.keyword_filter or "",
-        locale=locale,
+    from src.core.i18n import get_text
+    from src.services.progress_service import ProgressService, create_progress_redis
+
+    svc = ProgressService(bot, chat_id, create_progress_redis(), locale)
+    await svc.start_task(
+        task_key=f"parse:{company.id}",
+        title=company.vacancy_title,
+        bar_labels=[
+            get_text("progress-bar-scraping", locale),
+            get_text("progress-bar-keywords", locale),
+        ],
     )
+    return svc
 
 
 def _create_bot() -> "Bot":  # noqa: F821
