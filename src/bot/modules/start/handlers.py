@@ -11,7 +11,16 @@ from src.models.user import User
 
 router = Router(name="start")
 
-_HANDLED_IN_START = {"main", "profile", "settings", "my_parsings", "autoparse", "admin", "support"}
+_HANDLED_IN_START = {
+    "main",
+    "profile",
+    "settings",
+    "my_parsings",
+    "my_interviews",
+    "autoparse",
+    "admin",
+    "support",
+}
 
 
 def _menu_keyboard(user: User, i18n: I18nContext) -> object:
@@ -78,6 +87,11 @@ async def menu_navigation(
         from src.bot.modules.admin.handlers import show_admin_panel
 
         await show_admin_panel(callback, i18n)
+
+    elif action == "my_interviews":
+        from src.bot.modules.interviews.handlers import show_interview_list
+
+        await show_interview_list(callback, user, i18n, session)
 
     elif action == "support":
         from src.bot.modules.support.user_handlers import show_ticket_list

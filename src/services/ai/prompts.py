@@ -173,6 +173,126 @@ def build_key_phrases_prompt(
     )
 
 
+def build_interview_analysis_system_prompt() -> str:
+    """Return the system prompt for analyzing a user's interview performance.
+
+    The model evaluates the candidate's answers to interview questions against
+    the vacancy requirements and outputs a structured report identifying weak
+    areas and actionable improvement topics.
+    """
+    return (
+        "Ты — опытный технический интервьюер и карьерный консультант с 20-летним опытом.\n\n"
+        "[ЗАДАЧА]\n"
+        "Проанализируй ответы кандидата на вопросы собеседования с учётом требований вакансии "
+        "и уровня опыта. Определи слабые места и области для улучшения.\n\n"
+        "[ПРАВИЛА АНАЛИЗА]\n"
+        "- Оценивай ответы по следующим критериям: глубина знаний, практический опыт, "
+        "понимание технологий, правильность подхода к решению задач.\n"
+        "- Учитывай уровень опыта кандидата при оценке — требования к джуну и сеньору разные.\n"
+        "- Выявляй конкретные технологии/темы, где ответы были слабыми, неполными или неверными.\n"
+        "- Если ответ был хорошим — не включай эту тему в блоки улучшений.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответ ТОЛЬКО в следующем формате, без дополнительного текста до или после:\n\n"
+        "[InterviewSummaryStart]\n"
+        "Общее резюме собеседования: что было хорошо, что плохо, общее впечатление "
+        "от уровня кандидата относительно вакансии. Конкретно и по делу. "
+        "Не более 1500 символов.\n"
+        "[InterviewSummaryEnd]\n\n"
+        "[ImproveStart]:<название_технологии_или_темы>\n"
+        "Конкретное описание того, что именно было плохо в ответах по данной теме: "
+        "какие знания отсутствуют, какие концепции не поняты, что нужно изучить. "
+        "Не более 800 символов.\n"
+        "[ImproveEnd]:<название_технологии_или_темы>\n\n"
+        "Повтори блок [ImproveStart]/[ImproveEnd] для каждой слабой области.\n"
+        "Если слабых областей нет — после [InterviewSummaryEnd] не добавляй ничего."
+    )
+
+
+def build_interview_analysis_user_content(
+    vacancy_title: str,
+    vacancy_description: str | None,
+    company_name: str | None,
+    experience_level: str | None,
+    questions_answers: list[dict[str, str]],
+    user_improvement_notes: str | None,
+) -> str:
+    """Return the user message for interview analysis.
+
+    Formats all interview data: vacancy context, Q&A pairs, and optional
+    self-assessment notes from the candidate.
+    """
+    description_block = (
+        f"Описание вакансии:\n{vacancy_description}\n\n" if vacancy_description else ""
+    )
+    company_block = f"Компания: {company_name}\n" if company_name else ""
+    experience_block = f"Ожидаемый опыт: {experience_level}\n" if experience_level else ""
+
+    qa_lines = []
+    for idx, qa in enumerate(questions_answers, 1):
+        qa_lines.append(f"Вопрос {idx}: {qa['question']}")
+        qa_lines.append(f"Ответ кандидата: {qa['answer']}\n")
+    qa_block = "\n".join(qa_lines)
+
+    notes_block = (
+        f"\n[ЗАМЕТКИ КАНДИДАТА О СЛАБЫХ МЕСТАХ]\n{user_improvement_notes}\n"
+        if user_improvement_notes
+        else ""
+    )
+
+    return (
+        f"[ВАКАНСИЯ]\n"
+        f"Название: {vacancy_title}\n"
+        f"{company_block}"
+        f"{experience_block}"
+        f"{description_block}"
+        f"[ВОПРОСЫ И ОТВЕТЫ КАНДИДАТА]\n"
+        f"{qa_block}"
+        f"{notes_block}"
+    )
+
+
+def build_improvement_flow_system_prompt() -> str:
+    """Return the system prompt for generating a step-by-step improvement guide."""
+    return (
+        "Ты — опытный технический ментор и карьерный консультант.\n\n"
+        "[ЗАДАЧА]\n"
+        "Составь подробный пошаговый план изучения и улучшения знаний кандидата "
+        "по конкретной технологии или теме на основе выявленных слабых мест.\n\n"
+        "[ПРАВИЛА]\n"
+        "- План должен быть конкретным и практическим, не абстрактным.\n"
+        "- Каждый шаг должен содержать: что изучить, как практиковаться, "
+        "как проверить свои знания.\n"
+        "- Учитывай контекст вакансии — фокусируйся на том, что реально нужно для работы.\n"
+        "- Давай конкретные рекомендации: темы для изучения, типы задач для практики, "
+        "подходы к закреплению знаний.\n"
+        "- Разбей план на логичные этапы от базового к продвинутому.\n"
+        "- Объём: 5–10 конкретных шагов.\n\n"
+        "[ФОРМАТ]\n"
+        "Используй нумерованный список. Каждый пункт начинай с номера и точки. "
+        "Никакого дополнительного форматирования (без **, *, >).\n"
+        "Пиши на русском языке."
+    )
+
+
+def build_improvement_flow_user_content(
+    technology_title: str,
+    improvement_summary: str,
+    vacancy_title: str,
+    vacancy_description: str | None,
+) -> str:
+    """Return the user message for improvement flow generation."""
+    description_block = (
+        f"\nКонтекст вакансии:\n{vacancy_description[:3000]}\n" if vacancy_description else ""
+    )
+
+    return (
+        f"Вакансия: {vacancy_title}{description_block}\n"
+        f"Технология/тема для улучшения: {technology_title}\n\n"
+        f"Выявленные проблемы в знаниях кандидата:\n{improvement_summary}\n\n"
+        f"Составь пошаговый план улучшения знаний по теме '{technology_title}'."
+    )
+
+
 def build_per_company_key_phrases_prompt(
     resume_title: str,
     main_keywords: list[str],

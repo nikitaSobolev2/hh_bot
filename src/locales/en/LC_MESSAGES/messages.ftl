@@ -565,3 +565,111 @@ settings-timezone-search = Enter city or region name to search:
 settings-timezone-set = Timezone set to { $tz }
 settings-timezone-no-results = No timezones found for your query. Try again.
 btn-tz-search = 🔍 Search
+
+# ── My Interviews ─────────────────────────────────────────
+btn-my-interviews = 🎤 My Interviews
+btn-cancel = ❌ Cancel
+
+iv-list-title = <b>🎤 My Interviews</b>
+
+iv-list-empty =
+    <b>🎤 My Interviews</b>
+
+    You have no interview records yet.
+    Tap "Add" to get started.
+
+btn-iv-add-new = ➕ Add Interview
+
+iv-fsm-source-choice =
+    <b>🎤 New Interview</b>
+
+    Was this a job interview for a vacancy from HH.ru?
+
+btn-iv-source-hh = 🔗 Yes, it's from HH.ru
+btn-iv-source-manual = ✏️ No, I'll enter it manually
+
+iv-fsm-enter-hh-link =
+    Enter the HH.ru vacancy link:
+    (e.g. https://hh.ru/vacancy/12345678)
+
+iv-fsm-parsing-hh = ⏳ Loading vacancy data from HH.ru...
+iv-fsm-hh-parsed = ✅ Vacancy loaded:
+iv-fsm-hh-parse-failed =
+    ❌ Could not load the vacancy. Check the link and try again.
+iv-fsm-invalid-link = Please enter a valid link (starting with http).
+
+iv-fsm-enter-title =
+    <b>Step 1/4 — Vacancy Title</b>
+
+    Enter the title of the vacancy you interviewed for:
+iv-fsm-title-empty = Title cannot be empty. Please try again:
+
+iv-fsm-enter-description =
+    <b>Step 2/4 — Vacancy Description</b>
+
+    Enter the vacancy description (paste from the job posting):
+    Or send any text to skip.
+
+iv-fsm-enter-company =
+    <b>Step 3/4 — Company</b>
+
+    Enter the company name:
+
+iv-fsm-enter-experience =
+    <b>Step 4/4 — Experience Level</b>
+
+    What experience level was expected in this vacancy?
+
+btn-iv-exp-none = 👶 No experience
+btn-iv-exp-junior = 🔰 1–3 years
+btn-iv-exp-middle = 💼 3–6 years
+btn-iv-exp-senior = 🚀 6+ years
+btn-iv-exp-other = 🔧 Other
+
+iv-fsm-now-add-questions =
+    <b>Now add your questions and answers</b>
+
+    Send a question you were asked during the interview.
+    After each question, enter your answer or how you felt about it.
+
+iv-fsm-enter-answer = Now enter your answer or how you felt about your response:
+iv-fsm-question-empty = Question cannot be empty.
+iv-fsm-question-added = ✅ Question { $count } added. Enter another or tap "Done".
+btn-iv-questions-done = ✅ Done, continue
+
+iv-fsm-enter-notes =
+    <b>What do you want to improve?</b>
+
+    Write what you think you should work on after this interview.
+    This helps make AI recommendations more accurate.
+    Or tap "Skip".
+
+btn-iv-skip = ⏭ Skip
+
+iv-fsm-confirm-title = <b>📋 Review your data before submitting</b>
+iv-not-specified = not specified
+
+btn-iv-proceed = 🚀 Analyze
+btn-cancel-form = ❌ Cancel
+
+iv-fsm-analyzing = ⏳ Analyzing interview, this may take up to a minute...
+
+iv-summary-label = 📊 Interview Summary:
+iv-qa-label = 💬 Questions & Answers:
+iv-no-summary = Summary not generated.
+iv-no-questions = No questions added.
+
+iv-improvement-flow-label = 📚 Improvement Plan:
+iv-generating-flow = ⏳ Generating improvement plan...
+iv-flow-generation-failed = Could not generate the plan. Please try later.
+
+btn-iv-generate-flow = 🔍 Generate Improvement Plan (AI)
+btn-iv-set-improved = ✅ Mark as Learned
+btn-iv-set-incorrect = ❌ Incorrect Assessment
+btn-iv-back-improvements = ◀️ Back to Topics
+
+btn-iv-delete = 🗑 Delete Interview
+iv-delete-confirm-prompt = Are you sure? This record will be hidden from your list.
+btn-iv-delete-confirm = Yes, delete
+iv-deleted = Interview deleted.
+iv-not-found = Record not found.

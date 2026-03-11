@@ -3,6 +3,7 @@ from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.models.balance import BalanceTransaction
 from src.models.ban import UserBan
 from src.models.blacklist import VacancyBlacklist
+from src.models.interview import Interview, InterviewImprovement, InterviewQuestion
 from src.models.parsing import AggregatedResult, ParsedVacancy, ParsingCompany
 from src.models.referral import ReferralEvent
 from src.models.role import Role, RolePermission
@@ -38,4 +39,7 @@ __all__ = [
     "SupportMessage",
     "SupportAttachment",
     "UserBan",
+    "Interview",
+    "InterviewQuestion",
+    "InterviewImprovement",
 ]

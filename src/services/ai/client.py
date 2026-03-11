@@ -14,6 +14,10 @@ from src.core.logging import get_logger
 from src.services.ai.prompts import (
     build_compatibility_system_prompt,
     build_compatibility_user_content,
+    build_improvement_flow_system_prompt,
+    build_improvement_flow_user_content,
+    build_interview_analysis_system_prompt,
+    build_interview_analysis_user_content,
     build_vacancy_analysis_system_prompt,
     build_vacancy_analysis_user_content,
 )
@@ -216,6 +220,86 @@ class AIClient:
         except Exception as exc:
             logger.error("OpenAI key phrases generation failed", error=str(exc))
             return None
+
+    async def analyze_interview(
+        self,
+        vacancy_title: str,
+        vacancy_description: str | None,
+        company_name: str | None,
+        experience_level: str | None,
+        questions_answers: list[dict[str, str]],
+        user_improvement_notes: str | None,
+    ) -> str:
+        """Analyze interview Q&A against the vacancy and return a structured report.
+
+        The response contains an [InterviewSummaryStart/End] block and zero or
+        more [ImproveStart/End] blocks as defined in the system prompt.
+        """
+        messages = [
+            {
+                "role": "system",
+                "content": build_interview_analysis_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": build_interview_analysis_user_content(
+                    vacancy_title=vacancy_title,
+                    vacancy_description=vacancy_description,
+                    company_name=company_name,
+                    experience_level=experience_level,
+                    questions_answers=questions_answers,
+                    user_improvement_notes=user_improvement_notes,
+                ),
+            },
+        ]
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=180,
+                messages=messages,
+                max_tokens=4000,
+                temperature=0.3,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.error("Interview analysis failed", error=str(exc))
+            return ""
+
+    async def generate_improvement_flow(
+        self,
+        technology_title: str,
+        improvement_summary: str,
+        vacancy_title: str,
+        vacancy_description: str | None,
+    ) -> str:
+        """Generate a step-by-step improvement guide for a specific technology weakness."""
+        messages = [
+            {
+                "role": "system",
+                "content": build_improvement_flow_system_prompt(),
+            },
+            {
+                "role": "user",
+                "content": build_improvement_flow_user_content(
+                    technology_title=technology_title,
+                    improvement_summary=improvement_summary,
+                    vacancy_title=vacancy_title,
+                    vacancy_description=vacancy_description,
+                ),
+            },
+        ]
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=180,
+                messages=messages,
+                max_tokens=3000,
+                temperature=0.4,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.error("Improvement flow generation failed", error=str(exc))
+            return ""
 
     async def stream_key_phrases(
         self,

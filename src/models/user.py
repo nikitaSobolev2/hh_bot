@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from src.models.balance import BalanceTransaction
     from src.models.ban import UserBan
     from src.models.blacklist import VacancyBlacklist
+    from src.models.interview import Interview
     from src.models.parsing import ParsingCompany
     from src.models.referral import ReferralEvent
     from src.models.role import Role
@@ -68,6 +69,10 @@ class User(Base):
     )
     bans: Mapped[list[UserBan]] = relationship(
         foreign_keys="UserBan.user_id",
+    )
+    interviews: Mapped[list[Interview]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
     @property
