@@ -384,10 +384,10 @@ async def fsm_proceed(
     user: User,
     i18n: I18nContext,
 ) -> None:
+    from src.worker.tasks.interviews import analyze_interview_task
+
     data = await state.get_data()
     await state.clear()
-
-    await callback.message.edit_text(i18n.get("iv-fsm-analyzing"))
 
     interview = await interview_service.create_interview(
         session=session,
@@ -402,33 +402,16 @@ async def fsm_proceed(
     questions: list[dict[str, str]] = data.get("questions", [])
     await interview_service.bulk_create_questions(session, interview.id, questions)
 
-    summary, improvements = await interview_service.analyze_and_save(
-        session=session,
-        interview_id=interview.id,
-        vacancy_title=interview.vacancy_title,
-        vacancy_description=interview.vacancy_description,
-        company_name=interview.company_name,
-        experience_level=interview.experience_level,
-        questions_answers=questions,
-        user_improvement_notes=data.get("user_improvement_notes"),
+    await callback.message.edit_text(i18n.get("iv-fsm-analyzing"))
+
+    analyze_interview_task.delay(
+        interview.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        user.language_code or "ru",
+        data.get("user_improvement_notes"),
     )
 
-    await session.refresh(interview)
-
-    header = interview_service.format_vacancy_header(
-        interview.vacancy_title,
-        interview.company_name,
-        interview.experience_level,
-        interview.hh_vacancy_url,
-    )
-    summary_text = summary or i18n.get("iv-no-summary")
-    text = f"{header}\n\n<b>{i18n.get('iv-summary-label')}</b>\n{summary_text}"
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=interview_detail_keyboard(interview.id, improvements, i18n),
-        disable_web_page_preview=True,
-    )
     await callback.answer()
 
 
@@ -591,9 +574,11 @@ async def handle_generate_flow(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
     session: AsyncSession,
+    user: User,
     i18n: I18nContext,
 ) -> None:
     from src.repositories.interview import InterviewRepository
+    from src.worker.tasks.interviews import generate_improvement_flow_task
 
     interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
     if not interview:
@@ -603,47 +588,12 @@ async def handle_generate_flow(
     await callback.message.edit_text(i18n.get("iv-generating-flow"))
     await callback.answer()
 
-    flow = await interview_service.generate_and_save_improvement_flow(
-        session=session,
-        improvement_id=callback_data.improvement_id,
-        vacancy_title=interview.vacancy_title,
-        vacancy_description=interview.vacancy_description,
-    )
-
-    from src.repositories.interview import InterviewImprovementRepository
-
-    improvement = await InterviewImprovementRepository(session).get_by_id(
-        callback_data.improvement_id
-    )
-    if not improvement:
-        return
-
-    header = interview_service.format_vacancy_header(
-        interview.vacancy_title,
-        interview.company_name,
-        interview.experience_level,
-        interview.hh_vacancy_url,
-    )
-
-    flow_section = (
-        f"\n\n<b>{i18n.get('iv-improvement-flow-label')}</b>\n{flow}"
-        if flow
-        else f"\n\n{i18n.get('iv-flow-generation-failed')}"
-    )
-
-    text = (
-        f"{header}\n\n<b>{improvement.technology_title}</b>\n\n{improvement.summary}{flow_section}"
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=improvement_detail_keyboard(
-            callback_data.interview_id,
-            callback_data.improvement_id,
-            has_flow=bool(flow),
-            i18n=i18n,
-        ),
-        disable_web_page_preview=True,
+    generate_improvement_flow_task.delay(
+        callback_data.improvement_id,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        user.language_code or "ru",
     )
 
 

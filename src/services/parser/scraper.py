@@ -300,8 +300,16 @@ class HHScraper:
         if soup is None:
             return {}
 
-        title_el = soup.find(attrs={"data-qa": "vacancy-title"}).find("span", recursive=False) if soup.find(attrs={"data-qa": "vacancy-title"}) else None
-        title = title_el.get_text(strip=True) if title_el else ""
+        title_el = soup.find(attrs={"data-qa": "vacancy-title"})
+        if title_el:
+            from bs4 import NavigableString
+
+            raw_title = "".join(
+                str(node) for node in title_el.children if isinstance(node, NavigableString)
+            )
+            title = _MULTI_SPACE_RE.sub(" ", raw_title.replace("\n", " ")).strip()
+        else:
+            title = ""
 
         desc_el = soup.find(attrs={"data-qa": "vacancy-description"})
         description = desc_el.get_text(separator="\n", strip=True) if desc_el else ""
@@ -312,7 +320,12 @@ class HHScraper:
         skill_elements = soup.select('[data-qa="skills-element"] > div')
         skills = [el.get_text(strip=True) for el in skill_elements if el.get_text(strip=True)]
 
-        result: dict = {"description": description, "skills": skills, "title": title, "company_name": company_name}
+        result: dict = {
+            "description": description,
+            "skills": skills,
+            "title": title,
+            "company_name": company_name,
+        }
 
         for field, data_qa in self._VACANCY_DETAIL_SELECTORS.items():
             el = soup.find(attrs={"data-qa": data_qa})

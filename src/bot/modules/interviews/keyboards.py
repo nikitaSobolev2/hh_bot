@@ -14,6 +14,16 @@ if TYPE_CHECKING:
     from src.core.i18n import I18nContext
     from src.models.interview import Interview
 
+
+def _t(key: str, i18n: I18nContext | None = None, locale: str = "ru") -> str:
+    """Resolve a translation key using i18n context or standalone get_text."""
+    if i18n is not None:
+        return i18n.get(key)
+    from src.core.i18n import get_text
+
+    return get_text(key, locale)
+
+
 _PAGE_SIZE = 5
 
 _IMPROVEMENT_STATUS_ICONS = {
@@ -186,7 +196,8 @@ def cancel_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
 def interview_detail_keyboard(
     interview_id: int,
     improvements: list[InterviewImprovement],
-    i18n: I18nContext,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -208,7 +219,7 @@ def interview_detail_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=i18n.get("btn-iv-delete"),
+                text=_t("btn-iv-delete", i18n, locale),
                 callback_data=InterviewCallback(action="delete", interview_id=interview_id).pack(),
             )
         ]
@@ -216,7 +227,7 @@ def interview_detail_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=i18n.get("btn-back"),
+                text=_t("btn-back", i18n, locale),
                 callback_data=InterviewCallback(action="list").pack(),
             )
         ]
@@ -229,7 +240,8 @@ def improvement_detail_keyboard(
     interview_id: int,
     improvement_id: int,
     has_flow: bool,
-    i18n: I18nContext,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -237,7 +249,7 @@ def improvement_detail_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("btn-iv-generate-flow"),
+                    text=_t("btn-iv-generate-flow", i18n, locale),
                     callback_data=InterviewCallback(
                         action="gen_flow",
                         interview_id=interview_id,
@@ -250,7 +262,7 @@ def improvement_detail_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=i18n.get("btn-iv-set-improved"),
+                text=_t("btn-iv-set-improved", i18n, locale),
                 callback_data=InterviewCallback(
                     action="set_success",
                     interview_id=interview_id,
@@ -262,7 +274,7 @@ def improvement_detail_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=i18n.get("btn-iv-set-incorrect"),
+                text=_t("btn-iv-set-incorrect", i18n, locale),
                 callback_data=InterviewCallback(
                     action="set_error",
                     interview_id=interview_id,
@@ -274,7 +286,7 @@ def improvement_detail_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=i18n.get("btn-iv-back-improvements"),
+                text=_t("btn-iv-back-improvements", i18n, locale),
                 callback_data=InterviewCallback(action="detail", interview_id=interview_id).pack(),
             )
         ]

@@ -24,6 +24,7 @@ from src.bot.modules.parsing.keyboards import (
     language_selection_keyboard,
     parsing_list_keyboard,
     per_company_count_keyboard,
+    retry_compat_keyboard,
     retry_count_keyboard,
     retry_keyboard,
     style_selection_keyboard,
@@ -351,7 +352,6 @@ async def parsing_retry_use_default(
     i18n: I18nContext,
 ) -> None:
     data = await state.get_data()
-    await state.clear()
 
     company = await parsing_service.get_company_by_id(session, callback_data.company_id)
     if not company or company.user_id != user.id:
@@ -359,7 +359,12 @@ async def parsing_retry_use_default(
         return
 
     target_count = data.get("retry_default_count", company.target_count)
-    await _launch_retry(callback.message, user, session, i18n, company, target_count)
+    await state.update_data(retry_count=target_count)
+    await state.set_state(ParsingForm.retry_compat_check)
+    await callback.message.edit_text(
+        i18n.get("parsing-retry-compat-prompt"),
+        reply_markup=retry_compat_keyboard(i18n),
+    )
     await callback.answer()
 
 
@@ -368,7 +373,6 @@ async def fsm_retry_count(
     message: Message,
     user: User,
     state: FSMContext,
-    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
     text = message.text.strip()
@@ -381,25 +385,116 @@ async def fsm_retry_count(
         await message.answer(i18n.get("parsing-max-200"))
         return
 
+    await state.update_data(retry_count=count)
+    await state.set_state(ParsingForm.retry_compat_check)
+    await message.answer(
+        i18n.get("parsing-retry-compat-prompt"),
+        reply_markup=retry_compat_keyboard(i18n),
+    )
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "retry_compat_skip"))
+async def fsm_retry_compat_skip(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
     data = await state.get_data()
-    company_id = data.get("retry_company_id")
     await state.clear()
 
-    company = await parsing_service.get_company_by_id(session, company_id)
-    if not company or company.user_id != user.id:
+    company = await _fetch_retry_company(session, user, data)
+    if company is None:
+        await callback.message.answer(i18n.get("parsing-not-found"))
+        await callback.answer()
+        return
+
+    await _launch_retry(
+        callback.message,
+        user,
+        session,
+        i18n,
+        company,
+        data["retry_count"],
+        use_compatibility_check=False,
+        compatibility_threshold=None,
+    )
+    await callback.answer()
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "retry_compat_yes"))
+async def fsm_retry_compat_yes(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.set_state(ParsingForm.retry_compat_threshold)
+    await callback.message.edit_text(
+        i18n.get("parsing-compat-threshold-prompt"),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.retry_compat_threshold)
+async def fsm_retry_compat_threshold(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or not (1 <= int(text) <= 100):
+        await message.answer(i18n.get("parsing-compat-threshold-invalid"))
+        return
+
+    threshold = int(text)
+    data = await state.get_data()
+    await state.clear()
+
+    company = await _fetch_retry_company(session, user, data)
+    if company is None:
         await message.answer(i18n.get("parsing-not-found"))
         return
 
-    await _launch_retry(message, user, session, i18n, company, count)
+    await _launch_retry(
+        message,
+        user,
+        session,
+        i18n,
+        company,
+        data["retry_count"],
+        use_compatibility_check=True,
+        compatibility_threshold=threshold,
+    )
+
+
+async def _fetch_retry_company(
+    session: AsyncSession,
+    user: "User",  # noqa: F821
+    state_data: dict,
+) -> "ParsingCompany | None":  # noqa: F821
+    company_id = state_data.get("retry_company_id")
+    if not company_id:
+        return None
+    company = await parsing_service.get_company_by_id(session, company_id)
+    if not company or company.user_id != user.id:
+        return None
+    return company
 
 
 async def _launch_retry(
     message: Message,
-    user: User,
+    user: "User",  # noqa: F821
     session: AsyncSession,
     i18n: I18nContext,
     company: "ParsingCompany",  # noqa: F821
     target_count: int,
+    *,
+    use_compatibility_check: bool = False,
+    compatibility_threshold: int | None = None,
 ) -> None:
     new_company_id = await parsing_service.clone_and_dispatch(
         session,
@@ -407,6 +502,8 @@ async def _launch_retry(
         user.id,
         telegram_chat_id=message.chat.id,
         target_count=target_count,
+        use_compatibility_check=use_compatibility_check,
+        compatibility_threshold=compatibility_threshold,
     )
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
     text = i18n.get(

@@ -159,6 +159,27 @@ parsing-confirm =
     You will be notified when results are ready.
 parsing-confirm-include-all = including all
 parsing-confirm-skip-bl = skipping blacklisted
+parsing-confirm-compat = Compatibility check: ✅ enabled (threshold: { $threshold }%)
+
+# ── Parsing compat check ─────────────────────────────────
+parsing-compat-check-prompt =
+    <b>🎯 Compatibility Check</b>
+
+    Do you want to run AI compatibility check against your profile?
+    Vacancies scoring below the threshold will be filtered out.
+
+parsing-retry-compat-prompt =
+    <b>🎯 Compatibility Check</b>
+
+    Do you want to run AI compatibility check for this retry?
+    Vacancies scoring below the threshold will be filtered out.
+
+parsing-compat-threshold-prompt =
+    Enter the minimum compatibility threshold (1–100).
+
+    Only vacancies with a score ≥ this value will be included.
+
+parsing-compat-threshold-invalid = Please enter a whole number between 1 and 100.
 
 # ── Parsing completed (worker notification) ──────────────
 parsing-completed =
@@ -178,6 +199,8 @@ btn-skip-blacklisted = ✅ Skip blacklisted
 btn-include-all = 🔄 Include all
 btn-try-again = 🔄 Try Again
 btn-use-default = ✓ Use default ({ $count })
+btn-compat-yes = ✅ Yes
+btn-compat-skip = ⏭ Skip
 
 # ── Pagination ───────────────────────────────────────────
 btn-prev = ◀️ Prev
@@ -662,6 +685,7 @@ iv-no-questions = No questions added.
 iv-improvement-flow-label = 📚 Improvement Plan:
 iv-generating-flow = ⏳ Generating improvement plan...
 iv-flow-generation-failed = Could not generate the plan. Please try later.
+iv-analysis-failed = Could not analyze the interview. Please try later.
 
 btn-iv-generate-flow = 🔍 Generate Improvement Plan (AI)
 btn-iv-set-improved = ✅ Mark as Learned

@@ -11,6 +11,7 @@ celery_app = Celery(
         "src.worker.tasks.parsing",
         "src.worker.tasks.ai",
         "src.worker.tasks.autoparse",
+        "src.worker.tasks.interviews",
     ],
 )
 

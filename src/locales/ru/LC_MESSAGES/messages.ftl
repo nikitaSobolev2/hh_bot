@@ -159,6 +159,27 @@ parsing-confirm =
     Вы получите уведомление, когда результаты будут готовы.
 parsing-confirm-include-all = включая все
 parsing-confirm-skip-bl = пропуская из чёрного списка
+parsing-confirm-compat = Проверка совместимости: ✅ включена (порог: { $threshold }%)
+
+# ── Parsing compat check ─────────────────────────────────
+parsing-compat-check-prompt =
+    <b>🎯 Проверка совместимости</b>
+
+    Запустить AI-проверку совместимости вакансий с вашим профилем?
+    Вакансии ниже порогового значения будут отфильтрованы.
+
+parsing-retry-compat-prompt =
+    <b>🎯 Проверка совместимости</b>
+
+    Запустить AI-проверку совместимости для этого повтора?
+    Вакансии ниже порогового значения будут отфильтрованы.
+
+parsing-compat-threshold-prompt =
+    Введите минимальный порог совместимости (1–100).
+
+    Будут включены только вакансии с оценкой ≥ этого значения.
+
+parsing-compat-threshold-invalid = Введите целое число от 1 до 100.
 
 # ── Parsing completed (worker notification) ──────────────
 parsing-completed =
@@ -178,6 +199,8 @@ btn-skip-blacklisted = ✅ Пропустить из чёрного списка
 btn-include-all = 🔄 Включить все
 btn-try-again = 🔄 Попробовать снова
 btn-use-default = ✓ По умолчанию ({ $count })
+btn-compat-yes = ✅ Да
+btn-compat-skip = ⏭ Пропустить
 
 # ── Pagination ───────────────────────────────────────────
 btn-prev = ◀️ Назад
@@ -663,6 +686,7 @@ iv-no-questions = Вопросы не добавлены.
 iv-improvement-flow-label = 📚 План улучшения:
 iv-generating-flow = ⏳ Генерирую план улучшения...
 iv-flow-generation-failed = Не удалось сгенерировать план. Попробуйте позже.
+iv-analysis-failed = Не удалось проанализировать собеседование. Попробуйте позже.
 
 btn-iv-generate-flow = 🔍 Сгенерировать план улучшения (AI)
 btn-iv-set-improved = ✅ Отметить как изученное

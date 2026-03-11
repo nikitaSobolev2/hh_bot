@@ -68,11 +68,24 @@ async def clone_and_dispatch(
     user_id: int,
     telegram_chat_id: int = 0,
     target_count: int | None = None,
+    use_compatibility_check: bool | None = None,
+    compatibility_threshold: int | None = None,
 ) -> int:
     repo = ParsingCompanyRepository(session)
     source = await repo.get_by_id(source_company_id)
     if not source:
         raise ValueError(f"ParsingCompany {source_company_id} not found")
+
+    final_use_compat = (
+        use_compatibility_check
+        if use_compatibility_check is not None
+        else source.use_compatibility_check
+    )
+    final_threshold = (
+        compatibility_threshold
+        if use_compatibility_check is not None
+        else source.compatibility_threshold
+    )
 
     new_id = await create_parsing_company(
         session=session,
@@ -81,8 +94,8 @@ async def clone_and_dispatch(
         search_url=source.search_url,
         keyword_filter=source.keyword_filter or "",
         target_count=target_count if target_count is not None else source.target_count,
-        use_compatibility_check=source.use_compatibility_check,
-        compatibility_threshold=source.compatibility_threshold,
+        use_compatibility_check=final_use_compat,
+        compatibility_threshold=final_threshold,
     )
     dispatch_parsing_task(
         new_id,

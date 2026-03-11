@@ -11,6 +11,8 @@ class ParsingForm(StatesGroup):
     blacklist_check = State()
     confirm = State()
     retry_count = State()
+    retry_compat_check = State()
+    retry_compat_threshold = State()
     key_phrases_count = State()
     work_exp_company_name = State()
     work_exp_stack = State()

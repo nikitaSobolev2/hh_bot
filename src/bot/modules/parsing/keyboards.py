@@ -197,6 +197,29 @@ def compat_check_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     )
 
 
+def retry_compat_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-compat-yes"),
+                    callback_data=ParsingCallback(action="retry_compat_yes").pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("btn-compat-skip"),
+                    callback_data=ParsingCallback(action="retry_compat_skip").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=MenuCallback(action="main").pack(),
+                )
+            ],
+        ]
+    )
+
+
 def blacklist_choice_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
