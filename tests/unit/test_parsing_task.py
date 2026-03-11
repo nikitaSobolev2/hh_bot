@@ -57,6 +57,7 @@ class TestManualParseBlacklist:
             blacklisted_ids=None,
             on_page_scraped=None,
             on_vacancy_processed=None,
+            **_kwargs,
         ):
             captured.append(set(blacklisted_ids or set()))
             return {"vacancies": [], "keywords": {}, "skills": {}}

@@ -13,6 +13,7 @@ from src.services.parser.scraper import HHScraper
 logger = get_logger(__name__)
 
 OnProgressCallback = Callable[[int, int], Awaitable[None]]
+CompatFilterFn = Callable[[dict], Awaitable[bool]]
 
 _DEFAULT_CONCURRENCY = 15
 _AI_CONCURRENCY = 3
@@ -38,6 +39,7 @@ class ParsingExtractor:
         blacklisted_ids: set[str] | None = None,
         on_page_scraped: OnProgressCallback | None = None,
         on_vacancy_processed: OnProgressCallback | None = None,
+        compat_filter: CompatFilterFn | None = None,
         concurrency: int = _DEFAULT_CONCURRENCY,
         ai_concurrency: int = _AI_CONCURRENCY,
     ) -> dict:
@@ -64,7 +66,7 @@ class ParsingExtractor:
         async def _process_vacancy(
             client: httpx.AsyncClient,
             vac: dict,
-        ) -> tuple[dict, list[str], list[str]]:
+        ) -> tuple[dict, list[str], list[str]] | None:
             async with sem:
                 page_data = await self._scraper.parse_vacancy_page(
                     client,
@@ -80,6 +82,29 @@ class ParsingExtractor:
 
                 if on_page_scraped:
                     await on_page_scraped(scrape_current, total)
+
+                if compat_filter is not None:
+                    async with ai_sem:
+                        passes = await compat_filter(
+                            {
+                                "title": vac["title"],
+                                "description": description,
+                                "raw_skills": skills,
+                            }
+                        )
+                    if not passes:
+                        async with kw_lock:
+                            kw_count[0] += 1
+                            current = kw_count[0]
+                        logger.info(
+                            "Vacancy skipped (compat filter)",
+                            index=current,
+                            total=total,
+                            title=vac["title"][:60],
+                        )
+                        if on_vacancy_processed:
+                            await on_vacancy_processed(current, total)
+                        return None
 
                 ai_keywords: list[str] = []
                 if description:
@@ -128,7 +153,10 @@ class ParsingExtractor:
         skills_counter: Counter = Counter()
         processed_vacancies: list[dict] = []
 
-        for vac_dict, skills, ai_keywords in results:
+        for result_item in results:
+            if result_item is None:
+                continue
+            vac_dict, skills, ai_keywords = result_item
             processed_vacancies.append(vac_dict)
             for skill in skills:
                 skills_counter[skill.strip()] += 1

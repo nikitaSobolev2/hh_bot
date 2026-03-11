@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import json
 import time
-from collections import Counter
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -336,6 +336,13 @@ async def _run_parsing_company_async(
             if tracker:
                 await tracker.update_keywords(current, total)
 
+        compat_filter = None
+        if company.use_compatibility_check and company.compatibility_threshold is not None:
+            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
+            compat_filter = _build_compat_predicate(
+                tech_stack, work_exp_text, company.compatibility_threshold
+            )
+
         extractor = ParsingExtractor()
         result = await extractor.run_pipeline(
             search_url=company.search_url,
@@ -344,19 +351,8 @@ async def _run_parsing_company_async(
             blacklisted_ids=blacklisted_ids,
             on_page_scraped=_on_page_scraped,
             on_vacancy_processed=_on_vacancy_processed,
+            compat_filter=compat_filter,
         )
-
-        if company.use_compatibility_check and company.compatibility_threshold is not None:
-            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
-            filtered = await _apply_compatibility_filter(
-                result["vacancies"],
-                company.compatibility_threshold,
-                tech_stack,
-                work_exp_text,
-            )
-            if len(filtered) != len(result["vacancies"]):
-                keywords, skills = _recompute_aggregates(filtered)
-                result = {"vacancies": filtered, "keywords": keywords, "skills": skills}
 
         await _save_parsing_results(
             session_factory,
@@ -583,18 +579,6 @@ async def _mark_parsing_failed(
         await session.commit()
 
 
-def _recompute_aggregates(vacancies: list[dict]) -> tuple[dict, dict]:
-    """Recount keyword and skill frequencies from a filtered vacancy list."""
-    keywords_counter: Counter = Counter()
-    skills_counter: Counter = Counter()
-    for vac in vacancies:
-        for kw in vac.get("ai_keywords") or []:
-            keywords_counter[kw.strip()] += 1
-        for skill in vac.get("raw_skills") or []:
-            skills_counter[str(skill).strip()] += 1
-    return dict(keywords_counter.most_common()), dict(skills_counter.most_common())
-
-
 async def _fetch_user_tech_profile(
     session_factory: async_sessionmaker[AsyncSession],
     user_id: int,
@@ -625,44 +609,32 @@ async def _fetch_user_tech_profile(
     return tech_stack, work_exp_text
 
 
-_COMPAT_FILTER_CONCURRENCY = 3
-
-
-async def _apply_compatibility_filter(
-    vacancies: list[dict],
-    threshold: int,
+def _build_compat_predicate(
     tech_stack: list[str],
     work_exp_text: str,
-) -> list[dict]:
-    """Keep only vacancies whose compatibility score meets the threshold.
+    threshold: int,
+) -> Callable[[dict], Awaitable[bool]]:
+    """Return an async predicate that scores a vacancy and checks the threshold.
 
-    Uses a semaphore to limit concurrent AI calls.
+    The predicate is intentionally free of its own semaphore — the extractor's
+    ai_sem controls concurrency so compat checks and keyword extractions share
+    the same limit.
     """
     from src.services.ai.client import AIClient
 
     ai_client = AIClient()
-    sem = asyncio.Semaphore(_COMPAT_FILTER_CONCURRENCY)
 
-    async def _score_vacancy(vac: dict) -> tuple[dict, float]:
-        async with sem:
-            score = await ai_client.calculate_compatibility(
-                vacancy_title=vac["title"],
-                vacancy_skills=vac.get("raw_skills") or [],
-                vacancy_description=vac.get("description", ""),
-                user_tech_stack=tech_stack,
-                user_work_experience=work_exp_text,
-            )
-        return vac, score
+    async def predicate(vac: dict) -> bool:
+        score = await ai_client.calculate_compatibility(
+            vacancy_title=vac["title"],
+            vacancy_skills=vac.get("raw_skills") or [],
+            vacancy_description=vac.get("description", ""),
+            user_tech_stack=tech_stack,
+            user_work_experience=work_exp_text,
+        )
+        return score >= threshold
 
-    scored = await asyncio.gather(*[_score_vacancy(v) for v in vacancies])
-    kept = [vac for vac, score in scored if score >= threshold]
-    logger.info(
-        "Compatibility filter applied",
-        total=len(vacancies),
-        kept=len(kept),
-        threshold=threshold,
-    )
-    return kept
+    return predicate
 
 
 async def _notify_user(
