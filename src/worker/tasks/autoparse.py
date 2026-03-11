@@ -1,5 +1,7 @@
 """Celery tasks for the autoparse feature."""
 
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 import redis
@@ -14,6 +16,162 @@ logger = get_logger(__name__)
 
 _DISPATCH_LOCK_KEY = "autoparse:dispatch_lock"
 _RUN_LOCK_PREFIX = "autoparse:run:"
+# Safety-net TTL: released explicitly via finally; this guards against a crashed worker
+_CONCURRENT_RUN_LOCK_TTL = 2 * 3600
+
+_PROGRESS_BAR_WIDTH = 20
+_PROGRESS_THROTTLE_MS = 500
+
+_AUTOPARSE_PROGRESS_LABELS: dict[str, dict[str, str]] = {
+    "ru": {
+        "title": "Обработка вакансий",
+        "vacancies": "вакансий",
+        "scraping": "Парсинг",
+        "ai": "AI-совместимость",
+    },
+    "en": {
+        "title": "Processing vacancies",
+        "vacancies": "vacancies",
+        "scraping": "Scraping",
+        "ai": "AI Analysis",
+    },
+}
+
+
+def _bar(current: int, total: int) -> str:
+    """Render a single progress bar: ``<code>██░░</code>  50%  5/10``."""
+    pct = round(current / total * 100) if total else 0
+    filled = round(_PROGRESS_BAR_WIDTH * current / total) if total else 0
+    blocks = "\u2588" * filled + "\u2591" * (_PROGRESS_BAR_WIDTH - filled)
+    return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{current}/{total}</i>"
+
+
+class _AutoparseProgressTracker:
+    """Sends live dual-progress-bar updates to Telegram during a manual autoparse run.
+
+    Tracks two phases: scraping (vacancy pages fetched) and AI analysis
+    (compatibility scoring).  The AI bar is hidden when no AI client is used.
+    Uses the same ``send_message_draft`` + ``draft_id`` mechanism as
+    ``_ProgressTracker`` in the keyword-parsing task so the two draft bars
+    share the same Telegram draft slot for the same chat.
+    """
+
+    def __init__(
+        self,
+        bot: "Bot",  # noqa: F821
+        chat_id: int,
+        *,
+        vacancy_title: str,
+        target_count: int,
+        keyword_filter: str,
+        locale: str = "ru",
+    ) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        # Deterministic draft id — same formula as _ProgressTracker so both
+        # keyword parsing and autoparse share a single draft slot per chat.
+        self._draft_id = abs(chat_id) % (2**31 - 1) + 1
+        self._vacancy_title = vacancy_title
+        self._target_count = target_count
+        self._keyword_filter = keyword_filter
+        self._labels = _AUTOPARSE_PROGRESS_LABELS.get(locale, _AUTOPARSE_PROGRESS_LABELS["ru"])
+        self._scraped = 0
+        self._scraped_total = 0
+        self._analyzed = 0
+        self._analyzed_total = 0
+        self._last_send: float = 0.0
+        self._lock = asyncio.Lock()
+
+    # ------------------------------------------------------------------
+    # Public callbacks
+    # ------------------------------------------------------------------
+
+    async def update_scraped(self, current: int, total: int) -> None:
+        async with self._lock:
+            if current > self._scraped:
+                self._scraped = current
+            self._scraped_total = total
+        await self._send_draft(is_last=False)
+
+    async def update_analyzed(self, current: int, total: int) -> None:
+        async with self._lock:
+            if current > self._analyzed:
+                self._analyzed = current
+            self._analyzed_total = total
+        await self._send_draft(is_last=False)
+
+    async def finish(self) -> None:
+        """Send a final draft update, bypassing the throttle."""
+        await self._send_draft(is_last=True)
+
+    async def close(self) -> None:
+        """Release the underlying Bot session."""
+        await self._bot.session.close()
+
+    # ------------------------------------------------------------------
+    # Draft sending
+    # ------------------------------------------------------------------
+
+    async def _send_draft(self, *, is_last: bool) -> None:
+        from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+
+        now = time.monotonic()
+        async with self._lock:
+            elapsed_ms = (now - self._last_send) * 1000
+            if elapsed_ms < _PROGRESS_THROTTLE_MS and not is_last:
+                return
+            self._last_send = time.monotonic()
+            scraped = self._scraped
+            scraped_total = self._scraped_total
+            analyzed = self._analyzed
+            analyzed_total = self._analyzed_total
+
+        text = self._build_text(scraped, scraped_total, analyzed, analyzed_total)
+        try:
+            await self._bot.send_message_draft(
+                chat_id=self._chat_id,
+                draft_id=self._draft_id,
+                text=text,
+                parse_mode="HTML",
+            )
+        except TelegramRetryAfter as exc:
+            logger.warning("Autoparse progress draft flood control", retry_after=exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
+        except TelegramBadRequest as exc:
+            logger.warning("Autoparse progress draft failed", error=str(exc))
+
+    # ------------------------------------------------------------------
+    # Text builder
+    # ------------------------------------------------------------------
+
+    def _build_text(
+        self,
+        scraped: int,
+        scraped_total: int,
+        analyzed: int,
+        analyzed_total: int,
+    ) -> str:
+        lb = self._labels
+        lines = [
+            f"<b>\u23f3 {lb['title']}</b>",
+            "",
+            f"<b>\U0001f4cb</b> {self._vacancy_title}",
+            f"<b>\U0001f3af</b> {self._target_count} {lb['vacancies']}",
+        ]
+        if self._keyword_filter:
+            lines.append(f"<b>\U0001f50e</b> {self._keyword_filter}")
+        lines += [
+            "",
+            f"\U0001f310 {lb['scraping']}",
+            _bar(scraped, scraped_total) if scraped_total else _bar(0, 1),
+        ]
+        if analyzed_total > 0:
+            lines += [
+                "",
+                f"\U0001f9e0 {lb['ai']}",
+                _bar(analyzed, analyzed_total),
+            ]
+        return "\n".join(lines)
 
 
 def _redis_client() -> redis.Redis:
@@ -42,8 +200,10 @@ async def _dispatch_all_async(session_factory) -> dict:
                 logger.warning("Autoparse dispatch disabled via settings")
                 return {"status": "disabled"}
 
+            interval = int(await settings_repo.get_value("autoparse_interval_hours", default=6))
+
             repo = AutoparseCompanyRepository(session)
-            companies = await repo.get_all_enabled()
+            companies = await repo.get_due_for_dispatch(interval)
 
         dispatched = 0
         for company in companies:
@@ -165,22 +325,27 @@ async def _run_autoparse_company_async(
     r = _redis_client()
     lock_key = f"{_RUN_LOCK_PREFIX}{company_id}"
 
-    async with session_factory() as session:
-        settings_repo = AppSettingRepository(session)
-        interval = await settings_repo.get_value("autoparse_interval_hours", default=6)
-
-    lock_ttl = int(interval) * 3600
-    if not r.set(lock_key, "1", nx=True, ex=lock_ttl):
+    if not r.set(lock_key, "1", nx=True, ex=_CONCURRENT_RUN_LOCK_TTL):
         logger.info("Autoparse company already running", company_id=company_id)
         return {"status": "locked", "company_id": company_id}
 
+    _tracker_bot = None
+    tracker: _AutoparseProgressTracker | None = None
     cb = CircuitBreaker("autoparse")
-    if not cb.is_call_allowed():
-        logger.warning("Circuit breaker open for autoparse")
-        r.delete(lock_key)
-        return {"status": "circuit_open"}
-
     try:
+        if notify_user_id is not None:
+            from aiogram import Bot
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+
+            _tracker_bot = Bot(
+                token=settings.bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+        if not cb.is_call_allowed():
+            logger.warning("Circuit breaker open for autoparse")
+            return {"status": "circuit_open"}
+
         async with session_factory() as session:
             company_repo = AutoparseCompanyRepository(session)
             company = await company_repo.get_by_id(company_id)
@@ -204,17 +369,36 @@ async def _run_autoparse_company_async(
             we_repo = WorkExperienceRepository(session)
             work_experiences = await we_repo.get_active_by_user(company.user_id)
 
+        if _tracker_bot and user:
+            tracker = _AutoparseProgressTracker(
+                bot=_tracker_bot,
+                chat_id=user.telegram_id,
+                vacancy_title=company.vacancy_title,
+                target_count=target_count,
+                keyword_filter=company.keyword_filter or "",
+                locale=user.language_code or "ru",
+            )
+
+        async def _on_vacancy_scraped(current: int, total: int) -> None:
+            if tracker:
+                await tracker.update_scraped(current, total)
+
         parser = HHParserService()
         results = await parser.parse_vacancies(
             company.search_url,
             company.keyword_filter,
             target_count,
             known_hh_ids=global_ids,
+            on_vacancy_scraped=_on_vacancy_scraped,
         )
 
         user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
         ai_client = AIClient() if (user_stack or user_exp) else None
 
+        total_to_analyze = (
+            sum(1 for v in results if v["hh_vacancy_id"] not in known_ids) if ai_client else 0
+        )
+        analyzed_count = 0
         new_count = 0
         async with session_factory() as session:
             vacancy_repo = AutoparsedVacancyRepository(session)
@@ -245,6 +429,9 @@ async def _run_autoparse_company_async(
                             cached_compat = analysis.compatibility_score
                             cached_summary = analysis.summary or None
                             cached_stack = analysis.stack or None
+                            analyzed_count += 1
+                            if tracker:
+                                await tracker.update_analyzed(analyzed_count, total_to_analyze)
                         session.add(
                             AutoparsedVacancy(
                                 autoparse_company_id=company_id,
@@ -285,6 +472,9 @@ async def _run_autoparse_company_async(
                     compat_score = analysis.compatibility_score
                     ai_summary = analysis.summary or None
                     ai_stack = analysis.stack or None
+                    analyzed_count += 1
+                    if tracker:
+                        await tracker.update_analyzed(analyzed_count, total_to_analyze)
 
                 session.add(
                     _build_autoparsed_vacancy(vac, company_id, compat_score, ai_summary, ai_stack)
@@ -303,6 +493,9 @@ async def _run_autoparse_company_async(
             await session.commit()
 
         cb.record_success()
+
+        if tracker:
+            await tracker.finish()
 
         if new_count > 0 and user:
             deliver_autoparse_results.delay(company_id, user.id)
@@ -326,6 +519,10 @@ async def _run_autoparse_company_async(
         cb.record_failure()
         logger.error("Autoparse task failed", company_id=company_id, error=str(exc))
         raise
+    finally:
+        r.delete(lock_key)
+        if _tracker_bot:
+            await _tracker_bot.session.close()
 
 
 _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"

@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -24,6 +25,7 @@ class HHParserService:
         target_count: int,
         *,
         known_hh_ids: set[str] | None = None,
+        on_vacancy_scraped: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> list[dict]:
         """Scrape search pages and parse individual vacancy pages.
 
@@ -62,6 +64,8 @@ class HHParserService:
                 merged.pop("skills", None)
                 results.append(merged)
                 new_count += 1
+                if on_vacancy_scraped:
+                    await on_vacancy_scraped(new_count, target_count)
 
                 await asyncio.sleep(random.uniform(*self._scraper._vacancy_delay))
 

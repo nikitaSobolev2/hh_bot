@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,20 @@ class AutoparseCompanyRepository(BaseRepository[AutoparseCompany]):
         stmt = select(AutoparseCompany).where(
             AutoparseCompany.is_enabled.is_(True),
             AutoparseCompany.is_deleted.is_(False),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_due_for_dispatch(self, interval_hours: int) -> Sequence[AutoparseCompany]:
+        """Return enabled companies whose last parse is older than interval_hours, or never ran."""
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=interval_hours)
+        stmt = select(AutoparseCompany).where(
+            AutoparseCompany.is_enabled.is_(True),
+            AutoparseCompany.is_deleted.is_(False),
+            or_(
+                AutoparseCompany.last_parsed_at.is_(None),
+                AutoparseCompany.last_parsed_at <= cutoff,
+            ),
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
