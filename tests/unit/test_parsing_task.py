@@ -1,4 +1,7 @@
-"""Tests for the manual parsing task blacklist logic."""
+"""Tests for the manual parsing task: blacklist logic and progress tracker."""
+
+import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -139,3 +142,257 @@ class TestManualParseBlacklist:
             f"Autoparse IDs {autoparse_ids} must NOT be in the blacklist passed to run_pipeline; "
             f"got {passed_blacklist}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_tracker(chat_id: int = 111, slot_key: str = "42", locale: str = "ru"):
+    """Return a _ProgressTracker with a mocked bot and Redis client."""
+    from src.worker.tasks.parsing import _ProgressTracker
+
+    bot = MagicMock()
+    bot.send_message_draft = AsyncMock()
+
+    tracker = _ProgressTracker(
+        bot,
+        chat_id,
+        slot_key=slot_key,
+        vacancy_title="Backend Dev",
+        target_count=100,
+        keyword_filter="python",
+        locale=locale,
+    )
+
+    # Inject a mock async Redis client so no real Redis is needed.
+    redis_mock = MagicMock()
+    redis_mock.set = AsyncMock()
+    redis_mock.delete = AsyncMock()
+    redis_mock.keys = AsyncMock(return_value=[])
+    redis_mock.mget = AsyncMock(return_value=[])
+    tracker._redis = redis_mock
+
+    return tracker, bot, redis_mock
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestProgressTrackerMonotonic:
+    """update_scraped / update_keywords must never move the counter backwards."""
+
+    @pytest.mark.asyncio
+    async def test_update_keywords_ignores_lower_current_value(self):
+        """Writing current=99 after current=100 must not lower self._keywords."""
+        tracker, _bot, redis_mock = _make_tracker()
+        redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
+        redis_mock.mget = AsyncMock(
+            return_value=[json.dumps({"scraped": 0, "keywords": 100, "total": 100})]
+        )
+
+        # Simulate task-100 writing first.
+        async with tracker._lock:
+            tracker._keywords = 100
+            tracker._total = 100
+
+        # Now task-99 arrives — it must not overwrite the higher value.
+        await tracker.update_keywords(99, 100)
+
+        assert tracker._keywords == 100, (
+            "A lower current value must not overwrite a higher one"
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_keywords_advances_when_higher(self):
+        """Normal forward progress must still advance self._keywords."""
+        tracker, _bot, redis_mock = _make_tracker()
+        redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
+        redis_mock.mget = AsyncMock(
+            return_value=[json.dumps({"scraped": 0, "keywords": 5, "total": 100})]
+        )
+
+        await tracker.update_keywords(10, 100)
+
+        assert tracker._keywords == 10
+
+    @pytest.mark.asyncio
+    async def test_update_scraped_ignores_lower_current_value(self):
+        """Writing current=50 after current=80 must not lower self._scraped."""
+        tracker, _bot, redis_mock = _make_tracker()
+        redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
+        redis_mock.mget = AsyncMock(
+            return_value=[json.dumps({"scraped": 80, "keywords": 0, "total": 100})]
+        )
+
+        async with tracker._lock:
+            tracker._scraped = 80
+            tracker._total = 100
+
+        await tracker.update_scraped(50, 100)
+
+        assert tracker._scraped == 80
+
+    @pytest.mark.asyncio
+    async def test_update_scraped_advances_when_higher(self):
+        tracker, _bot, redis_mock = _make_tracker()
+        redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
+        redis_mock.mget = AsyncMock(
+            return_value=[json.dumps({"scraped": 3, "keywords": 0, "total": 100})]
+        )
+
+        await tracker.update_scraped(20, 100)
+
+        assert tracker._scraped == 20
+
+
+class TestProgressTrackerDraftId:
+    """draft_id must be deterministic and shared across same chat_id."""
+
+    def test_same_chat_id_produces_same_draft_id(self):
+        from src.worker.tasks.parsing import _ProgressTracker
+
+        def make(slot: str) -> _ProgressTracker:
+            return _ProgressTracker(
+                MagicMock(),
+                999,
+                slot_key=slot,
+                vacancy_title="X",
+                target_count=10,
+                keyword_filter="",
+            )
+
+        t1 = make("1")
+        t2 = make("2")
+        assert t1._draft_id == t2._draft_id, (
+            "Two trackers for the same chat_id must share the same draft_id"
+        )
+
+    def test_different_chat_ids_may_differ(self):
+        from src.worker.tasks.parsing import _ProgressTracker
+
+        def make(chat_id: int) -> _ProgressTracker:
+            return _ProgressTracker(
+                MagicMock(),
+                chat_id,
+                slot_key="1",
+                vacancy_title="X",
+                target_count=10,
+                keyword_filter="",
+            )
+
+        # Different chat IDs should not collide (trivial sanity check).
+        ids = {make(c)._draft_id for c in range(1, 20)}
+        assert len(ids) > 1, "Different chat IDs must generally produce different draft_ids"
+
+    def test_draft_id_is_in_valid_range(self):
+        from src.worker.tasks.parsing import _ProgressTracker
+
+        tracker = _ProgressTracker(
+            MagicMock(),
+            123456789,
+            slot_key="7",
+            vacancy_title="X",
+            target_count=5,
+            keyword_filter="",
+        )
+        assert 1 <= tracker._draft_id <= 2**31 - 1
+
+
+class TestProgressTrackerCombinedDraft:
+    """When Redis holds multiple slots, _build_combined_text renders all of them."""
+
+    def test_build_combined_text_includes_all_slot_titles(self):
+        from src.worker.tasks.parsing import _ProgressTracker
+
+        tracker = _ProgressTracker(
+            MagicMock(),
+            111,
+            slot_key="1",
+            vacancy_title="Backend Dev",
+            target_count=100,
+            keyword_filter="",
+        )
+
+        slots = [
+            {"scraped": 50, "keywords": 40, "total": 100, "title": "Backend Dev",
+             "target_count": 100, "keyword_filter": ""},
+            {"scraped": 10, "keywords": 8, "total": 50, "title": "Python Dev",
+             "target_count": 50, "keyword_filter": "django"},
+        ]
+        text = tracker._build_combined_text(slots)
+
+        assert "Backend Dev" in text
+        assert "Python Dev" in text
+        assert "django" in text
+
+    @pytest.mark.asyncio
+    async def test_send_draft_uses_combined_text_for_two_slots(self):
+        """When Redis returns 2 slots, send_message_draft receives combined text."""
+        tracker, bot, redis_mock = _make_tracker(slot_key="1")
+
+        slot1 = json.dumps({
+            "scraped": 50, "keywords": 40, "total": 100,
+            "title": "Backend Dev", "target_count": 100, "keyword_filter": "",
+        })
+        slot2 = json.dumps({
+            "scraped": 10, "keywords": 8, "total": 50,
+            "title": "Python Dev", "target_count": 50, "keyword_filter": "django",
+        })
+        redis_mock.keys = AsyncMock(return_value=["progress:111:1", "progress:111:2"])
+        redis_mock.mget = AsyncMock(return_value=[slot1, slot2])
+
+        # Force throttle bypass by setting _last_send to zero.
+        tracker._last_send = 0.0
+        tracker._total = 100
+
+        await tracker._send_draft(is_last=False)
+
+        bot.send_message_draft.assert_awaited_once()
+        sent_text = bot.send_message_draft.call_args.kwargs["text"]
+        assert "Backend Dev" in sent_text
+        assert "Python Dev" in sent_text
+
+
+class TestProgressTrackerSlotCleanup:
+    """Redis slot is deleted exactly once when is_last=True."""
+
+    @pytest.mark.asyncio
+    async def test_slot_deleted_on_is_last(self):
+        tracker, _bot, redis_mock = _make_tracker()
+        slot_data = json.dumps({
+            "scraped": 100, "keywords": 100, "total": 100,
+            "title": "Backend Dev", "target_count": 100, "keyword_filter": "",
+        })
+        redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
+        redis_mock.mget = AsyncMock(return_value=[slot_data])
+
+        tracker._last_send = 0.0
+        tracker._keywords = 100
+        tracker._scraped = 100
+        tracker._total = 100
+
+        await tracker._send_draft(is_last=True)
+
+        redis_mock.delete.assert_awaited_once_with("progress:111:42")
+
+    @pytest.mark.asyncio
+    async def test_slot_not_deleted_on_intermediate_update(self):
+        tracker, _bot, redis_mock = _make_tracker()
+        slot_data = json.dumps({
+            "scraped": 50, "keywords": 40, "total": 100,
+            "title": "Backend Dev", "target_count": 100, "keyword_filter": "",
+        })
+        redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
+        redis_mock.mget = AsyncMock(return_value=[slot_data])
+
+        tracker._last_send = 0.0
+        tracker._scraped = 50
+        tracker._total = 100
+
+        await tracker._send_draft(is_last=False)
+
+        redis_mock.delete.assert_not_awaited()

@@ -1,7 +1,7 @@
 """Celery task for the full parsing pipeline."""
 
 import asyncio
-import random
+import json
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -41,14 +41,23 @@ def _bar(current: int, total: int) -> str:
     return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{current}/{total}</i>"
 
 
+_PROGRESS_SLOT_TTL = 600  # seconds — safety TTL for Redis slots
+
+
 class _ProgressTracker:
-    """Sends live dual-progress-bar updates to Telegram via ``send_message_draft``."""
+    """Sends live dual-progress-bar updates to Telegram via ``send_message_draft``.
+
+    Multiple concurrent trackers for the same ``chat_id`` share a single
+    deterministic ``draft_id`` and a Redis-backed slot so they compose into
+    one combined draft message instead of overwriting each other.
+    """
 
     def __init__(
         self,
         bot: "Bot",  # noqa: F821
         chat_id: int,
         *,
+        slot_key: str,
         vacancy_title: str,
         target_count: int,
         keyword_filter: str,
@@ -56,7 +65,9 @@ class _ProgressTracker:
     ) -> None:
         self._bot = bot
         self._chat_id = chat_id
-        self._draft_id = random.randint(1, 2**31 - 1)
+        self._slot_key = slot_key
+        # All trackers for the same chat share the same draft slot in Telegram.
+        self._draft_id = abs(chat_id) % (2**31 - 1) + 1
         self._vacancy_title = vacancy_title
         self._target_count = target_count
         self._keyword_filter = keyword_filter
@@ -66,19 +77,79 @@ class _ProgressTracker:
         self._total = 0
         self._last_send: float = 0.0
         self._lock = asyncio.Lock()
+        self._redis = None
+
+    # ------------------------------------------------------------------
+    # Public callbacks
+    # ------------------------------------------------------------------
 
     async def update_scraped(self, current: int, total: int) -> None:
         async with self._lock:
-            self._scraped = current
+            if current > self._scraped:
+                self._scraped = current
             self._total = total
         await self._send_draft(is_last=False)
 
     async def update_keywords(self, current: int, total: int) -> None:
         is_last = current >= total
         async with self._lock:
-            self._keywords = current
+            if current > self._keywords:
+                self._keywords = current
             self._total = total
         await self._send_draft(is_last=is_last)
+
+    # ------------------------------------------------------------------
+    # Redis slot helpers
+    # ------------------------------------------------------------------
+
+    def _get_redis(self):
+        if self._redis is None:
+            import redis.asyncio as aioredis
+
+            from src.config import settings as app_settings
+
+            self._redis = aioredis.Redis.from_url(
+                app_settings.redis_url, decode_responses=True
+            )
+        return self._redis
+
+    def _redis_slot_key(self) -> str:
+        return f"progress:{self._chat_id}:{self._slot_key}"
+
+    async def _write_slot(self, scraped: int, keywords: int, total: int) -> None:
+        data = {
+            "scraped": scraped,
+            "keywords": keywords,
+            "total": total,
+            "title": self._vacancy_title,
+            "target_count": self._target_count,
+            "keyword_filter": self._keyword_filter,
+        }
+        await self._get_redis().set(
+            self._redis_slot_key(), json.dumps(data), ex=_PROGRESS_SLOT_TTL
+        )
+
+    async def _delete_slot(self) -> None:
+        await self._get_redis().delete(self._redis_slot_key())
+
+    async def _read_all_slots(self) -> list[dict]:
+        r = self._get_redis()
+        keys = await r.keys(f"progress:{self._chat_id}:*")
+        if not keys:
+            return []
+        values = await r.mget(*keys)
+        slots = []
+        for raw in values:
+            if raw:
+                try:
+                    slots.append(json.loads(raw))
+                except Exception:
+                    pass
+        return slots
+
+    # ------------------------------------------------------------------
+    # Draft sending
+    # ------------------------------------------------------------------
 
     async def _send_draft(self, *, is_last: bool) -> None:
         from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -91,7 +162,12 @@ class _ProgressTracker:
             self._last_send = time.monotonic()
             scraped, keywords, total = self._scraped, self._keywords, self._total
 
-        text = self._build_text(scraped, keywords, total)
+        await self._write_slot(scraped, keywords, total)
+        slots = await self._read_all_slots()
+        text = self._build_combined_text(slots) if slots else self._build_slot_text(
+            scraped, keywords, total
+        )
+
         try:
             await self._bot.send_message_draft(
                 chat_id=self._chat_id,
@@ -105,7 +181,14 @@ class _ProgressTracker:
         except TelegramBadRequest as exc:
             logger.warning("Progress draft failed", error=str(exc))
 
-    def _build_text(self, scraped: int, keywords: int, total: int) -> str:
+        if is_last:
+            await self._delete_slot()
+
+    # ------------------------------------------------------------------
+    # Text builders
+    # ------------------------------------------------------------------
+
+    def _build_slot_text(self, scraped: int, keywords: int, total: int) -> str:
         lb = self._labels
         lines = [
             f"<b>\u23f3 {lb['title']}</b>",
@@ -124,6 +207,35 @@ class _ProgressTracker:
             _bar(keywords, total),
         ]
         return "\n".join(lines)
+
+    def _build_combined_text(self, slots: list[dict]) -> str:
+        lb = self._labels
+        parts = []
+        for slot in slots:
+            scraped = slot.get("scraped", 0)
+            keywords = slot.get("keywords", 0)
+            total = slot.get("total", 0)
+            title = slot.get("title", "")
+            target_count = slot.get("target_count", 0)
+            keyword_filter = slot.get("keyword_filter", "")
+            lines = [
+                f"<b>\u23f3 {lb['title']}</b>",
+                "",
+                f"<b>\U0001f4cb</b> {title}",
+                f"<b>\U0001f3af</b> {target_count} {lb['vacancies']}",
+            ]
+            if keyword_filter:
+                lines.append(f"<b>\U0001f50e</b> {keyword_filter}")
+            lines += [
+                "",
+                f"\U0001f310 {lb['scraping']}",
+                _bar(scraped, total),
+                "",
+                f"\U0001f9e0 {lb['keywords']}",
+                _bar(keywords, total),
+            ]
+            parts.append("\n".join(lines))
+        return "\n\n\u2500\u2500\u2500\n\n".join(parts)
 
 
 @celery_app.task(
@@ -308,6 +420,7 @@ def _make_tracker(
     return _ProgressTracker(
         bot,
         chat_id,
+        slot_key=str(company.id),
         vacancy_title=company.vacancy_title,
         target_count=company.target_count,
         keyword_filter=company.keyword_filter or "",
