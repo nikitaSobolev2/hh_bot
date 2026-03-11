@@ -18,6 +18,18 @@ _RUN_LOCK_PREFIX = "autoparse:run:"
 # Safety-net TTL: released explicitly via finally; this guards against a crashed worker
 _CONCURRENT_RUN_LOCK_TTL = 2 * 3600
 
+# Atomically acquire or re-acquire a task-owned lock.
+# Returns 1 when the lock is taken (new or re-delivery of same task).
+# Returns 0 when a *different* task already holds the lock.
+_ACQUIRE_LOCK_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false or current == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    return 1
+end
+return 0
+"""
+
 
 def _redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url)
@@ -66,6 +78,8 @@ async def _dispatch_all_async(session_factory) -> dict:
     name="autoparse.run_company",
     max_retries=2,
     default_retry_delay=60,
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def run_autoparse_company(self, company_id: int, notify_user_id: int | None = None) -> dict:
     return run_async(lambda sf: _run_autoparse_company_async(sf, self, company_id, notify_user_id))
@@ -165,19 +179,24 @@ async def _run_autoparse_company_async(
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
     from src.services.parser.hh_parser_service import HHParserService
+    from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
     from src.worker.circuit_breaker import CircuitBreaker
 
     r = _redis_client()
     lock_key = f"{_RUN_LOCK_PREFIX}{company_id}"
+    task_id = task.request.id
 
-    if not r.set(lock_key, "1", nx=True, ex=_CONCURRENT_RUN_LOCK_TTL):
+    acquired = r.eval(_ACQUIRE_LOCK_SCRIPT, 1, lock_key, task_id, str(_CONCURRENT_RUN_LOCK_TTL))
+    if not acquired:
         logger.info("Autoparse company already running", company_id=company_id)
         return {"status": "locked", "company_id": company_id}
 
     _progress_bot = None
     progress = None
     task_key = f"autoparse:{company_id}"
+    checkpoint_key = task_key
     cb = CircuitBreaker("autoparse")
+    checkpoint = TaskCheckpointService(create_checkpoint_redis())
     try:
         if notify_user_id is not None:
             from aiogram import Bot
@@ -250,7 +269,14 @@ async def _run_autoparse_company_async(
         total_to_analyze = (
             sum(1 for v in results if v["hh_vacancy_id"] not in known_ids) if ai_client else 0
         )
-        analyzed_count = 0
+
+        restored = await checkpoint.load(checkpoint_key, task_id)
+        analyzed_offset, original_total = restored if restored else (0, total_to_analyze)
+        analyzed_count = analyzed_offset
+
+        if progress and analyzed_count > 0:
+            await progress.update_bar(task_key, 1, analyzed_count, original_total)
+
         new_count = 0
         async with session_factory() as session:
             vacancy_repo = AutoparsedVacancyRepository(session)
@@ -281,11 +307,6 @@ async def _run_autoparse_company_async(
                             cached_compat = analysis.compatibility_score
                             cached_summary = analysis.summary or None
                             cached_stack = analysis.stack or None
-                            analyzed_count += 1
-                            if progress:
-                                await progress.update_bar(
-                                    task_key, 1, analyzed_count, total_to_analyze
-                                )
                         session.add(
                             AutoparsedVacancy(
                                 autoparse_company_id=company_id,
@@ -309,7 +330,20 @@ async def _run_autoparse_company_async(
                                 ai_stack=cached_stack,
                             )
                         )
+                        await session.commit()
                         new_count += 1
+                        if ai_client:
+                            analyzed_count += 1
+                            await checkpoint.save(
+                                checkpoint_key,
+                                task_id,
+                                analyzed=analyzed_count,
+                                total=original_total,
+                            )
+                            if progress:
+                                await progress.update_bar(
+                                    task_key, 1, analyzed_count, original_total
+                                )
                         continue
 
                 compat_score = None
@@ -326,15 +360,24 @@ async def _run_autoparse_company_async(
                     compat_score = analysis.compatibility_score
                     ai_summary = analysis.summary or None
                     ai_stack = analysis.stack or None
-                    analyzed_count += 1
-                    if progress:
-                        await progress.update_bar(task_key, 1, analyzed_count, total_to_analyze)
 
                 session.add(
                     _build_autoparsed_vacancy(vac, company_id, compat_score, ai_summary, ai_stack)
                 )
+                await session.commit()
                 new_count += 1
+                if ai_client:
+                    analyzed_count += 1
+                    await checkpoint.save(
+                        checkpoint_key,
+                        task_id,
+                        analyzed=analyzed_count,
+                        total=original_total,
+                    )
+                    if progress:
+                        await progress.update_bar(task_key, 1, analyzed_count, original_total)
 
+        async with session_factory() as session:
             company_repo = AutoparseCompanyRepository(session)
             company = await company_repo.get_by_id(company_id)
             if company:
@@ -346,6 +389,7 @@ async def _run_autoparse_company_async(
                 )
             await session.commit()
 
+        await checkpoint.clear(checkpoint_key)
         cb.record_success()
 
         if new_count > 0 and user:

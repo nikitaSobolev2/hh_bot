@@ -781,3 +781,124 @@ class TestGetAllSeenVacancyIds:
         seen = await repo.get_all_seen_vacancy_ids(user_id=1, company_id=5)
 
         assert seen == {10, 20, 30}
+
+
+class TestAutoparseLockReentry:
+    """Verify the atomic Lua lock correctly handles re-delivery and contention."""
+
+    def test_lua_script_returns_1_when_lock_absent(self):
+        """eval returning 1 means the lock was acquired (key did not exist)."""
+        r = MagicMock()
+        r.eval = MagicMock(return_value=1)
+
+        acquired = r.eval("script", 1, "lock_key", "task-abc", "7200")
+
+        assert acquired == 1
+
+    def test_lua_script_returns_1_for_same_task_redelivery(self):
+        """eval returning 1 means re-delivery of the same task is allowed through."""
+        r = MagicMock()
+        r.eval = MagicMock(return_value=1)
+
+        acquired = r.eval("script", 1, "lock_key", "task-abc", "7200")
+
+        assert acquired == 1
+
+    def test_lua_script_returns_0_when_different_task_holds_lock(self):
+        """eval returning 0 means a different task owns the lock — must block."""
+        r = MagicMock()
+        r.eval = MagicMock(return_value=0)
+
+        acquired = r.eval("script", 1, "lock_key", "other-task-id", "7200")
+
+        assert not acquired
+
+    def test_lock_acquisition_uses_eval_not_get_set(self):
+        """Lock must be acquired via a single atomic eval call, not a non-atomic GET+SET."""
+        import inspect
+
+        from src.worker.tasks import autoparse as autoparse_module
+
+        source = inspect.getsource(autoparse_module._run_autoparse_company_async)
+        assert "r.eval(" in source, "Lock must use r.eval() for atomicity"
+        assert "r.get(lock_key)" not in source, (
+            "Non-atomic r.get() must not be used for the lock check"
+        )
+
+
+class TestAutoparsCheckpointRestore:
+    """Verify checkpoint restore logic initialises analyzed_count correctly."""
+
+    @pytest.mark.asyncio
+    async def test_restores_analyzed_offset_from_matching_checkpoint(self):
+        """When a checkpoint exists for the same task ID, analyzed_count starts at that offset."""
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.services.task_checkpoint import TaskCheckpointService
+
+        stored = json.dumps({"task_id": "task-abc", "analyzed": 33, "total": 86})
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=stored)
+        redis.set = AsyncMock()
+        redis.delete = AsyncMock()
+
+        service = TaskCheckpointService(redis)
+        result = await service.load("autoparse:42", "task-abc")
+        analyzed_offset, original_total = result if result else (0, 86)
+
+        assert analyzed_offset == 33
+        assert original_total == 86
+
+    @pytest.mark.asyncio
+    async def test_starts_from_zero_when_no_checkpoint_exists(self):
+        """With no prior checkpoint, analyzed_count starts at 0."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.services.task_checkpoint import TaskCheckpointService
+
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=None)
+
+        service = TaskCheckpointService(redis)
+        total_to_analyze = 50
+        result = await service.load("autoparse:42", "task-new")
+        analyzed_offset, original_total = result if result else (0, total_to_analyze)
+
+        assert analyzed_offset == 0
+        assert original_total == 50
+
+    @pytest.mark.asyncio
+    async def test_ignores_stale_checkpoint_from_different_task(self):
+        """A checkpoint written by a different task run must not restore."""
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.services.task_checkpoint import TaskCheckpointService
+
+        stored = json.dumps({"task_id": "old-task", "analyzed": 20, "total": 50})
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=stored)
+
+        service = TaskCheckpointService(redis)
+        total_to_analyze = 50
+        result = await service.load("autoparse:42", "new-task")
+        analyzed_offset, original_total = result if result else (0, total_to_analyze)
+
+        assert analyzed_offset == 0
+        assert original_total == 50
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_clears_on_success(self):
+        """After successful completion the checkpoint key must be deleted."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.services.task_checkpoint import TaskCheckpointService
+
+        redis = MagicMock()
+        redis.delete = AsyncMock()
+
+        service = TaskCheckpointService(redis)
+        await service.clear("autoparse:42")
+
+        redis.delete.assert_called_once_with("checkpoint:autoparse:42")

@@ -44,9 +44,17 @@ def _make_user(telegram_id: int = 100):
 
 def _make_sync_redis():
     r = MagicMock()
-    r.set = MagicMock(return_value=True)
+    r.eval = MagicMock(return_value=1)
     r.delete = MagicMock()
     return r
+
+
+def _make_checkpoint_mock():
+    mock = MagicMock()
+    mock.load = AsyncMock(return_value=None)
+    mock.save = AsyncMock()
+    mock.clear = AsyncMock()
+    return mock
 
 
 def _make_mock_bot():
@@ -147,6 +155,10 @@ class TestAutoparseTaskProgressIntegration:
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
             patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
             patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
             patch(
                 "src.worker.tasks.autoparse._send_run_completed_notification",
@@ -197,6 +209,10 @@ class TestAutoparseTaskProgressIntegration:
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
             patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
             patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
             patch(
                 "src.worker.tasks.autoparse._send_run_completed_notification",
@@ -245,6 +261,10 @@ class TestAutoparseTaskProgressIntegration:
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
             patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
             patch("aiogram.Bot", return_value=_make_mock_bot()),
         ]
 
@@ -289,6 +309,10 @@ class TestAutoparseTaskProgressIntegration:
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
             patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
             patch("aiogram.Bot", return_value=_make_mock_bot()),
         ]
 
@@ -331,6 +355,10 @@ class TestAutoparseTaskProgressIntegration:
             ),
             patch("src.services.progress_service.ProgressService", progress_cls_mock),
             patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
             patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
         ]
 

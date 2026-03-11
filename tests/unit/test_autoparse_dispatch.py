@@ -103,9 +103,17 @@ def _make_session_factory(session: MagicMock):
 
 def _make_redis_mock() -> MagicMock:
     redis_mock = MagicMock()
-    redis_mock.set = MagicMock(return_value=True)
+    redis_mock.eval = MagicMock(return_value=1)
     redis_mock.delete = MagicMock()
     return redis_mock
+
+
+def _make_checkpoint_mock() -> MagicMock:
+    mock = MagicMock()
+    mock.load = AsyncMock(return_value=None)
+    mock.save = AsyncMock()
+    mock.clear = AsyncMock()
+    return mock
 
 
 class TestDispatchAllAsync:
@@ -290,6 +298,10 @@ class TestRunAutoparseCompanyLock:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
         ):
             await _run_autoparse_company_async(
                 _make_session_factory(self._make_session()), MagicMock(), company_id=1
@@ -347,11 +359,11 @@ class TestRunAutoparseCompanyLock:
         redis_mock.delete.assert_called_with("autoparse:run:5")
 
     def test_lock_not_acquired_when_already_held(self):
-        """When the Redis lock is already held, the task must return locked immediately."""
+        """When the Redis lock is already held by a different task, return locked immediately."""
         from src.worker.tasks.autoparse import _run_autoparse_company_async
 
         redis_mock = MagicMock()
-        redis_mock.set = MagicMock(return_value=None)  # nx=True returns None when lock exists
+        redis_mock.eval = MagicMock(return_value=0)  # Lua script: lock held by different task
         redis_mock.delete = MagicMock()
 
         with patch("src.worker.tasks.autoparse._redis_client", return_value=redis_mock):

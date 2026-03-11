@@ -23,8 +23,13 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    task_acks_on_failure_or_timeout=False,
     worker_prefetch_multiplier=1,
     result_expires=3600,
+    broker_transport_options={
+        "visibility_timeout": 7200,
+    },
     beat_schedule={
         "autoparse-dispatch-all": {
             "task": "autoparse.dispatch_all",
