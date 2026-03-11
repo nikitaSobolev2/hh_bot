@@ -300,7 +300,8 @@ class HHScraper:
         if soup is None:
             return {}
 
-        title_el = soup.find(attrs={"data-qa": "vacancy-title"})
+        title_container = soup.find(attrs={"data-qa": "vacancy-title"})
+        title_el = title_container.find("span") if title_container else None
         title = title_el.get_text(strip=True) if title_el else ""
 
         desc_el = soup.find(attrs={"data-qa": "vacancy-description"})
