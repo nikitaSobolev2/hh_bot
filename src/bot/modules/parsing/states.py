@@ -6,6 +6,8 @@ class ParsingForm(StatesGroup):
     search_url = State()
     keyword_filter = State()
     target_count = State()
+    compat_check = State()
+    compat_threshold = State()
     blacklist_check = State()
     confirm = State()
     retry_count = State()

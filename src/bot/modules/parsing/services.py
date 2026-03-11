@@ -33,6 +33,8 @@ async def create_parsing_company(
     search_url: str,
     keyword_filter: str,
     target_count: int,
+    use_compatibility_check: bool = False,
+    compatibility_threshold: int | None = None,
 ) -> int:
     repo = ParsingCompanyRepository(session)
     company = await repo.create(
@@ -42,6 +44,8 @@ async def create_parsing_company(
         keyword_filter=keyword_filter,
         target_count=target_count,
         status="pending",
+        use_compatibility_check=use_compatibility_check,
+        compatibility_threshold=compatibility_threshold,
     )
     await session.commit()
     return company.id
@@ -77,6 +81,8 @@ async def clone_and_dispatch(
         search_url=source.search_url,
         keyword_filter=source.keyword_filter or "",
         target_count=target_count if target_count is not None else source.target_count,
+        use_compatibility_check=source.use_compatibility_check,
+        compatibility_threshold=source.compatibility_threshold,
     )
     dispatch_parsing_task(
         new_id,
@@ -147,13 +153,17 @@ def format_confirmation(data: dict, include_blacklisted: bool, i18n: I18nContext
         if include_blacklisted
         else i18n.get("parsing-confirm-skip-bl")
     )
-    return i18n.get(
+    base = i18n.get(
         "parsing-confirm",
         title=data["vacancy_title"],
         count=str(data["target_count"]),
         filter=filter_val,
         blacklist=bl_text,
     )
+    threshold = data.get("compatibility_threshold")
+    if data.get("use_compatibility_check") and threshold is not None:
+        base += "\n" + i18n.get("parsing-confirm-compat", threshold=str(threshold))
+    return base
 
 
 async def get_active_work_experiences(

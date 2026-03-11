@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,6 +24,8 @@ class ParsingCompany(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     vacancies_processed: Mapped[int] = mapped_column(Integer, default=0)
     completed_at: Mapped[datetime | None] = mapped_column(default=None)
+    use_compatibility_check: Mapped[bool] = mapped_column(Boolean, default=False)
+    compatibility_threshold: Mapped[int | None] = mapped_column(Integer, default=None)
 
     user: Mapped[User] = relationship(back_populates="parsing_companies")
     vacancies: Mapped[list[ParsedVacancy]] = relationship(

@@ -18,6 +18,7 @@ from src.bot.modules.parsing.keyboards import (
     blacklist_choice_keyboard,
     cancel_add_company_keyboard,
     cancel_keyboard,
+    compat_check_keyboard,
     count_input_keyboard,
     format_choice_keyboard,
     language_selection_keyboard,
@@ -131,7 +132,6 @@ async def fsm_target_count(
     message: Message,
     user: User,
     state: FSMContext,
-    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
     text = message.text.strip()
@@ -145,8 +145,66 @@ async def fsm_target_count(
         return
 
     await state.update_data(target_count=count)
-    data = await state.get_data()
+    await state.set_state(ParsingForm.compat_check)
+    await message.answer(
+        i18n.get("parsing-compat-check-prompt"),
+        reply_markup=compat_check_keyboard(i18n),
+    )
 
+
+@router.callback_query(ParsingCallback.filter(F.action == "compat_skip"))
+async def fsm_compat_skip(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.update_data(use_compatibility_check=False, compatibility_threshold=None)
+    await _proceed_to_blacklist_or_launch(callback.message, user, state, session, i18n)
+    await callback.answer()
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "compat_yes"))
+async def fsm_compat_yes(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.set_state(ParsingForm.compat_threshold)
+    await callback.message.edit_text(
+        i18n.get("parsing-compat-threshold-prompt"),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.compat_threshold)
+async def fsm_compat_threshold(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or not (1 <= int(text) <= 100):
+        await message.answer(i18n.get("parsing-compat-threshold-invalid"))
+        return
+
+    await state.update_data(use_compatibility_check=True, compatibility_threshold=int(text))
+    await _proceed_to_blacklist_or_launch(message, user, state, session, i18n)
+
+
+async def _proceed_to_blacklist_or_launch(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
     blacklisted_count = await parsing_service.get_blacklisted_count(
         session, user.id, data["vacancy_title"]
     )
@@ -200,6 +258,8 @@ async def _confirm_and_launch(
         search_url=data["search_url"],
         keyword_filter=data.get("keyword_filter", ""),
         target_count=data["target_count"],
+        use_compatibility_check=data.get("use_compatibility_check", False),
+        compatibility_threshold=data.get("compatibility_threshold"),
     )
 
     parsing_service.dispatch_parsing_task(

@@ -1,8 +1,10 @@
 """Celery task for the full parsing pipeline."""
 
 import asyncio
+import contextlib
 import json
 import time
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -108,9 +110,7 @@ class _ProgressTracker:
 
             from src.config import settings as app_settings
 
-            self._redis = aioredis.Redis.from_url(
-                app_settings.redis_url, decode_responses=True
-            )
+            self._redis = aioredis.Redis.from_url(app_settings.redis_url, decode_responses=True)
         return self._redis
 
     def _redis_slot_key(self) -> str:
@@ -125,9 +125,7 @@ class _ProgressTracker:
             "target_count": self._target_count,
             "keyword_filter": self._keyword_filter,
         }
-        await self._get_redis().set(
-            self._redis_slot_key(), json.dumps(data), ex=_PROGRESS_SLOT_TTL
-        )
+        await self._get_redis().set(self._redis_slot_key(), json.dumps(data), ex=_PROGRESS_SLOT_TTL)
 
     async def _delete_slot(self) -> None:
         await self._get_redis().delete(self._redis_slot_key())
@@ -141,10 +139,8 @@ class _ProgressTracker:
         slots = []
         for raw in values:
             if raw:
-                try:
+                with contextlib.suppress(Exception):
                     slots.append(json.loads(raw))
-                except Exception:
-                    pass
         return slots
 
     # ------------------------------------------------------------------
@@ -164,8 +160,10 @@ class _ProgressTracker:
 
         await self._write_slot(scraped, keywords, total)
         slots = await self._read_all_slots()
-        text = self._build_combined_text(slots) if slots else self._build_slot_text(
-            scraped, keywords, total
+        text = (
+            self._build_combined_text(slots)
+            if slots
+            else self._build_slot_text(scraped, keywords, total)
         )
 
         try:
@@ -347,6 +345,18 @@ async def _run_parsing_company_async(
             on_page_scraped=_on_page_scraped,
             on_vacancy_processed=_on_vacancy_processed,
         )
+
+        if company.use_compatibility_check and company.compatibility_threshold is not None:
+            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
+            filtered = await _apply_compatibility_filter(
+                result["vacancies"],
+                company.compatibility_threshold,
+                tech_stack,
+                work_exp_text,
+            )
+            if len(filtered) != len(result["vacancies"]):
+                keywords, skills = _recompute_aggregates(filtered)
+                result = {"vacancies": filtered, "keywords": keywords, "skills": skills}
 
         await _save_parsing_results(
             session_factory,
@@ -571,6 +581,88 @@ async def _mark_parsing_failed(
             )
         )
         await session.commit()
+
+
+def _recompute_aggregates(vacancies: list[dict]) -> tuple[dict, dict]:
+    """Recount keyword and skill frequencies from a filtered vacancy list."""
+    keywords_counter: Counter = Counter()
+    skills_counter: Counter = Counter()
+    for vac in vacancies:
+        for kw in vac.get("ai_keywords") or []:
+            keywords_counter[kw.strip()] += 1
+        for skill in vac.get("raw_skills") or []:
+            skills_counter[str(skill).strip()] += 1
+    return dict(keywords_counter.most_common()), dict(skills_counter.most_common())
+
+
+async def _fetch_user_tech_profile(
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+) -> tuple[list[str], str]:
+    """Return (tech_stack_list, work_experience_text) for the given user.
+
+    Prefers explicit tech_stack from autoparse_settings; falls back to active
+    work experience records.
+    """
+    from src.repositories.user import UserRepository
+    from src.repositories.work_experience import WorkExperienceRepository
+
+    async with session_factory() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+        experiences = await WorkExperienceRepository(session).get_active_by_user(user_id)
+
+    autoparse_settings: dict = (user.autoparse_settings or {}) if user else {}
+    explicit_stack: list[str] = autoparse_settings.get("tech_stack") or []
+
+    if explicit_stack:
+        tech_stack = explicit_stack
+    else:
+        tech_stack = [
+            kw.strip() for exp in experiences for kw in exp.stack.split(",") if kw.strip()
+        ]
+
+    work_exp_text = "; ".join(f"{exp.company_name}: {exp.stack}" for exp in experiences)
+    return tech_stack, work_exp_text
+
+
+_COMPAT_FILTER_CONCURRENCY = 3
+
+
+async def _apply_compatibility_filter(
+    vacancies: list[dict],
+    threshold: int,
+    tech_stack: list[str],
+    work_exp_text: str,
+) -> list[dict]:
+    """Keep only vacancies whose compatibility score meets the threshold.
+
+    Uses a semaphore to limit concurrent AI calls.
+    """
+    from src.services.ai.client import AIClient
+
+    ai_client = AIClient()
+    sem = asyncio.Semaphore(_COMPAT_FILTER_CONCURRENCY)
+
+    async def _score_vacancy(vac: dict) -> tuple[dict, float]:
+        async with sem:
+            score = await ai_client.calculate_compatibility(
+                vacancy_title=vac["title"],
+                vacancy_skills=vac.get("raw_skills") or [],
+                vacancy_description=vac.get("description", ""),
+                user_tech_stack=tech_stack,
+                user_work_experience=work_exp_text,
+            )
+        return vac, score
+
+    scored = await asyncio.gather(*[_score_vacancy(v) for v in vacancies])
+    kept = [vac for vac, score in scored if score >= threshold]
+    logger.info(
+        "Compatibility filter applied",
+        total=len(vacancies),
+        kept=len(kept),
+        threshold=threshold,
+    )
+    return kept
 
 
 async def _notify_user(

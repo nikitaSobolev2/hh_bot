@@ -174,6 +174,29 @@ def count_input_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMa
     )
 
 
+def compat_check_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-compat-yes"),
+                    callback_data=ParsingCallback(action="compat_yes").pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("btn-compat-skip"),
+                    callback_data=ParsingCallback(action="compat_skip").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=MenuCallback(action="main").pack(),
+                )
+            ],
+        ]
+    )
+
+
 def blacklist_choice_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

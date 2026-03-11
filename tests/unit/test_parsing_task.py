@@ -67,6 +67,8 @@ class TestManualParseBlacklist:
         company.keyword_filter = "backend"
         company.target_count = 10
         company.status = "pending"
+        company.use_compatibility_check = False
+        company.compatibility_threshold = None
 
         settings_repo = AsyncMock()
         settings_repo.get_value = AsyncMock(return_value=True)
@@ -202,9 +204,7 @@ class TestProgressTrackerMonotonic:
         # Now task-99 arrives — it must not overwrite the higher value.
         await tracker.update_keywords(99, 100)
 
-        assert tracker._keywords == 100, (
-            "A lower current value must not overwrite a higher one"
-        )
+        assert tracker._keywords == 100, "A lower current value must not overwrite a higher one"
 
     @pytest.mark.asyncio
     async def test_update_keywords_advances_when_higher(self):
@@ -318,10 +318,22 @@ class TestProgressTrackerCombinedDraft:
         )
 
         slots = [
-            {"scraped": 50, "keywords": 40, "total": 100, "title": "Backend Dev",
-             "target_count": 100, "keyword_filter": ""},
-            {"scraped": 10, "keywords": 8, "total": 50, "title": "Python Dev",
-             "target_count": 50, "keyword_filter": "django"},
+            {
+                "scraped": 50,
+                "keywords": 40,
+                "total": 100,
+                "title": "Backend Dev",
+                "target_count": 100,
+                "keyword_filter": "",
+            },
+            {
+                "scraped": 10,
+                "keywords": 8,
+                "total": 50,
+                "title": "Python Dev",
+                "target_count": 50,
+                "keyword_filter": "django",
+            },
         ]
         text = tracker._build_combined_text(slots)
 
@@ -334,14 +346,26 @@ class TestProgressTrackerCombinedDraft:
         """When Redis returns 2 slots, send_message_draft receives combined text."""
         tracker, bot, redis_mock = _make_tracker(slot_key="1")
 
-        slot1 = json.dumps({
-            "scraped": 50, "keywords": 40, "total": 100,
-            "title": "Backend Dev", "target_count": 100, "keyword_filter": "",
-        })
-        slot2 = json.dumps({
-            "scraped": 10, "keywords": 8, "total": 50,
-            "title": "Python Dev", "target_count": 50, "keyword_filter": "django",
-        })
+        slot1 = json.dumps(
+            {
+                "scraped": 50,
+                "keywords": 40,
+                "total": 100,
+                "title": "Backend Dev",
+                "target_count": 100,
+                "keyword_filter": "",
+            }
+        )
+        slot2 = json.dumps(
+            {
+                "scraped": 10,
+                "keywords": 8,
+                "total": 50,
+                "title": "Python Dev",
+                "target_count": 50,
+                "keyword_filter": "django",
+            }
+        )
         redis_mock.keys = AsyncMock(return_value=["progress:111:1", "progress:111:2"])
         redis_mock.mget = AsyncMock(return_value=[slot1, slot2])
 
@@ -363,10 +387,16 @@ class TestProgressTrackerSlotCleanup:
     @pytest.mark.asyncio
     async def test_slot_deleted_on_is_last(self):
         tracker, _bot, redis_mock = _make_tracker()
-        slot_data = json.dumps({
-            "scraped": 100, "keywords": 100, "total": 100,
-            "title": "Backend Dev", "target_count": 100, "keyword_filter": "",
-        })
+        slot_data = json.dumps(
+            {
+                "scraped": 100,
+                "keywords": 100,
+                "total": 100,
+                "title": "Backend Dev",
+                "target_count": 100,
+                "keyword_filter": "",
+            }
+        )
         redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
         redis_mock.mget = AsyncMock(return_value=[slot_data])
 
@@ -382,10 +412,16 @@ class TestProgressTrackerSlotCleanup:
     @pytest.mark.asyncio
     async def test_slot_not_deleted_on_intermediate_update(self):
         tracker, _bot, redis_mock = _make_tracker()
-        slot_data = json.dumps({
-            "scraped": 50, "keywords": 40, "total": 100,
-            "title": "Backend Dev", "target_count": 100, "keyword_filter": "",
-        })
+        slot_data = json.dumps(
+            {
+                "scraped": 50,
+                "keywords": 40,
+                "total": 100,
+                "title": "Backend Dev",
+                "target_count": 100,
+                "keyword_filter": "",
+            }
+        )
         redis_mock.keys = AsyncMock(return_value=["progress:111:42"])
         redis_mock.mget = AsyncMock(return_value=[slot_data])
 
