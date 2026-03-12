@@ -369,6 +369,14 @@ def resume_result_keyboard(
             )
         ]
     )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("res-btn-delete"),
+                callback_data=ResumeCallback(action="delete", work_exp_id=resume.id).pack(),
+            )
+        ]
+    )
     if from_list:
         rows.append(
             [

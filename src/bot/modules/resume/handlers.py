@@ -961,6 +961,31 @@ async def handle_show_result(
     await callback.answer()
 
 
+@router.callback_query(ResumeCallback.filter(F.action == "delete"))
+async def handle_resume_delete(
+    callback: CallbackQuery,
+    callback_data: ResumeCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    resume_id = callback_data.work_exp_id
+    from src.repositories.resume import ResumeRepository
+
+    repo = ResumeRepository(session)
+    resume = await repo.get_by_id(resume_id)
+    if not resume or resume.user_id != user.id or resume.is_deleted:
+        await callback.answer(i18n.get("res-not-found"), show_alert=True)
+        return
+
+    await repo.soft_delete(resume)
+    await session.commit()
+    await state.update_data(res_resume_id=None, res_viewing_from_list=False)
+    await callback.answer(i18n.get("res-deleted"))
+    await show_resume_list(callback, user, session, i18n)
+
+
 def _build_result_text(resume, i18n: I18nContext) -> list[str]:
     lines = [f"<b>{i18n.get('res-result-title')}</b>", ""]
     lines.append(f"<b>{i18n.get('res-label-job-title')}</b>: {resume.job_title}")
