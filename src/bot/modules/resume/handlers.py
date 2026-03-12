@@ -267,6 +267,7 @@ async def handle_step3_summary(
     callback: CallbackQuery,
     user: User,
     state: FSMContext,
+    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
     from src.bot.modules.vacancy_summary.handlers import show_vacancy_summary_list
@@ -277,7 +278,7 @@ async def handle_step3_summary(
             reply_markup=resume_cancel_keyboard(i18n),
         )
 
-    await show_vacancy_summary_list(callback, user, None, i18n)
+    await show_vacancy_summary_list(callback, user, session, i18n)
     await callback.answer()
 
 
