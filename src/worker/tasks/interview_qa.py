@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import httpx
+
 from src.core.logging import get_logger
 from src.worker.app import celery_app
 from src.worker.utils import run_async
@@ -21,7 +23,30 @@ def _parse_qa_blocks(text: str) -> dict[str, str]:
     return {m.group(1).strip(): m.group(2).strip() for m in _QA_BLOCK_RE.finditer(text)}
 
 
-@celery_app.task(bind=True, name="interview_qa.generate", max_retries=2, default_retry_delay=30)
+def _send_timeout_message(bot_token: str, chat_id: int, locale: str) -> None:
+    """Synchronously send a timeout notification via the raw Telegram HTTP API.
+
+    Deliberately avoids asyncio so this works reliably after a
+    SoftTimeLimitExceeded interrupts a running event loop.
+    """
+    from src.core.i18n import get_text
+
+    text = get_text("iqa-generation-timeout", locale)
+    with httpx.Client(timeout=10) as client:
+        client.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        )
+
+
+@celery_app.task(
+    bind=True,
+    name="interview_qa.generate",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
+)
 def generate_interview_qa_task(
     self,
     user_id: int,
@@ -30,9 +55,26 @@ def generate_interview_qa_task(
     locale: str = "ru",
     question_key: str | None = None,
 ) -> dict:
-    return run_async(
-        lambda sf: _generate_qa_async(sf, user_id, chat_id, message_id, locale, question_key)
-    )
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.config import settings
+
+    try:
+        return run_async(
+            lambda sf: _generate_qa_async(sf, user_id, chat_id, message_id, locale, question_key)
+        )
+    except SoftTimeLimitExceeded:
+        logger.warning(
+            "interview_qa.generate soft time limit exceeded",
+            user_id=user_id,
+            chat_id=chat_id,
+        )
+        _send_timeout_message(settings.bot_token, chat_id, locale)
+        # Exhaust the retry budget so Celery marks this as FAILURE immediately
+        # instead of re-scheduling up to max_retries more times (each of which
+        # would also time out and send another message to the user).
+        self.request.retries = self.max_retries
+        raise
 
 
 async def _generate_qa_async(

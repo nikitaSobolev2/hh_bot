@@ -25,7 +25,11 @@ class AchievementGenerationRepository:
         result = await self._session.execute(
             select(AchievementGeneration)
             .where(AchievementGeneration.id == generation_id)
-            .options(selectinload(AchievementGeneration.items))
+            .options(
+                selectinload(AchievementGeneration.items).selectinload(
+                    AchievementGenerationItem.work_experience
+                )
+            )
         )
         return result.scalar_one_or_none()
 

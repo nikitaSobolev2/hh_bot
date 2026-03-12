@@ -35,6 +35,10 @@ celery_app.conf.update(
     task_acks_on_failure_or_timeout=False,
     worker_prefetch_multiplier=1,
     result_expires=3600,
+    # Safety net: kill any task that exceeds 5 min; raise SoftTimeLimitExceeded at 4 min
+    # so individual tasks can notify the user before the hard kill.
+    task_soft_time_limit=240,
+    task_time_limit=300,
     broker_transport_options={
         "visibility_timeout": 7200,
     },

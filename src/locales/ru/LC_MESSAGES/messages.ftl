@@ -815,6 +815,7 @@ iqa-btn-view = 💬 Посмотреть ответы
 iqa-btn-regenerate = 🔄 Перегенерировать
 iqa-generating = ⏳ Генерирую ответы... Подождите немного.
 iqa-generation-completed = ✅ Ответы на вопросы готовы!
+iqa-generation-timeout = ⚠️ Генерация заняла слишком много времени. Попробуйте ещё раз.
 iqa-why-new-job-title = ❓ Почему вы ищете новую работу?
 iqa-why-new-job-hint = Выберите вашу основную причину:
 iqa-reason-label = Причина
