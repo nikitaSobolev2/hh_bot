@@ -44,7 +44,7 @@ def _make_user(user_id: int = 1, language_code: str = "ru") -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_handle_generate_ai_achievements_answers_before_ai_call():
-    """callback.answer() fires before generate_text when field is achievements."""
+    """handle_generate_ai answers callback and dispatches the Celery task (not AI directly)."""
     from src.bot.modules.work_experience.callbacks import WorkExpCallback
     from src.bot.modules.work_experience.handlers import handle_generate_ai
 
@@ -62,20 +62,17 @@ async def test_handle_generate_ai_achievements_answers_before_ai_call():
     session = AsyncMock()
     i18n = I18nContext(locale="en")
 
-    with patch("src.bot.modules.work_experience.handlers.AIClient") as mock_ai_cls:
-        mock_ai = MagicMock()
-        mock_ai.generate_text = AsyncMock(side_effect=RuntimeError("AI failure"))
-        mock_ai_cls.return_value = mock_ai
-
-        with pytest.raises(RuntimeError, match="AI failure"):
-            await handle_generate_ai(callback, callback_data, _make_user(), state, session, i18n)
+    mock_task = MagicMock()
+    with patch("src.worker.tasks.work_experience.generate_work_experience_ai_task", mock_task):
+        await handle_generate_ai(callback, callback_data, _make_user(), state, session, i18n)
 
     callback.answer.assert_called_once()
+    mock_task.delay.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_handle_generate_ai_duties_answers_before_ai_call():
-    """callback.answer() fires before generate_text when field is duties."""
+    """handle_generate_ai answers callback and dispatches the Celery task for duties."""
     from src.bot.modules.work_experience.callbacks import WorkExpCallback
     from src.bot.modules.work_experience.handlers import handle_generate_ai
 
@@ -93,15 +90,12 @@ async def test_handle_generate_ai_duties_answers_before_ai_call():
     session = AsyncMock()
     i18n = I18nContext(locale="en")
 
-    with patch("src.bot.modules.work_experience.handlers.AIClient") as mock_ai_cls:
-        mock_ai = MagicMock()
-        mock_ai.generate_text = AsyncMock(side_effect=RuntimeError("AI failure"))
-        mock_ai_cls.return_value = mock_ai
-
-        with pytest.raises(RuntimeError, match="AI failure"):
-            await handle_generate_ai(callback, callback_data, _make_user(), state, session, i18n)
+    mock_task = MagicMock()
+    with patch("src.worker.tasks.work_experience.generate_work_experience_ai_task", mock_task):
+        await handle_generate_ai(callback, callback_data, _make_user(), state, session, i18n)
 
     callback.answer.assert_called_once()
+    mock_task.delay.assert_called_once()
 
 
 # ── work_experience: _handle_edit_generate_ai ─────────────────────────────────
@@ -109,7 +103,7 @@ async def test_handle_generate_ai_duties_answers_before_ai_call():
 
 @pytest.mark.asyncio
 async def test_edit_generate_ai_answers_before_ai_call():
-    """_handle_edit_generate_ai answers before calling generate_text in edit mode."""
+    """_handle_edit_generate_ai answers callback and dispatches the Celery task."""
     from src.bot.modules.work_experience.callbacks import WorkExpCallback
     from src.bot.modules.work_experience.handlers import handle_edit_generate_ai_achievements
 
@@ -128,29 +122,29 @@ async def test_edit_generate_ai_answers_before_ai_call():
 
     mock_repo = AsyncMock()
     mock_repo.get_by_id = AsyncMock(return_value=exp)
+    mock_task = MagicMock()
 
     with (
         patch(
             "src.repositories.work_experience.WorkExperienceRepository",
             return_value=mock_repo,
         ),
-        patch("src.bot.modules.work_experience.handlers.AIClient") as mock_ai_cls,
+        patch(
+            "src.worker.tasks.work_experience.generate_work_experience_ai_task",
+            mock_task,
+        ),
     ):
-        mock_ai = MagicMock()
-        mock_ai.generate_text = AsyncMock(side_effect=RuntimeError("AI failure"))
-        mock_ai_cls.return_value = mock_ai
-
-        with pytest.raises(RuntimeError, match="AI failure"):
-            await handle_edit_generate_ai_achievements(
-                callback, callback_data, _make_user(), state, session, i18n
-            )
+        await handle_edit_generate_ai_achievements(
+            callback, callback_data, _make_user(), state, session, i18n
+        )
 
     callback.answer.assert_called_once_with()
+    mock_task.delay.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_edit_generate_ai_shows_alert_when_exp_not_found_and_skips_ai():
-    """When the work experience is missing, an alert is shown and AI is not called."""
+    """When the work experience is missing, an alert is shown and task is not dispatched."""
     from src.bot.modules.work_experience.callbacks import WorkExpCallback
     from src.bot.modules.work_experience.handlers import handle_edit_generate_ai_achievements
 
@@ -163,19 +157,23 @@ async def test_edit_generate_ai_shows_alert_when_exp_not_found_and_skips_ai():
 
     mock_repo = AsyncMock()
     mock_repo.get_by_id = AsyncMock(return_value=None)
+    mock_task = MagicMock()
 
     with (
         patch(
             "src.repositories.work_experience.WorkExperienceRepository",
             return_value=mock_repo,
         ),
-        patch("src.bot.modules.work_experience.handlers.AIClient") as mock_ai_cls,
+        patch(
+            "src.worker.tasks.work_experience.generate_work_experience_ai_task",
+            mock_task,
+        ),
     ):
         await handle_edit_generate_ai_achievements(
             callback, callback_data, _make_user(), state, session, i18n
         )
 
-    mock_ai_cls.assert_not_called()
+    mock_task.delay.assert_not_called()
     callback.answer.assert_called_once()
     _, kwargs = callback.answer.call_args
     assert kwargs.get("show_alert") is True

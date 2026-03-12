@@ -256,3 +256,45 @@ def cancel_edit_keyboard(
             ]
         ]
     )
+
+
+def work_exp_ai_result_keyboard(
+    field: str,
+    return_to: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Accept / Regenerate / Skip keyboard shown after AI draft is ready (create mode)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("we-btn-accept-draft"),
+                    callback_data=WorkExpCallback(
+                        action="accept_draft",
+                        field=field,
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("we-btn-regenerate"),
+                    callback_data=WorkExpCallback(
+                        action="generate_ai",
+                        field=field,
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-skip"),
+                    callback_data=WorkExpCallback(
+                        action="skip_field",
+                        field=field,
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+        ]
+    )

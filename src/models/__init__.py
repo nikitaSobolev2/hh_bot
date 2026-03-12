@@ -25,6 +25,7 @@ from src.models.user import User
 from src.models.vacancy_feed import VacancyFeedSession
 from src.models.vacancy_summary import VacancySummary
 from src.models.work_experience import UserWorkExperience
+from src.models.work_experience_ai_draft import UserWorkExperienceAiDraft
 
 __all__ = [
     "Role",
@@ -33,6 +34,7 @@ __all__ = [
     "AutoparseCompany",
     "AutoparsedVacancy",
     "UserWorkExperience",
+    "UserWorkExperienceAiDraft",
     "VacancyFeedSession",
     "ParsingCompany",
     "ParsedVacancy",

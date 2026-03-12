@@ -17,6 +17,7 @@ celery_app = Celery(
         "src.worker.tasks.achievements",
         "src.worker.tasks.interview_qa",
         "src.worker.tasks.vacancy_summary",
+        "src.worker.tasks.work_experience",
     ],
 )
 

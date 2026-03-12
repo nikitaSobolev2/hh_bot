@@ -267,9 +267,7 @@ class TestHandleEditGenerateAiAchievements:
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=exp)
         mock_repo.update = AsyncMock()
-
-        mock_ai = AsyncMock()
-        mock_ai.generate_text = AsyncMock(return_value="AI-generated achievements")
+        mock_task = MagicMock()
 
         with (
             patch(
@@ -277,20 +275,15 @@ class TestHandleEditGenerateAiAchievements:
                 return_value=mock_repo,
             ),
             patch(
-                "src.bot.modules.work_experience.handlers.AIClient",
-                return_value=mock_ai,
-            ),
-            patch(
-                "src.bot.modules.work_experience.handlers"
-                ".build_work_experience_achievements_prompt",
-                return_value="prompt text",
+                "src.worker.tasks.work_experience.generate_work_experience_ai_task",
+                mock_task,
             ),
         ):
             await handle_edit_generate_ai_achievements(
                 callback, callback_data, user, state, session, i18n
             )
 
-        mock_ai.generate_text.assert_called_once()
+        mock_task.delay.assert_called_once()
         state.clear.assert_called_once()
         callback.answer.assert_called_once()
 
@@ -315,8 +308,7 @@ class TestHandleEditGenerateAiAchievements:
 
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=None)
-
-        mock_ai = AsyncMock()
+        mock_task = MagicMock()
 
         with (
             patch(
@@ -324,15 +316,15 @@ class TestHandleEditGenerateAiAchievements:
                 return_value=mock_repo,
             ),
             patch(
-                "src.bot.modules.work_experience.handlers.AIClient",
-                return_value=mock_ai,
+                "src.worker.tasks.work_experience.generate_work_experience_ai_task",
+                mock_task,
             ),
         ):
             await handle_edit_generate_ai_achievements(
                 callback, callback_data, user, state, session, i18n
             )
 
-        mock_ai.generate_text.assert_not_called()
+        mock_task.delay.assert_not_called()
         callback.answer.assert_called_once()
         assert callback.answer.call_args.kwargs.get("show_alert") is True
 
@@ -362,9 +354,7 @@ class TestHandleEditGenerateAiDuties:
         mock_repo = AsyncMock()
         mock_repo.get_by_id = AsyncMock(return_value=exp)
         mock_repo.update = AsyncMock()
-
-        mock_ai = AsyncMock()
-        mock_ai.generate_text = AsyncMock(return_value="AI-generated duties")
+        mock_task = MagicMock()
 
         with (
             patch(
@@ -372,18 +362,14 @@ class TestHandleEditGenerateAiDuties:
                 return_value=mock_repo,
             ),
             patch(
-                "src.bot.modules.work_experience.handlers.AIClient",
-                return_value=mock_ai,
-            ),
-            patch(
-                "src.bot.modules.work_experience.handlers.build_work_experience_duties_prompt",
-                return_value="prompt text",
+                "src.worker.tasks.work_experience.generate_work_experience_ai_task",
+                mock_task,
             ),
         ):
             await handle_edit_generate_ai_duties(
                 callback, callback_data, user, state, session, i18n
             )
 
-        mock_ai.generate_text.assert_called_once()
+        mock_task.delay.assert_called_once()
         state.clear.assert_called_once()
         callback.answer.assert_called_once()

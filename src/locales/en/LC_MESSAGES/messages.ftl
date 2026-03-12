@@ -289,6 +289,18 @@ work-exp-generated-duties =
 
     { $text }
 work-exp-generation-failed = Generation failed. Please type manually or skip.
+work-exp-ai-result-achievements =
+    ✅ Generated achievements:
+
+    { $text }
+work-exp-ai-result-duties =
+    ✅ Generated duties:
+
+    { $text }
+work-exp-ai-generation-done = ✅ Done! Tap to view the result.
+we-btn-accept-draft = ✅ Use this
+we-btn-regenerate = 🔄 Try again
+we-btn-view-result = 👁 View result
 btn-add-company = ➕ Add Company
 btn-remove = Remove
 btn-skip = ⏭ Skip

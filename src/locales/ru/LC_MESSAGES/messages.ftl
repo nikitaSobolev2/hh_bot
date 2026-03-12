@@ -289,6 +289,18 @@ work-exp-generated-duties =
 
     { $text }
 work-exp-generation-failed = Не удалось сгенерировать. Введите вручную или пропустите.
+work-exp-ai-result-achievements =
+    ✅ Сгенерированные достижения:
+
+    { $text }
+work-exp-ai-result-duties =
+    ✅ Сгенерированные обязанности:
+
+    { $text }
+work-exp-ai-generation-done = ✅ Готово! Нажмите, чтобы посмотреть результат.
+we-btn-accept-draft = ✅ Использовать
+we-btn-regenerate = 🔄 Попробовать снова
+we-btn-view-result = 👁 Посмотреть результат
 btn-add-company = ➕ Добавить компанию
 btn-remove = Удалить
 btn-skip = ⏭ Пропустить

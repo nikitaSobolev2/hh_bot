@@ -38,11 +38,7 @@ from src.bot.modules.work_experience.keyboards import (
 from src.bot.modules.work_experience.states import WorkExpForm
 from src.core.i18n import I18nContext
 from src.models.user import User
-from src.services.ai.client import AIClient
-from src.services.ai.prompts import (
-    build_work_experience_achievements_prompt,
-    build_work_experience_duties_prompt,
-)
+from src.repositories.work_experience_ai_draft import WorkExperienceAiDraftRepository
 
 router = Router(name="work_experience")
 
@@ -318,6 +314,8 @@ async def handle_generate_ai(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    from src.worker.tasks.work_experience import generate_work_experience_ai_task
+
     data = await state.get_data()
     company_name: str = data.get("we_company_name", "")
     title: str | None = data.get("we_title")
@@ -326,21 +324,56 @@ async def handle_generate_ai(
 
     await callback.answer()
 
+    wait_msg = None
     with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(i18n.get("work-exp-generating"))
+        wait_msg = await callback.message.edit_text(i18n.get("work-exp-generating"))
 
-    client = AIClient()
-    if field == _FIELD_ACHIEVEMENTS:
-        prompt = build_work_experience_achievements_prompt(
-            company_name, stack, title=title, period=data.get("we_period")
-        )
-        generated = await client.generate_text(prompt, max_tokens=800, temperature=0.6)
-        await state.update_data(we_achievements=generated or None)
+    generate_work_experience_ai_task.delay(
+        user_id=user.id,
+        chat_id=callback.message.chat.id,
+        message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
+        field=field,
+        mode="create",
+        locale=user.language_code or "ru",
+        company_name=company_name,
+        title=title,
+        stack=stack,
+        period=data.get("we_period"),
+        return_to=callback_data.return_to,
+    )
+
+
+@router.callback_query(
+    WorkExpCallback.filter(F.action == "accept_draft"),
+    StateFilter(WorkExpForm.achievements, WorkExpForm.duties),
+)
+async def handle_accept_draft(
+    callback: CallbackQuery,
+    callback_data: WorkExpCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    draft_repo = WorkExperienceAiDraftRepository(session)
+    draft = await draft_repo.get(user.id, callback_data.field)
+    text: str | None = draft.generated_text if draft else None
+    if draft:
+        await draft_repo.delete(user.id, callback_data.field)
+        await session.commit()
+
+    data = await state.get_data()
+    company_name: str = data.get("we_company_name", "")
+
+    await callback.answer()
+
+    if callback_data.field == _FIELD_ACHIEVEMENTS:
+        await state.update_data(we_achievements=text)
         await state.set_state(WorkExpForm.duties)
         await callback.message.answer(
             i18n.get(
                 "work-exp-generated-achievements",
-                text=generated or i18n.get("work-exp-generation-failed"),
+                text=text or i18n.get("work-exp-generation-failed"),
             )
         )
         await callback.message.answer(
@@ -348,11 +381,7 @@ async def handle_generate_ai(
             reply_markup=work_exp_ai_input_keyboard(callback_data.return_to, _FIELD_DUTIES, i18n),
         )
     else:
-        prompt = build_work_experience_duties_prompt(
-            company_name, stack, title=title, period=data.get("we_period")
-        )
-        generated = await client.generate_text(prompt, max_tokens=800, temperature=0.6)
-        await state.update_data(we_duties=generated or None)
+        await state.update_data(we_duties=text)
         await _finish_work_experience_creation(callback.message, user, state, session, i18n)
 
 
@@ -653,6 +682,8 @@ async def _handle_edit_generate_ai(
     work_exp_id: int = data["we_editing_id"]
     return_to: str = data["we_return_to"]
 
+    from src.worker.tasks.work_experience import generate_work_experience_ai_task
+
     repo = WorkExperienceRepository(session)
     exp = await repo.get_by_id(work_exp_id)
     if not exp:
@@ -660,24 +691,22 @@ async def _handle_edit_generate_ai(
         return
 
     await callback.answer()
-
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(i18n.get("work-exp-generating"))
-
-    client = AIClient()
-    if field == _FIELD_ACHIEVEMENTS:
-        prompt = build_work_experience_achievements_prompt(
-            exp.company_name, exp.stack, title=exp.title, period=exp.period
-        )
-    else:
-        prompt = build_work_experience_duties_prompt(
-            exp.company_name, exp.stack, title=exp.title, period=exp.period
-        )
-
-    generated = await client.generate_text(prompt, max_tokens=800, temperature=0.6)
-    await _save_field(session, user.id, work_exp_id, field, generated or None)
     await state.clear()
-    await show_work_exp_detail(callback.message, work_exp_id, return_to, session, i18n)
+
+    wait_msg = None
+    with contextlib.suppress(TelegramBadRequest):
+        wait_msg = await callback.message.edit_text(i18n.get("work-exp-generating"))
+
+    generate_work_experience_ai_task.delay(
+        user_id=user.id,
+        chat_id=callback.message.chat.id,
+        message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
+        field=field,
+        mode="edit",
+        locale=user.language_code or "ru",
+        work_exp_id=work_exp_id,
+        return_to=return_to,
+    )
 
 
 @router.callback_query(
