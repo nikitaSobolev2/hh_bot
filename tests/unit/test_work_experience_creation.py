@@ -31,7 +31,9 @@ def _make_state(data: dict | None = None) -> AsyncMock:
     async def _get_data() -> dict:
         return dict(_data)
 
-    async def _update_data(**kwargs: object) -> None:
+    async def _update_data(data: dict | None = None, **kwargs: object) -> None:
+        if data:
+            _data.update(data)
         _data.update(kwargs)
 
     state.get_data = _get_data

@@ -110,9 +110,7 @@ def vacancy_summary_detail_keyboard(
         [
             InlineKeyboardButton(
                 text=i18n.get("vs-btn-delete"),
-                callback_data=VacancySummaryCallback(
-                    action="delete", summary_id=summary_id
-                ).pack(),
+                callback_data=VacancySummaryCallback(action="delete", summary_id=summary_id).pack(),
             )
         ],
     ]

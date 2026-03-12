@@ -61,11 +61,7 @@ async def show_resume_list(
     repo = ResumeRepository(session)
     resumes, total = await repo.get_by_user_paginated(user.id, page)
 
-    text = (
-        i18n.get("res-list-empty")
-        if not resumes and page == 0
-        else i18n.get("res-list-title")
-    )
+    text = i18n.get("res-list-empty") if not resumes and page == 0 else i18n.get("res-list-title")
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -116,9 +112,7 @@ async def handle_resume_view(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             "\n".join(lines),
-            reply_markup=resume_result_keyboard(
-                resume, letters, locale, i18n, from_list=True
-            ),
+            reply_markup=resume_result_keyboard(resume, letters, locale, i18n, from_list=True),
         )
     await callback.answer()
 
@@ -943,9 +937,7 @@ async def _show_final_result(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             "\n".join(lines),
-            reply_markup=resume_result_keyboard(
-                resume, letters, locale, i18n, from_list=from_list
-            ),
+            reply_markup=resume_result_keyboard(resume, letters, locale, i18n, from_list=from_list),
         )
 
 
@@ -1016,7 +1008,7 @@ async def handle_show_keywords(
         return
 
     kw_list = sorted(resume.parsed_keywords.items(), key=lambda x: x[1], reverse=True)
-    text = "\n".join(f'- <code>{kw}</code> ({cnt})' for kw, cnt in kw_list[:50])
+    text = "\n".join(f"- <code>{kw}</code> ({cnt})" for kw, cnt in kw_list[:50])
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [

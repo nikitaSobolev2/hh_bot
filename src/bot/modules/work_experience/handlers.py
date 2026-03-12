@@ -42,6 +42,27 @@ from src.repositories.work_experience_ai_draft import WorkExperienceAiDraftRepos
 
 router = Router(name="work_experience")
 
+_WE_STATE_KEYS = frozenset(
+    {
+        "we_return_to",
+        "we_company_name",
+        "we_title",
+        "we_period",
+        "we_stack",
+        "we_achievements",
+        "we_duties",
+        "we_editing_id",
+        "we_editing_field",
+    }
+)
+
+
+async def _clear_we_state(state: FSMContext) -> None:
+    """Clear only we_* keys, preserving res_* and other wizard data."""
+    await state.update_data({key: None for key in _WE_STATE_KEYS})
+    await state.set_state(None)
+
+
 _FIELD_COMPANY_NAME = "company_name"
 _FIELD_TITLE = "title"
 _FIELD_PERIOD = "period"
@@ -565,7 +586,7 @@ async def _finish_work_experience_creation(
     stack: str = data["we_stack"]
     achievements: str | None = data.get("we_achievements")
     duties: str | None = data.get("we_duties")
-    await state.clear()
+    await _clear_we_state(state)
 
     await we_service.add_work_experience(
         session,
@@ -592,7 +613,7 @@ async def handle_cancel_add(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    await state.clear()
+    await _clear_we_state(state)
     await show_work_experience(callback.message, user, callback_data.return_to, session, i18n)
     await callback.answer()
 
@@ -612,7 +633,7 @@ async def handle_edit_field(
     work_exp_id = callback_data.work_exp_id
     return_to = callback_data.return_to
 
-    await state.clear()
+    await _clear_we_state(state)
     await state.update_data(
         we_editing_id=work_exp_id,
         we_editing_field=field,
@@ -662,7 +683,7 @@ async def fsm_edit_value(
         return
 
     await _save_field(session, user.id, work_exp_id, field, new_value)
-    await state.clear()
+    await _clear_we_state(state)
     await show_work_exp_detail(message, work_exp_id, return_to, session, i18n, edit=False)
 
 
@@ -679,7 +700,7 @@ async def fsm_edit_achievements(
     return_to: str = data["we_return_to"]
     new_value = (message.text or "").strip() or None
     await _save_field(session, user.id, work_exp_id, _FIELD_ACHIEVEMENTS, new_value)
-    await state.clear()
+    await _clear_we_state(state)
     await show_work_exp_detail(message, work_exp_id, return_to, session, i18n, edit=False)
 
 
@@ -696,7 +717,7 @@ async def fsm_edit_duties(
     return_to: str = data["we_return_to"]
     new_value = (message.text or "").strip() or None
     await _save_field(session, user.id, work_exp_id, _FIELD_DUTIES, new_value)
-    await state.clear()
+    await _clear_we_state(state)
     await show_work_exp_detail(message, work_exp_id, return_to, session, i18n, edit=False)
 
 
@@ -754,7 +775,7 @@ async def _handle_edit_generate_ai(
         return
 
     await callback.answer()
-    await state.clear()
+    await _clear_we_state(state)
 
     wait_msg = None
     with contextlib.suppress(TelegramBadRequest):
@@ -786,7 +807,7 @@ async def handle_edit_skip_achievements(
     data = await state.get_data()
     work_exp_id: int = data["we_editing_id"]
     return_to: str = data["we_return_to"]
-    await state.clear()
+    await _clear_we_state(state)
     await show_work_exp_detail(callback.message, work_exp_id, return_to, session, i18n)
     await callback.answer()
 
@@ -803,7 +824,7 @@ async def handle_edit_skip_duties(
     data = await state.get_data()
     work_exp_id: int = data["we_editing_id"]
     return_to: str = data["we_return_to"]
-    await state.clear()
+    await _clear_we_state(state)
     await show_work_exp_detail(callback.message, work_exp_id, return_to, session, i18n)
     await callback.answer()
 
@@ -848,7 +869,7 @@ async def handle_back(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
-    await state.clear()
+    await _clear_we_state(state)
     await _navigate_return_to(callback, user, session, i18n, callback_data.return_to, state=state)
     await callback.answer()
 

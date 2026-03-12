@@ -175,7 +175,8 @@ class TestHandleEditSkipAchievements:
         ):
             await handle_edit_skip_achievements(callback, callback_data, user, state, session, i18n)
 
-        state.clear.assert_called_once()
+        state.update_data.assert_called()
+        state.set_state.assert_called()
         callback.answer.assert_called_once()
 
     @pytest.mark.asyncio
@@ -238,7 +239,8 @@ class TestHandleEditSkipDuties:
         ):
             await handle_edit_skip_duties(callback, callback_data, user, state, session, i18n)
 
-        state.clear.assert_called_once()
+        state.update_data.assert_called()
+        state.set_state.assert_called()
         callback.answer.assert_called_once()
 
 
@@ -284,7 +286,8 @@ class TestHandleEditGenerateAiAchievements:
             )
 
         mock_task.delay.assert_called_once()
-        state.clear.assert_called_once()
+        state.update_data.assert_called()
+        state.set_state.assert_called()
         callback.answer.assert_called_once()
 
     @pytest.mark.asyncio
@@ -371,5 +374,6 @@ class TestHandleEditGenerateAiDuties:
             )
 
         mock_task.delay.assert_called_once()
-        state.clear.assert_called_once()
+        state.update_data.assert_called()
+        state.set_state.assert_called()
         callback.answer.assert_called_once()

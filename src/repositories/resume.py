@@ -47,7 +47,9 @@ class ResumeRepository:
         page: int = 0,
     ) -> tuple[list[Resume], int]:
         count_result = await self._session.execute(
-            select(func.count()).select_from(Resume).where(
+            select(func.count())
+            .select_from(Resume)
+            .where(
                 Resume.user_id == user_id,
                 Resume.is_deleted.is_(False),
             )
