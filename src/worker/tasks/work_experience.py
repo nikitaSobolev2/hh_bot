@@ -433,7 +433,9 @@ async def _notify_resume_keyphrases(
     from aiogram.client.default import DefaultBotProperties
     from aiogram.enums import ParseMode
     from aiogram.exceptions import TelegramBadRequest
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+    from src.bot.modules.resume.callbacks import ResumeCallback
     from src.config import settings
     from src.core.i18n import get_text
 
@@ -441,6 +443,29 @@ async def _notify_resume_keyphrases(
     text = f"{header}\n\n{phrases}"
     if len(text) > 4096:
         text = text[:4096]
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=get_text("res-btn-continue-step3", locale),
+                    callback_data=ResumeCallback(action="step3_summary").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=get_text("res-btn-show-result", locale),
+                    callback_data=ResumeCallback(action="show_result").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=get_text("btn-cancel", locale),
+                    callback_data=ResumeCallback(action="cancel").pack(),
+                )
+            ],
+        ]
+    )
 
     bot = Bot(
         token=settings.bot_token,
@@ -452,8 +477,9 @@ async def _notify_resume_keyphrases(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=text,
+                reply_markup=keyboard,
             )
         except TelegramBadRequest:
-            await bot.send_message(chat_id=chat_id, text=text)
+            await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
     finally:
         await bot.session.close()
