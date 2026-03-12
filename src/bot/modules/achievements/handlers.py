@@ -305,6 +305,8 @@ async def handle_proceed(
 ) -> None:
     from src.worker.tasks.achievements import generate_achievements_task
 
+    await callback.answer()
+
     data = await state.get_data()
     await state.clear()
 
@@ -333,7 +335,6 @@ async def handle_proceed(
         wait_msg.message_id if wait_msg else callback.message.message_id,
         user.language_code or "ru",
     )
-    await callback.answer()
 
 
 @router.callback_query(AchievementCallback.filter(F.action == "cancel"))

@@ -404,6 +404,7 @@ async def fsm_proceed(
 
     data = await state.get_data()
     await state.clear()
+    await callback.answer()
 
     existing_interview_id: int | None = data.get("interview_id")
 
@@ -433,8 +434,6 @@ async def fsm_proceed(
         user.language_code or "ru",
         data.get("user_improvement_notes"),
     )
-
-    await callback.answer()
 
 
 # ── Cancel ───────────────────────────────────────────────────────────────────

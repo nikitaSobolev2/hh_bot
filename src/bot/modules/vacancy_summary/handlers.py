@@ -275,6 +275,8 @@ async def handle_regenerate(
         await callback.answer(i18n.get("vs-not-found"), show_alert=True)
         return
 
+    await callback.answer()
+
     has_stored_params = any(
         getattr(old_summary, field) is not None
         for field in ("excluded_industries", "location", "remote_preference", "additional_notes")
@@ -298,7 +300,6 @@ async def handle_regenerate(
                 i18n.get("vs-enter-excluded-industries"),
                 reply_markup=skip_keyboard(i18n),
             )
-        await callback.answer()
         return
 
     # Clone params from the old summary and dispatch immediately
@@ -326,7 +327,6 @@ async def handle_regenerate(
         wait_msg.message_id if wait_msg else callback.message.message_id,
         user.language_code or "ru",
     )
-    await callback.answer()
 
 
 @router.callback_query(VacancySummaryCallback.filter(F.action == "delete"))
@@ -337,10 +337,11 @@ async def handle_delete(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    await callback.answer(i18n.get("vs-deleted"))
+
     repo = VacancySummaryRepository(session)
     summary = await repo.get_by_id(callback_data.summary_id)
     if summary and summary.user_id == user.id:
         await repo.soft_delete(summary)
         await session.commit()
     await show_vacancy_summary_list(callback, user, session, i18n)
-    await callback.answer(i18n.get("vs-deleted"))

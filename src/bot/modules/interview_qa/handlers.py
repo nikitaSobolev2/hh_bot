@@ -133,6 +133,8 @@ async def handle_generate_all(
         await callback.answer(i18n.get("iqa-no-work-experience"), show_alert=True)
         return
 
+    await callback.answer()
+
     qa_repo = StandardQuestionRepository(session)
     generated_keys = {q.question_key for q in await qa_repo.get_ai_generated(user.id)}
 
@@ -145,7 +147,6 @@ async def handle_generate_all(
             text,
             reply_markup=generate_select_keyboard(generated_keys, i18n),
         )
-    await callback.answer()
 
 
 @router.callback_query(InterviewQACallback.filter(F.action == "generate_one"))
@@ -160,6 +161,8 @@ async def handle_generate_one(
     if not await we_repo.count_active_by_user(user.id):
         await callback.answer(i18n.get("iqa-no-work-experience"), show_alert=True)
         return
+
+    await callback.answer()
 
     qa_repo = StandardQuestionRepository(session)
     existing = await qa_repo.get_by_key(user.id, callback_data.question_key)
@@ -177,7 +180,6 @@ async def handle_generate_one(
         user.language_code or "ru",
         callback_data.question_key,
     )
-    await callback.answer()
 
 
 @router.callback_query(InterviewQACallback.filter(F.action == "generate_pending"))
@@ -192,6 +194,8 @@ async def handle_generate_pending(
         await callback.answer(i18n.get("iqa-no-work-experience"), show_alert=True)
         return
 
+    await callback.answer()
+
     from src.worker.tasks.interview_qa import generate_interview_qa_task
 
     wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
@@ -201,7 +205,6 @@ async def handle_generate_pending(
         wait_msg.message_id if wait_msg else callback.message.message_id,
         user.language_code or "ru",
     )
-    await callback.answer()
 
 
 @router.callback_query(InterviewQACallback.filter(F.action == "regenerate"))
@@ -212,6 +215,8 @@ async def handle_regenerate(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    await callback.answer()
+
     repo = StandardQuestionRepository(session)
     question = await repo.get_by_key(user.id, callback_data.question_key)
     if question:
@@ -228,7 +233,6 @@ async def handle_regenerate(
         user.language_code or "ru",
         callback_data.question_key,
     )
-    await callback.answer()
 
 
 def _back_to_list_keyboard(i18n: I18nContext):

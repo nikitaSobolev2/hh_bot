@@ -324,6 +324,8 @@ async def handle_generate_ai(
     stack: str = data.get("we_stack", "")
     field = callback_data.field
 
+    await callback.answer()
+
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(i18n.get("work-exp-generating"))
 
@@ -352,8 +354,6 @@ async def handle_generate_ai(
         generated = await client.generate_text(prompt, max_tokens=800, temperature=0.6)
         await state.update_data(we_duties=generated or None)
         await _finish_work_experience_creation(callback.message, user, state, session, i18n)
-
-    await callback.answer()
 
 
 @router.callback_query(
@@ -659,6 +659,8 @@ async def _handle_edit_generate_ai(
         await callback.answer(i18n.get("work-exp-not-found"), show_alert=True)
         return
 
+    await callback.answer()
+
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(i18n.get("work-exp-generating"))
 
@@ -676,7 +678,6 @@ async def _handle_edit_generate_ai(
     await _save_field(session, user.id, work_exp_id, field, generated or None)
     await state.clear()
     await show_work_exp_detail(callback.message, work_exp_id, return_to, session, i18n)
-    await callback.answer()
 
 
 @router.callback_query(
