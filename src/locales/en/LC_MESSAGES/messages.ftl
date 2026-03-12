@@ -877,6 +877,12 @@ res-btn-create-autoparser = 🤖 Create Auto Parser
 res-step2-keyphrases = 🧠 <b>Step 2: Key Phrases</b>
 
     Click to generate key phrases, or skip this step.
+res-keywords-source-prompt = Would you like to add keywords to integrate into the key phrases?
+res-btn-keywords-manual = ✍️ Enter manually
+res-btn-keywords-from-parsing = 🔍 From parsing
+res-keywords-enter-prompt = Enter keywords separated by commas:
+res-keywords-no-parsings = No completed parsings with keywords found. Generating without them.
+res-select-parsing-company = Select a parsing to use keywords from:
 res-generating-keyphrases = ⏳ Generating key phrases...
 res-keyphrases-ready = ✅ Key phrases for your resume:
 res-btn-continue-step3 = ▶️ Continue: About me text

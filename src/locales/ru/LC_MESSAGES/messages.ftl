@@ -878,6 +878,12 @@ res-btn-create-autoparser = 🤖 Создать автопарсинг
 res-step2-keyphrases = 🧠 <b>Шаг 2: Ключевые фразы</b>
 
     Нажмите кнопку, чтобы сгенерировать ключевые фразы, или пропустите этот шаг.
+res-keywords-source-prompt = Хотите добавить ключевые слова для интеграции в ключевые фразы?
+res-btn-keywords-manual = ✍️ Ввести вручную
+res-btn-keywords-from-parsing = 🔍 Из парсинга
+res-keywords-enter-prompt = Введите ключевые слова через запятую:
+res-keywords-no-parsings = Нет завершённых парсингов с ключевыми словами. Генерирую без них.
+res-select-parsing-company = Выберите парсинг для использования ключевых слов:
 res-generating-keyphrases = ⏳ Генерирую ключевые фразы...
 res-keyphrases-ready = ✅ Ключевые фразы для резюме:
 res-btn-continue-step3 = ▶️ Продолжить: текст «О себе»

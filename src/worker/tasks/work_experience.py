@@ -321,6 +321,8 @@ def generate_resume_key_phrases_task(
     chat_id: int,
     message_id: int,
     locale: str = "ru",
+    extra_keywords: list[str] | None = None,
+    secondary_keywords: list[str] | None = None,
 ) -> dict:
     return run_async(
         lambda sf: _generate_resume_keyphrases_async(
@@ -329,6 +331,8 @@ def generate_resume_key_phrases_task(
             chat_id=chat_id,
             message_id=message_id,
             locale=locale,
+            extra_keywords=extra_keywords,
+            secondary_keywords=secondary_keywords,
         )
     )
 
@@ -340,6 +344,8 @@ async def _generate_resume_keyphrases_async(
     chat_id: int,
     message_id: int,
     locale: str,
+    extra_keywords: list[str] | None = None,
+    secondary_keywords: list[str] | None = None,
 ) -> dict:
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
@@ -358,18 +364,20 @@ async def _generate_resume_keyphrases_async(
     if not experiences:
         return {"status": "no_experiences"}
 
-    # Collect unique stack terms across all experiences to use as main keywords.
-    all_terms: list[str] = []
-    seen: set[str] = set()
-    for exp in experiences:
-        if exp.stack:
-            for term in exp.stack.replace(";", ",").split(","):
-                term = term.strip()
-                if term and term not in seen:
-                    seen.add(term)
-                    all_terms.append(term)
-
-    main_keywords = all_terms[:30]
+    if extra_keywords:
+        main_keywords = extra_keywords
+    else:
+        # Derive keywords from unique stack terms across all experiences.
+        all_terms: list[str] = []
+        seen: set[str] = set()
+        for exp in experiences:
+            if exp.stack:
+                for term in exp.stack.replace(";", ",").split(","):
+                    term = term.strip()
+                    if term and term not in seen:
+                        seen.add(term)
+                        all_terms.append(term)
+        main_keywords = all_terms[:30]
 
     resume_title = next(
         (e.title for e in experiences if e.title),
@@ -394,7 +402,7 @@ async def _generate_resume_keyphrases_async(
     prompt = build_per_company_key_phrases_prompt(
         resume_title=resume_title,
         main_keywords=main_keywords,
-        secondary_keywords=[],
+        secondary_keywords=secondary_keywords or [],
         style=style_label,
         per_company_count=5,
         language=locale,
