@@ -69,9 +69,11 @@ class User(Base):
     )
     support_tickets: Mapped[list[SupportTicket]] = relationship(
         foreign_keys="SupportTicket.user_id",
+        overlaps="user",
     )
     bans: Mapped[list[UserBan]] = relationship(
         foreign_keys="UserBan.user_id",
+        overlaps="user",
     )
     interviews: Mapped[list[Interview]] = relationship(
         back_populates="user",

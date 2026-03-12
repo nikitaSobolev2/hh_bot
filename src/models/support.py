@@ -31,6 +31,7 @@ class SupportTicket(Base):
     user: Mapped[User] = relationship(
         foreign_keys=[user_id],
         lazy="selectin",
+        overlaps="support_tickets",
     )
     admin: Mapped[User | None] = relationship(
         foreign_keys=[admin_id],

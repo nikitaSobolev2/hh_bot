@@ -29,7 +29,7 @@ class UserBan(Base):
         onupdate=func.now(),
     )
 
-    user: Mapped[User] = relationship(foreign_keys=[user_id], lazy="selectin")
+    user: Mapped[User] = relationship(foreign_keys=[user_id], lazy="selectin", overlaps="bans")
     admin: Mapped[User] = relationship(foreign_keys=[admin_id], lazy="selectin")
     ticket: Mapped[SupportTicket | None] = relationship(lazy="selectin")
 

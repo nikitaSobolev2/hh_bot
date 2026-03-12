@@ -2,6 +2,7 @@ from celery import Celery
 from celery.schedules import crontab
 
 from src.config import settings
+from src.worker.signals import connect_signals
 
 celery_app = Celery(
     "hh_bot",
@@ -18,6 +19,8 @@ celery_app = Celery(
         "src.worker.tasks.vacancy_summary",
     ],
 )
+
+connect_signals(celery_app)
 
 celery_app.conf.update(
     task_serializer="json",
