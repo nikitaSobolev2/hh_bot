@@ -909,7 +909,7 @@ async def handle_show_keywords(
         return
 
     kw_list = sorted(resume.parsed_keywords.items(), key=lambda x: x[1], reverse=True)
-    text = "\n".join(f"- {kw} ({cnt})" for kw, cnt in kw_list[:50])
+    text = "\n".join(f"- <b>{kw}</b> ({cnt})" for kw, cnt in kw_list[:50])
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
