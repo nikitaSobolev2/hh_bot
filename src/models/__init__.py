@@ -13,7 +13,9 @@ from src.models.interview import (
 )
 from src.models.interview_qa import StandardQuestion
 from src.models.parsing import AggregatedResult, ParsedVacancy, ParsingCompany
+from src.models.recommendation_letter import RecommendationLetter
 from src.models.referral import ReferralEvent
+from src.models.resume import Resume
 from src.models.role import Role, RolePermission
 from src.models.support import SupportAttachment, SupportMessage, SupportTicket
 from src.models.task import (
@@ -59,4 +61,6 @@ __all__ = [
     "AchievementGenerationItem",
     "StandardQuestion",
     "VacancySummary",
+    "Resume",
+    "RecommendationLetter",
 ]

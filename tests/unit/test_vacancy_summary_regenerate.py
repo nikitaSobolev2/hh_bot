@@ -145,6 +145,7 @@ def test_regenerate_clones_params_to_new_summary_and_enqueues():
             123,
             456,
             "ru",
+            "",
         )
 
 
@@ -165,7 +166,7 @@ def test_enqueue_summary_passes_none_params():
             message_id=20,
             locale="en",
         )
-        mock_task.delay.assert_called_once_with(1, 2, None, None, None, None, 10, 20, "en")
+        mock_task.delay.assert_called_once_with(1, 2, None, None, None, None, 10, 20, "en", "")
 
 
 # ── Bug fix: handle_regenerate wait_msg NameError ─────────────────────────────

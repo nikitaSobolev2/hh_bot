@@ -67,9 +67,12 @@ async def handle_generate_new(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
+    existing = await state.get_data()
+    resume_flow = existing.get("vs_resume_flow", False)
     await state.clear()
     await state.update_data(
         vs_step=0,
+        vs_resume_flow=resume_flow,
         vs_excluded_industries=None,
         vs_location=None,
         vs_remote_preference=None,
@@ -172,6 +175,7 @@ def _enqueue_summary(
     chat_id: int,
     message_id: int,
     locale: str,
+    context: str = "",
 ) -> None:
     from src.worker.tasks.vacancy_summary import generate_vacancy_summary_task
 
@@ -185,6 +189,7 @@ def _enqueue_summary(
         chat_id,
         message_id,
         locale,
+        context,
     )
 
 
@@ -204,6 +209,7 @@ async def _dispatch_generation(
     location = data.get("vs_location")
     remote_preference = data.get("vs_remote_preference")
     additional_notes = data.get("vs_additional_notes")
+    context = "resume" if data.get("vs_resume_flow") else ""
 
     repo = VacancySummaryRepository(session)
     summary = await repo.create(
@@ -230,6 +236,7 @@ async def _dispatch_generation(
         message.chat.id,
         wait_msg.message_id if wait_msg else message.message_id,
         user.language_code or "ru",
+        context,
     )
 
 

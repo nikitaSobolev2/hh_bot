@@ -25,6 +25,8 @@ btn-continue = ▶️ Continue
 btn-cancel = ✖️ Cancel
 btn-add-company = ➕ Add Company
 btn-remove = ❌ Remove
+btn-yes = ✅ Yes
+btn-no = ❌ No
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Profile</b>
@@ -895,6 +897,47 @@ res-work-experiences = 💼 Work Experience
 res-about-me = 📄 About Me
 res-no-experiences = Please add work experience to generate a resume.
 res-cancelled = Resume generation cancelled.
+
+# New resume flow
+res-enter-job-title = 📋 <b>Step 1: Job Title</b>
+
+    Enter the vacancy title or desired position (e.g. "Python Developer", "Product Manager"):
+res-job-title-required = Please enter a job title.
+res-enter-skill-level = 🎯 <b>Step 2: Skill Level</b>
+
+    Select your level or type it freely (e.g. "2 years of experience", "5+ years"):
+res-label-job-title = 📌 Position
+res-label-skill-level = 🎯 Level
+
+# Work experience toggle for resume session
+we-btn-disable-for-resume = 🚫 Exclude from this resume
+we-btn-enable-for-resume = ✅ Include in this resume
+
+# Keyphrases step continue
+res-btn-continue-rec-letters = ▶️ Continue: recommendation letters
+
+# Recommendation letter flow
+res-ask-rec-letter = 💼 <b>{ $company }</b>
+
+    Would you like to generate a recommendation letter for this company?
+res-rec-enter-speaker-name = 👤 Enter the full name of the person writing the letter:
+res-rec-speaker-name-required = Please enter the recommender's name.
+res-rec-enter-speaker-position = 💼 Enter the recommender's job title (or skip):
+res-rec-pick-character = 🎭 Select the main focus of the recommendation letter:
+res-rec-enter-focus = 📝 What should be especially highlighted? (or skip):
+res-rec-generating = ⏳ Generating recommendation letter...
+res-rec-letter-ready = ✅ Recommendation letter is ready!
+res-rec-letter-not-found = Letter not found.
+res-btn-next-job-letter = ▶️ Next company
+
+# Result view buttons
+res-btn-show-parsed-keywords = 🔑 Show parsed keywords
+res-btn-show-job-keyphrases = 📝 Key phrases
+res-btn-show-summary = 📄 About Me text
+res-btn-show-rec-letter = 📄 Recommendation letter
+res-no-keywords = No keywords found.
+res-no-keyphrases = No key phrases found.
+res-parsed-keywords-title = 🔑 Parsed keywords
 
 # ── Interview Preparation ─────────────────────────────────────
 btn-iv-source-plain = 📝 Just save the vacancy

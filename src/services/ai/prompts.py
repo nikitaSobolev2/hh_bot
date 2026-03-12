@@ -552,6 +552,7 @@ def build_per_company_key_phrases_prompt(
     per_company_count: int,
     language: str,
     work_experiences: list[WorkExperienceEntry],
+    skill_level: str | None = None,
 ) -> str:
     main_joined = ", ".join(main_keywords)
     secondary_joined = ", ".join(secondary_keywords)
@@ -560,25 +561,29 @@ def build_per_company_key_phrases_prompt(
         _format_experience_entry(idx, e) for idx, e in enumerate(work_experiences)
     )
 
+    level_info = f" уровня {skill_level}" if skill_level else ""
+
     return (
         f"Ты — опытный карьерный консультант. "
-        f"Составь для резюме на позицию '{resume_title}' "
-        f"ненумерованный список должностных обязанностей, "
-        f"который естественно включает ключевые слова из двух групп.\n\n"
+        f"Составь для резюме на позицию '{resume_title}'{level_info} "
+        f"ключевые фразы, сгруппированные по каждому месту работы.\n\n"
+        f"[ЗАДАЧА]\n"
+        f"Для каждой компании сгенерируй {per_company_count} ключевых фраз, "
+        f"которые:\n"
+        f"- опираются на конкретные достижения, обязанности и технологический стек этой компании;\n"
+        f"- отражают реальный опыт с учётом периода работы и занимаемой должности;\n"
+        f"- органично включают ключевые слова из групп ниже.\n\n"
         f"Основные ключевые слова (каждое должно появиться хотя бы раз): "
         f"[{main_joined}].\n"
         f"Дополнительные ключевые слова (используй уместные): "
         f"[{secondary_joined}].\n\n"
         f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n"
-        f"Кандидат имеет опыт работы в следующих компаниях:\n"
         f"{companies_block}\n\n"
-        f"Сгенерируй по {per_company_count} пунктов для каждой компании, "
-        f"адаптируя формулировки к указанному стеку компании и используя "
-        f"ключевые слова из групп выше.\n"
-        f"Выводи результат сгруппировано по компаниям в формате:\n"
+        f"[ФОРМАТ ВЫВОДА]\n"
+        f"Выводи результат строго по формату:\n"
         f"Компания: Название компании\n"
-        f"- пункт 1\n"
-        f"- пункт 2\n\n"
+        f"- фраза 1\n"
+        f"- фраза 2\n\n"
         f"{_quality_rules()}\n"
         f"{_format_rules(style, language)}"
     )
@@ -630,4 +635,74 @@ def build_work_experience_duties_prompt(
         f"2. Описывай реальные задачи, характерные для данного стека технологий.\n"
         f"3. Каждая обязанность — отдельная строка, начинающаяся с «- ».\n"
         f"4. Только список обязанностей, без вступлений и пояснений."
+    )
+
+
+# Character keys for recommendation letters
+REC_LETTER_CHARACTERS = {
+    "professionalism": {"ru": "профессионализм", "en": "professionalism"},
+    "leadership": {"ru": "лидерство", "en": "leadership"},
+    "technical": {"ru": "техническое мастерство", "en": "technical excellence"},
+    "teamwork": {"ru": "командная работа", "en": "teamwork"},
+    "initiative": {"ru": "инициативность", "en": "initiative"},
+    "reliability": {"ru": "надёжность", "en": "reliability"},
+}
+
+
+def build_recommendation_letter_prompt(
+    company_name: str,
+    stack: str,
+    speaker_name: str,
+    speaker_position: str | None,
+    character_key: str,
+    language: str = "ru",
+    title: str | None = None,
+    period: str | None = None,
+    achievements: str | None = None,
+    duties: str | None = None,
+    focus_text: str | None = None,
+) -> str:
+    """Return a prompt to generate a professional recommendation letter."""
+    locale_char = REC_LETTER_CHARACTERS.get(character_key, {})
+    character_label = locale_char.get(language, locale_char.get("ru", character_key))
+
+    role_info = company_name
+    if title:
+        role_info += f" ({title})"
+    if period:
+        role_info += f", {period}"
+
+    speaker_info = speaker_name
+    if speaker_position:
+        speaker_info += f", {speaker_position}"
+
+    experience_parts = [f"Компания и должность: {role_info}", f"Технологический стек: {stack}"]
+    if achievements:
+        experience_parts.append(f"Достижения: {achievements}")
+    if duties:
+        experience_parts.append(f"Обязанности: {duties}")
+
+    experience_block = "\n".join(experience_parts)
+
+    focus_block = f"\n\nОсобо акцентируй внимание на: {focus_text}" if focus_text else ""
+
+    lang_instruction = "Пиши на русском языке." if language == "ru" else "Write in English."
+
+    return (
+        f"Ты — HR-специалист, помогающий написать рекомендательное письмо.\n\n"
+        f"[ЗАДАЧА]\n"
+        f"Напиши профессиональное рекомендательное письмо от лица {speaker_info} "
+        f"для кандидата, который работал в следующей компании:\n\n"
+        f"{experience_block}\n\n"
+        f"[АКЦЕНТ ПИСЬМА]\n"
+        f"Основной акцент: {character_label}.{focus_block}\n\n"
+        f"[ПРАВИЛА]\n"
+        f"1. Письмо должно быть от первого лица ({speaker_name}).\n"
+        f"2. Объём: 150–250 слов.\n"
+        f"3. Структура: краткое представление автора письма → "
+        f"описание кандидата → конкретные примеры из опыта → итоговая рекомендация.\n"
+        f"4. Не выдумывай конкретные цифры — используй реальный опыт из блока выше.\n"
+        f"5. Тон: профессиональный, конкретный, убедительный.\n"
+        f"6. Только текст письма, без заголовков вроде 'Рекомендательное письмо'.\n"
+        f"7. {lang_instruction}"
     )

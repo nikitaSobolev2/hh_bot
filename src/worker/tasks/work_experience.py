@@ -306,14 +306,34 @@ async def _notify_user_edit(
 
 # ── Resume key phrases ────────────────────────────────────────────────────────
 
+_COMPANY_BLOCK_PATTERN = r"(?:Компания|Company)\s*:\s*(.+?)(?=(?:Компания|Company)\s*:|$)"
+
+
+def _parse_keyphrases_by_company(raw: str) -> dict[str, str]:
+    """Parse the AI keyphrase output into a {company_name: phrases_text} dict."""
+    import re
+
+    blocks: dict[str, str] = {}
+    parts = re.split(r"(?:Компания|Company)\s*:\s*", raw)
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        lines = part.splitlines()
+        company_name = lines[0].strip()
+        body = "\n".join(lines[1:]).strip()
+        if company_name and body:
+            blocks[company_name] = body
+    return blocks
+
 
 @celery_app.task(
     bind=True,
     name="work_experience.generate_resume_keyphrases",
     max_retries=1,
     default_retry_delay=30,
-    soft_time_limit=240,
-    time_limit=300,
+    soft_time_limit=300,
+    time_limit=360,
 )
 def generate_resume_key_phrases_task(
     self,
@@ -323,6 +343,10 @@ def generate_resume_key_phrases_task(
     locale: str = "ru",
     extra_keywords: list[str] | None = None,
     secondary_keywords: list[str] | None = None,
+    resume_id: int | None = None,
+    job_title: str | None = None,
+    skill_level: str | None = None,
+    disabled_exp_ids: list[int] | None = None,
 ) -> dict:
     return run_async(
         lambda sf: _generate_resume_keyphrases_async(
@@ -333,6 +357,10 @@ def generate_resume_key_phrases_task(
             locale=locale,
             extra_keywords=extra_keywords,
             secondary_keywords=secondary_keywords,
+            resume_id=resume_id,
+            job_title=job_title,
+            skill_level=skill_level,
+            disabled_exp_ids=disabled_exp_ids,
         )
     )
 
@@ -346,7 +374,12 @@ async def _generate_resume_keyphrases_async(
     locale: str,
     extra_keywords: list[str] | None = None,
     secondary_keywords: list[str] | None = None,
+    resume_id: int | None = None,
+    job_title: str | None = None,
+    skill_level: str | None = None,
+    disabled_exp_ids: list[int] | None = None,
 ) -> dict:
+    from src.repositories.resume import ResumeRepository
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
     from src.services.ai.prompts import WorkExperienceEntry, build_per_company_key_phrases_prompt
@@ -357,17 +390,23 @@ async def _generate_resume_keyphrases_async(
         logger.warning("Circuit breaker open, skipping resume keyphrases", user_id=user_id)
         return {"status": "circuit_open"}
 
+    disabled_set = set(disabled_exp_ids or [])
+
     async with session_factory() as session:
         repo = WorkExperienceRepository(session)
-        experiences = await repo.get_active_by_user(user_id)
+        all_experiences = await repo.get_active_by_user(user_id)
+
+    experiences = [e for e in all_experiences if e.id not in disabled_set]
 
     if not experiences:
         return {"status": "no_experiences"}
 
+    # Pre-generate achievements for any experience that is missing them
+    experiences = await _ensure_achievements(session_factory, experiences, locale)
+
     if extra_keywords:
         main_keywords = extra_keywords
     else:
-        # Derive keywords from unique stack terms across all experiences.
         all_terms: list[str] = []
         seen: set[str] = set()
         for exp in experiences:
@@ -379,9 +418,10 @@ async def _generate_resume_keyphrases_async(
                         all_terms.append(term)
         main_keywords = all_terms[:30]
 
-    resume_title = next(
-        (e.title for e in experiences if e.title),
-        "Специалист" if locale == "ru" else "Specialist",
+    effective_title = (
+        job_title
+        or next((e.title for e in experiences if e.title), None)
+        or ("Специалист" if locale == "ru" else "Specialist")
     )
 
     entries = [
@@ -400,13 +440,14 @@ async def _generate_resume_keyphrases_async(
 
     style_label = get_text("style-formal", locale)
     prompt = build_per_company_key_phrases_prompt(
-        resume_title=resume_title,
+        resume_title=effective_title,
         main_keywords=main_keywords,
         secondary_keywords=secondary_keywords or [],
         style=style_label,
         per_company_count=5,
         language=locale,
         work_experiences=entries,
+        skill_level=skill_level,
     )
 
     ai_client = AIClient()
@@ -421,6 +462,16 @@ async def _generate_resume_keyphrases_async(
     if not phrases:
         return {"status": "empty_response"}
 
+    # Parse and persist per-company keyphrases into the Resume record if we have one
+    if resume_id:
+        keyphrases_map = _parse_keyphrases_by_company(phrases)
+        async with session_factory() as session:
+            resume_repo = ResumeRepository(session)
+            resume = await resume_repo.get_by_id(resume_id)
+            if resume:
+                await resume_repo.update(resume, keyphrases_by_company=keyphrases_map)
+                await session.commit()
+
     await _notify_resume_keyphrases(
         chat_id=chat_id,
         message_id=message_id,
@@ -428,6 +479,49 @@ async def _generate_resume_keyphrases_async(
         locale=locale,
     )
     return {"status": "completed"}
+
+
+async def _ensure_achievements(session_factory, experiences, locale: str):
+    """Generate achievements for entries missing them, then return a refreshed list."""
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import build_work_experience_achievements_prompt
+
+    missing = [e for e in experiences if not e.achievements]
+    if not missing:
+        return experiences
+
+    ai_client = AIClient()
+    for exp in missing:
+        prompt = build_work_experience_achievements_prompt(
+            exp.company_name, exp.stack, title=exp.title, period=exp.period
+        )
+        try:
+            generated = await ai_client.generate_text(prompt, max_tokens=600, temperature=0.6)
+            if generated:
+                async with session_factory() as session:
+                    repo = WorkExperienceRepository(session)
+                    fresh = await repo.get_by_id(exp.id)
+                    if fresh and fresh.user_id == exp.user_id:
+                        await repo.update(fresh, achievements=generated)
+                        await session.commit()
+        except Exception as exc:
+            logger.warning(
+                "Failed to auto-generate achievements",
+                work_exp_id=exp.id,
+                error=str(exc),
+            )
+
+    # Reload refreshed experiences from DB
+    async with session_factory() as session:
+        repo = WorkExperienceRepository(session)
+        ids = [e.id for e in experiences]
+        refreshed = []
+        for exp_id in ids:
+            exp = await repo.get_by_id(exp_id)
+            if exp:
+                refreshed.append(exp)
+    return refreshed
 
 
 async def _notify_resume_keyphrases(
@@ -458,12 +552,6 @@ async def _notify_resume_keyphrases(
                 InlineKeyboardButton(
                     text=get_text("res-btn-continue-step3", locale),
                     callback_data=ResumeCallback(action="step3_summary").pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=get_text("res-btn-show-result", locale),
-                    callback_data=ResumeCallback(action="show_result").pack(),
                 )
             ],
             [

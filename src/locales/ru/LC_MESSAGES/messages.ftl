@@ -25,6 +25,8 @@ btn-continue = ▶️ Продолжить
 btn-cancel = ✖️ Отмена
 btn-add-company = ➕ Добавить компанию
 btn-remove = ❌ Удалить
+btn-yes = ✅ Да
+btn-no = ❌ Нет
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Профиль</b>
@@ -896,6 +898,47 @@ res-work-experiences = 💼 Опыт работы
 res-about-me = 📄 О себе
 res-no-experiences = Добавьте опыт работы для генерации резюме.
 res-cancelled = Генерация резюме отменена.
+
+# New resume flow
+res-enter-job-title = 📋 <b>Шаг 1: Название вакансии</b>
+
+    Введите название вакансии или желаемую должность (например: «Python Developer», «Product Manager»):
+res-job-title-required = Пожалуйста, введите название вакансии.
+res-enter-skill-level = 🎯 <b>Шаг 2: Уровень</b>
+
+    Выберите ваш уровень или введите произвольно (например: «2 года опыта», «5+ лет»):
+res-label-job-title = 📌 Должность
+res-label-skill-level = 🎯 Уровень
+
+# Work experience toggle for resume session
+we-btn-disable-for-resume = 🚫 Не использовать в этом резюме
+we-btn-enable-for-resume = ✅ Использовать в этом резюме
+
+# Keyphrases step continue
+res-btn-continue-rec-letters = ▶️ Продолжить: рекомендательные письма
+
+# Recommendation letter flow
+res-ask-rec-letter = 💼 <b>{ $company }</b>
+
+    Хотите сгенерировать рекомендательное письмо для этой компании?
+res-rec-enter-speaker-name = 👤 Введите имя и фамилию человека, от чьего лица пишется письмо:
+res-rec-speaker-name-required = Пожалуйста, введите имя рекомендателя.
+res-rec-enter-speaker-position = 💼 Введите должность рекомендателя (или пропустите):
+res-rec-pick-character = 🎭 Выберите основной акцент рекомендательного письма:
+res-rec-enter-focus = 📝 Что особо упомянуть в письме? (или пропустите):
+res-rec-generating = ⏳ Генерирую рекомендательное письмо...
+res-rec-letter-ready = ✅ Рекомендательное письмо готово!
+res-rec-letter-not-found = Письмо не найдено.
+res-btn-next-job-letter = ▶️ Следующая компания
+
+# Result view buttons
+res-btn-show-parsed-keywords = 🔑 Показать ключевые слова из парсинга
+res-btn-show-job-keyphrases = 📝 Ключевые фразы
+res-btn-show-summary = 📄 Текст «О себе»
+res-btn-show-rec-letter = 📄 Рекомендательное письмо
+res-no-keywords = Ключевые слова не найдены.
+res-no-keyphrases = Ключевые фразы не найдены.
+res-parsed-keywords-title = 🔑 Ключевые слова из парсинга
 
 # ── Interview Preparation ─────────────────────────────────────
 btn-iv-source-plain = 📝 Просто сохранить вакансию

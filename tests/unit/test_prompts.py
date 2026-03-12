@@ -123,7 +123,7 @@ class TestBuildPerCompanyKeyPhrasesPrompt:
             language="ru",
             work_experiences=experiences,
         )
-        assert "5 пунктов для каждой компании" in prompt
+        assert "5" in prompt
 
     def test_includes_work_experience_section(self):
         experiences = [

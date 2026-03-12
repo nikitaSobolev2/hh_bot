@@ -22,12 +22,15 @@ def work_experience_keyboard(
     *,
     show_continue: bool = False,
     show_skip: bool = False,
+    disabled_exp_ids: set[int] | None = None,
 ) -> InlineKeyboardMarkup:
     """List view — each job is a clickable button leading to the detail view."""
     rows: list[list[InlineKeyboardButton]] = []
+    disabled = disabled_exp_ids or set()
 
     for exp in experiences:
-        label = f"🏢 {exp.company_name}"
+        prefix = "🚫 " if exp.id in disabled else "🏢 "
+        label = f"{prefix}{exp.company_name}"
         if exp.title:
             label += f" — {exp.title}"
         if exp.period:
@@ -103,6 +106,9 @@ def work_exp_detail_keyboard(
     work_exp_id: int,
     return_to: str,
     i18n: I18nContext,
+    *,
+    show_resume_toggle: bool = False,
+    is_disabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """Detail view — buttons to edit each field and delete."""
 
@@ -117,35 +123,57 @@ def work_exp_detail_keyboard(
             ).pack(),
         )
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_edit_btn(i18n.get("we-btn-edit-company-name"), "company_name")],
-            [_edit_btn(i18n.get("we-btn-edit-title"), "title")],
-            [_edit_btn(i18n.get("we-btn-edit-period"), "period")],
-            [_edit_btn(i18n.get("we-btn-edit-stack"), "stack")],
-            [_edit_btn(i18n.get("we-btn-edit-achievements"), "achievements")],
-            [_edit_btn(i18n.get("we-btn-edit-duties"), "duties")],
+    rows: list[list[InlineKeyboardButton]] = [
+        [_edit_btn(i18n.get("we-btn-edit-company-name"), "company_name")],
+        [_edit_btn(i18n.get("we-btn-edit-title"), "title")],
+        [_edit_btn(i18n.get("we-btn-edit-period"), "period")],
+        [_edit_btn(i18n.get("we-btn-edit-stack"), "stack")],
+        [_edit_btn(i18n.get("we-btn-edit-achievements"), "achievements")],
+        [_edit_btn(i18n.get("we-btn-edit-duties"), "duties")],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("we-btn-delete"),
+                callback_data=WorkExpCallback(
+                    action="delete",
+                    work_exp_id=work_exp_id,
+                    return_to=return_to,
+                ).pack(),
+            )
+        ],
+    ]
+
+    if show_resume_toggle:
+        toggle_label = (
+            i18n.get("we-btn-enable-for-resume")
+            if is_disabled
+            else i18n.get("we-btn-disable-for-resume")
+        )
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("we-btn-delete"),
+                    text=toggle_label,
                     callback_data=WorkExpCallback(
-                        action="delete",
+                        action="toggle_for_resume",
                         work_exp_id=work_exp_id,
                         return_to=return_to,
                     ).pack(),
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-back"),
-                    callback_data=WorkExpCallback(
-                        action="view",
-                        return_to=return_to,
-                    ).pack(),
-                )
-            ],
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=WorkExpCallback(
+                    action="view",
+                    return_to=return_to,
+                ).pack(),
+            )
         ]
     )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cancel_add_keyboard(return_to: str, i18n: I18nContext) -> InlineKeyboardMarkup:

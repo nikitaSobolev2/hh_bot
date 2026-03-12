@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from src.models.interview_qa import StandardQuestion
     from src.models.parsing import ParsingCompany
     from src.models.referral import ReferralEvent
+    from src.models.resume import Resume
     from src.models.role import Role
     from src.models.support import SupportTicket
     from src.models.vacancy_summary import VacancySummary
@@ -88,6 +89,10 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     vacancy_summaries: Mapped[list[VacancySummary]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    resumes: Mapped[list[Resume]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )

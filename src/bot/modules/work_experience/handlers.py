@@ -63,6 +63,7 @@ async def show_work_experience(
     edit: bool = True,
     show_continue: bool = False,
     show_skip: bool = False,
+    disabled_exp_ids: set[int] | None = None,
 ) -> None:
     experiences = await we_service.get_active_work_experiences(session, user.id)
 
@@ -74,6 +75,7 @@ async def show_work_experience(
         i18n,
         show_continue=show_continue,
         show_skip=show_skip,
+        disabled_exp_ids=disabled_exp_ids or set(),
     )
     if edit:
         with contextlib.suppress(TelegramBadRequest):
@@ -90,6 +92,7 @@ async def show_work_exp_detail(
     i18n: I18nContext,
     *,
     edit: bool = True,
+    disabled_exp_ids: set[int] | None = None,
 ) -> None:
     from src.repositories.work_experience import WorkExperienceRepository
 
@@ -100,8 +103,17 @@ async def show_work_exp_detail(
             await message.edit_text(i18n.get("work-exp-not-found"))
         return
 
+    in_resume_context = return_to.startswith("resume")
+    is_disabled = work_exp_id in (disabled_exp_ids or set())
+
     text = _format_detail_text(exp, i18n)
-    kb = work_exp_detail_keyboard(work_exp_id, return_to, i18n)
+    kb = work_exp_detail_keyboard(
+        work_exp_id,
+        return_to,
+        i18n,
+        show_resume_toggle=in_resume_context,
+        is_disabled=is_disabled,
+    )
     if edit:
         with contextlib.suppress(TelegramBadRequest):
             await message.edit_text(text, reply_markup=kb)
@@ -133,10 +145,26 @@ async def handle_view(
     callback: CallbackQuery,
     callback_data: WorkExpCallback,
     user: User,
+    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    await show_work_experience(callback.message, user, callback_data.return_to, session, i18n)
+    return_to = callback_data.return_to
+    in_resume_context = return_to.startswith("resume")
+    disabled_ids: set[int] = set()
+    if in_resume_context:
+        data = await state.get_data()
+        disabled_ids = set(data.get("res_disabled_exp_ids") or [])
+    await show_work_experience(
+        callback.message,
+        user,
+        return_to,
+        session,
+        i18n,
+        show_continue=in_resume_context,
+        show_skip=in_resume_context,
+        disabled_exp_ids=disabled_ids,
+    )
     await callback.answer()
 
 
@@ -147,15 +175,50 @@ async def handle_view(
 async def handle_detail(
     callback: CallbackQuery,
     callback_data: WorkExpCallback,
+    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    disabled_ids: set[int] = set()
+    if callback_data.return_to.startswith("resume"):
+        data = await state.get_data()
+        disabled_ids = set(data.get("res_disabled_exp_ids") or [])
     await show_work_exp_detail(
         callback.message,
         callback_data.work_exp_id,
         callback_data.return_to,
         session,
         i18n,
+        disabled_exp_ids=disabled_ids,
+    )
+    await callback.answer()
+
+
+@router.callback_query(WorkExpCallback.filter(F.action == "toggle_for_resume"))
+async def handle_toggle_for_resume(
+    callback: CallbackQuery,
+    callback_data: WorkExpCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    exp_id = callback_data.work_exp_id
+    data = await state.get_data()
+    disabled: list[int] = list(data.get("res_disabled_exp_ids") or [])
+    if exp_id in disabled:
+        disabled.remove(exp_id)
+    else:
+        disabled.append(exp_id)
+    await state.update_data(res_disabled_exp_ids=disabled)
+    disabled_ids = set(disabled)
+    await show_work_exp_detail(
+        callback.message,
+        exp_id,
+        callback_data.return_to,
+        session,
+        i18n,
+        disabled_exp_ids=disabled_ids,
     )
     await callback.answer()
 
@@ -858,4 +921,4 @@ async def _navigate_return_to(
     elif return_to == "resume_step1":
         from src.bot.modules.resume.handlers import handle_resume_work_exp_done
 
-        await handle_resume_work_exp_done(callback, i18n)
+        await handle_resume_work_exp_done(callback, i18n, user=user, state=state, session=session)

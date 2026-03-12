@@ -21,6 +21,7 @@ def generate_vacancy_summary_task(
     chat_id: int,
     message_id: int,
     locale: str = "ru",
+    context: str = "",
 ) -> dict:
     return run_async(
         lambda sf: _generate_summary_async(
@@ -34,6 +35,7 @@ def generate_vacancy_summary_task(
             chat_id,
             message_id,
             locale,
+            context,
         )
     )
 
@@ -49,6 +51,7 @@ async def _generate_summary_async(
     chat_id: int,
     message_id: int,
     locale: str,
+    context: str = "",
 ) -> dict:
     from src.config import settings
     from src.repositories.vacancy_summary import VacancySummaryRepository
@@ -121,7 +124,7 @@ async def _generate_summary_async(
             await repo.update_text(summary, generated_text)
             await session.commit()
 
-    await _notify_user(settings.bot_token, chat_id, message_id, summary_id, locale)
+    await _notify_user(settings.bot_token, chat_id, message_id, summary_id, locale, context)
     return {"status": "completed", "summary_id": summary_id}
 
 
@@ -131,6 +134,7 @@ async def _notify_user(
     message_id: int,
     summary_id: int,
     locale: str,
+    context: str = "",
 ) -> None:
     from aiogram import Bot
     from aiogram.client.default import DefaultBotProperties
@@ -141,18 +145,29 @@ async def _notify_user(
     from src.core.i18n import get_text
 
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=get_text("vs-btn-view", locale),
+                callback_data=VacancySummaryCallback(action="detail", summary_id=summary_id).pack(),
+            )
+        ]
+    ]
+
+    if context == "resume":
+        from src.bot.modules.resume.callbacks import ResumeCallback
+
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=get_text("vs-btn-view", locale),
-                    callback_data=VacancySummaryCallback(
-                        action="detail", summary_id=summary_id
-                    ).pack(),
+                    text=get_text("res-btn-continue-rec-letters", locale),
+                    callback_data=ResumeCallback(action="rec_start").pack(),
                 )
             ]
-        ]
-    )
+        )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
     try:
         await bot.edit_message_text(
             chat_id=chat_id,
