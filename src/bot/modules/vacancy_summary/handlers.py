@@ -21,6 +21,17 @@ from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.vacancy_summary import VacancySummaryRepository
 
+_VS_KEYS = frozenset(
+    {
+        "vs_step",
+        "vs_resume_flow",
+        "vs_excluded_industries",
+        "vs_location",
+        "vs_remote_preference",
+        "vs_additional_notes",
+    }
+)
+
 router = Router(name="vacancy_summary")
 
 _FORM_STEPS = ["excluded_industries", "location", "remote_preference", "additional_notes"]
@@ -32,9 +43,16 @@ async def show_vacancy_summary_list(
     session: AsyncSession,
     i18n: I18nContext,
     page: int = 0,
+    *,
+    state: FSMContext | None = None,
 ) -> None:
     repo = VacancySummaryRepository(session)
     summaries, total = await repo.get_by_user_paginated(user.id, page)
+
+    in_resume_context = False
+    if state is not None:
+        data = await state.get_data()
+        in_resume_context = bool(data.get("vs_resume_flow"))
 
     text = (
         f"<b>{i18n.get('vs-list-empty')}</b>"
@@ -44,7 +62,13 @@ async def show_vacancy_summary_list(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=vacancy_summary_list_keyboard(summaries, page, total, i18n),
+            reply_markup=vacancy_summary_list_keyboard(
+                summaries,
+                page,
+                total,
+                i18n,
+                in_resume_context=in_resume_context,
+            ),
         )
 
 
@@ -53,10 +77,11 @@ async def handle_list(
     callback: CallbackQuery,
     callback_data: VacancySummaryCallback,
     user: User,
+    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    await show_vacancy_summary_list(callback, user, session, i18n, callback_data.page)
+    await show_vacancy_summary_list(callback, user, session, i18n, callback_data.page, state=state)
     await callback.answer()
 
 
@@ -67,12 +92,9 @@ async def handle_generate_new(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
-    existing = await state.get_data()
-    resume_flow = existing.get("vs_resume_flow", False)
-    await state.clear()
+    # Reset only the vs_* keys; preserve all res_* resume-wizard keys in state
     await state.update_data(
         vs_step=0,
-        vs_resume_flow=resume_flow,
         vs_excluded_industries=None,
         vs_location=None,
         vs_remote_preference=None,
@@ -203,13 +225,23 @@ async def _dispatch_generation(
     edit: bool = False,
 ) -> None:
     data = await state.get_data()
-    await state.clear()
 
     excluded_industries = data.get("vs_excluded_industries")
     location = data.get("vs_location")
     remote_preference = data.get("vs_remote_preference")
     additional_notes = data.get("vs_additional_notes")
     context = "resume" if data.get("vs_resume_flow") else ""
+
+    # Clear only the vs_* keys so that res_* resume-wizard keys survive
+    await state.update_data(
+        vs_step=None,
+        vs_resume_flow=False,
+        vs_excluded_industries=None,
+        vs_location=None,
+        vs_remote_preference=None,
+        vs_additional_notes=None,
+    )
+    await state.set_state(None)
 
     repo = VacancySummaryRepository(session)
     summary = await repo.create(
@@ -245,6 +277,7 @@ async def handle_detail(
     callback: CallbackQuery,
     callback_data: VacancySummaryCallback,
     user: User,
+    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -254,6 +287,9 @@ async def handle_detail(
         await callback.answer(i18n.get("vs-not-found"), show_alert=True)
         return
 
+    data = await state.get_data()
+    in_resume_context = bool(data.get("vs_resume_flow"))
+
     text = summary.generated_text or i18n.get("vs-generating")
     if len(text) > 4000:
         text = text[:3900] + "\n..."
@@ -261,7 +297,11 @@ async def handle_detail(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=vacancy_summary_detail_keyboard(summary.id, i18n),
+            reply_markup=vacancy_summary_detail_keyboard(
+                summary.id,
+                i18n,
+                in_resume_context=in_resume_context,
+            ),
         )
     await callback.answer()
 

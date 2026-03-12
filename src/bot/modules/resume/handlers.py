@@ -458,12 +458,33 @@ async def handle_step3_summary(
     from src.bot.modules.vacancy_summary.handlers import show_vacancy_summary_list
 
     await state.update_data(vs_resume_flow=True)
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(
-            i18n.get("res-step3-summary"),
-            reply_markup=resume_cancel_keyboard(i18n),
-        )
-    await show_vacancy_summary_list(callback, user, session, i18n)
+    await show_vacancy_summary_list(callback, user, session, i18n, state=state)
+    await callback.answer()
+
+
+@router.callback_query(ResumeCallback.filter(F.action == "select_summary"))
+async def handle_select_summary(
+    callback: CallbackQuery,
+    callback_data: ResumeCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    """User picked an existing summary for their resume from the summary detail view."""
+    summary_id = callback_data.summary_id
+    resume_id = await _ensure_resume_record(state, session, user.id)
+
+    from src.repositories.resume import ResumeRepository
+
+    resume_repo = ResumeRepository(session)
+    resume = await resume_repo.get_by_id(resume_id)
+    if resume:
+        await resume_repo.update(resume, summary_id=summary_id)
+        await session.commit()
+
+    await state.update_data(vs_resume_flow=False)
+    await _start_rec_letters_flow(callback, user, state, session, i18n)
     await callback.answer()
 
 

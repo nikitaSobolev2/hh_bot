@@ -21,6 +21,8 @@ def vacancy_summary_list_keyboard(
     page: int,
     total: int,
     i18n: I18nContext,
+    *,
+    in_resume_context: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -67,6 +69,18 @@ def vacancy_summary_list_keyboard(
             )
         rows.append(nav)
 
+    if in_resume_context:
+        from src.bot.modules.resume.callbacks import ResumeCallback
+
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("res-btn-continue-rec-letters"),
+                    callback_data=ResumeCallback(action="rec_start").pack(),
+                )
+            ]
+        )
+
     rows.append(
         [
             InlineKeyboardButton(
@@ -81,33 +95,52 @@ def vacancy_summary_list_keyboard(
 def vacancy_summary_detail_keyboard(
     summary_id: int,
     i18n: I18nContext,
+    *,
+    in_resume_context: bool = False,
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("vs-btn-regenerate"),
+                callback_data=VacancySummaryCallback(
+                    action="regenerate", summary_id=summary_id
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("vs-btn-delete"),
+                callback_data=VacancySummaryCallback(
+                    action="delete", summary_id=summary_id
+                ).pack(),
+            )
+        ],
+    ]
+
+    if in_resume_context:
+        from src.bot.modules.resume.callbacks import ResumeCallback
+
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("vs-btn-regenerate"),
-                    callback_data=VacancySummaryCallback(
-                        action="regenerate", summary_id=summary_id
+                    text=i18n.get("vs-btn-use-for-resume"),
+                    callback_data=ResumeCallback(
+                        action="select_summary",
+                        summary_id=summary_id,
                     ).pack(),
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("vs-btn-delete"),
-                    callback_data=VacancySummaryCallback(
-                        action="delete", summary_id=summary_id
-                    ).pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-back"),
-                    callback_data=VacancySummaryCallback(action="list").pack(),
-                )
-            ],
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=VacancySummaryCallback(action="list").pack(),
+            )
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def skip_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:

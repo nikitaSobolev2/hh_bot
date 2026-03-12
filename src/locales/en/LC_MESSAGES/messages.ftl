@@ -852,6 +852,7 @@ vs-btn-generate-new = ✨ Create New
 vs-btn-regenerate = 🔄 Regenerate
 vs-btn-delete = 🗑 Delete
 vs-btn-view = 📄 View
+vs-btn-use-for-resume = ✅ Use for resume
 vs-enter-excluded-industries = 🚫 Which industries/companies do you <b>NOT</b> want to consider?
 
     List them separated by commas (e.g. gambling, loans) or press Skip:
