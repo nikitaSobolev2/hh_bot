@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.interview_qa.callbacks import InterviewQACallback
 from src.bot.modules.interview_qa.keyboards import (
+    generate_select_keyboard,
     interview_qa_list_keyboard,
     question_detail_keyboard,
     why_new_job_reasons_keyboard,
@@ -18,6 +19,7 @@ from src.bot.modules.interview_qa.keyboards import (
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.interview_qa import StandardQuestionRepository
+from src.repositories.work_experience import WorkExperienceRepository
 
 router = Router(name="interview_qa")
 
@@ -123,8 +125,73 @@ async def handle_view_question(
 async def handle_generate_all(
     callback: CallbackQuery,
     user: User,
+    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    we_repo = WorkExperienceRepository(session)
+    if not await we_repo.count_active_by_user(user.id):
+        await callback.answer(i18n.get("iqa-no-work-experience"), show_alert=True)
+        return
+
+    qa_repo = StandardQuestionRepository(session)
+    generated_keys = {q.question_key for q in await qa_repo.get_ai_generated(user.id)}
+
+    text = (
+        f"<b>{i18n.get('iqa-generate-select-title')}</b>\n\n"
+        f"{i18n.get('iqa-generate-select-description')}"
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=generate_select_keyboard(generated_keys, i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(InterviewQACallback.filter(F.action == "generate_one"))
+async def handle_generate_one(
+    callback: CallbackQuery,
+    callback_data: InterviewQACallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    we_repo = WorkExperienceRepository(session)
+    if not await we_repo.count_active_by_user(user.id):
+        await callback.answer(i18n.get("iqa-no-work-experience"), show_alert=True)
+        return
+
+    qa_repo = StandardQuestionRepository(session)
+    existing = await qa_repo.get_by_key(user.id, callback_data.question_key)
+    if existing:
+        await qa_repo.soft_delete(existing)
+        await session.commit()
+
+    from src.worker.tasks.interview_qa import generate_interview_qa_task
+
+    wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
+    generate_interview_qa_task.delay(
+        user.id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+        callback_data.question_key,
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewQACallback.filter(F.action == "generate_pending"))
+async def handle_generate_pending(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    we_repo = WorkExperienceRepository(session)
+    if not await we_repo.count_active_by_user(user.id):
+        await callback.answer(i18n.get("iqa-no-work-experience"), show_alert=True)
+        return
+
     from src.worker.tasks.interview_qa import generate_interview_qa_task
 
     wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
@@ -145,8 +212,6 @@ async def handle_regenerate(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.repositories.interview_qa import StandardQuestionRepository
-
     repo = StandardQuestionRepository(session)
     question = await repo.get_by_key(user.id, callback_data.question_key)
     if question:
@@ -161,6 +226,7 @@ async def handle_regenerate(
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,
         user.language_code or "ru",
+        callback_data.question_key,
     )
     await callback.answer()
 

@@ -70,7 +70,15 @@ async def _generate_summary_async(
         raw_experiences = await we_repo.get_active_by_user(user_id)
 
     experiences = [
-        WorkExperienceEntry(company_name=e.company_name, stack=e.stack) for e in raw_experiences
+        WorkExperienceEntry(
+            company_name=e.company_name,
+            stack=e.stack,
+            title=e.title,
+            period=e.period,
+            achievements=e.achievements,
+            duties=e.duties,
+        )
+        for e in raw_experiences
     ]
 
     from src.bot.modules.autoparse.services import derive_tech_stack_from_experiences

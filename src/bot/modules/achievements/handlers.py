@@ -81,6 +81,36 @@ async def handle_generate_new(
         await callback.answer()
         return
 
+    await show_work_experience(
+        callback.message,
+        user,
+        "achievements_collect",
+        session,
+        i18n,
+        show_continue=True,
+    )
+    await callback.answer()
+
+
+async def start_achievement_collection(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    state: FSMContext | None,
+    i18n: I18nContext,
+) -> None:
+    from src.bot.modules.parsing import services as we_service
+
+    if state is None:
+        return
+
+    experiences = await we_service.get_active_work_experiences(session, user.id)
+    if not experiences:
+        from src.bot.modules.work_experience.handlers import show_work_experience
+
+        await show_work_experience(callback.message, user, "achievements", session, i18n)
+        return
+
     await state.clear()
     await state.update_data(
         ach_exp_ids=[exp.id for exp in experiences],
@@ -94,11 +124,10 @@ async def handle_generate_new(
     await state.set_state(AchievementForm.collecting_achievements)
     data = await state.get_data()
     await _ask_for_input(callback.message, data, _STEP_ACH, 0, i18n, edit=True)
-    await callback.answer()
 
 
 async def _ask_for_input(
-    message,
+    message: Message,
     data: dict,
     step: str,
     index: int,
@@ -148,8 +177,11 @@ async def fsm_collect_achievements(
     await _advance_achievements_step(message, state, data, index, i18n)
 
 
-@router.callback_query(AchievementCallback.filter(F.action == "skip_input"))
-async def handle_skip_input(
+@router.callback_query(
+    AchievementCallback.filter(F.action == "skip_input"),
+    AchievementForm.collecting_achievements,
+)
+async def handle_skip_achievements(
     callback: CallbackQuery,
     callback_data: AchievementCallback,
     user: User,
@@ -158,16 +190,35 @@ async def handle_skip_input(
 ) -> None:
     data = await state.get_data()
     index: int = data["ach_index"]
-    await _advance_achievements_step(callback.message, state, data, index, i18n)
+    await _advance_achievements_step(callback.message, state, data, index, i18n, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(
+    AchievementCallback.filter(F.action == "skip_input"),
+    AchievementForm.collecting_responsibilities,
+)
+async def handle_skip_responsibilities(
+    callback: CallbackQuery,
+    callback_data: AchievementCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    index: int = data["ach_index"]
+    await _advance_responsibilities_step(callback.message, state, data, index, i18n, edit=True)
     await callback.answer()
 
 
 async def _advance_achievements_step(
-    message,
+    message: Message,
     state: FSMContext,
     data: dict,
     current_index: int,
     i18n: I18nContext,
+    *,
+    edit: bool = False,
 ) -> None:
     exp_names: list[str] = data["ach_exp_names"]
     total = len(exp_names)
@@ -175,15 +226,14 @@ async def _advance_achievements_step(
 
     if next_index < total:
         await state.update_data(ach_index=next_index)
-        await _ask_for_input(
-            message, {**data, "ach_index": next_index}, _STEP_ACH, next_index, i18n
-        )
+        updated_data = {**data, "ach_index": next_index}
+        await _ask_for_input(message, updated_data, _STEP_ACH, next_index, i18n, edit=edit)
         return
 
     await state.update_data(ach_index=0, ach_step=_STEP_RESP)
     await state.set_state(AchievementForm.collecting_responsibilities)
     fresh_data = await state.get_data()
-    await _ask_for_input(message, fresh_data, _STEP_RESP, 0, i18n)
+    await _ask_for_input(message, fresh_data, _STEP_RESP, 0, i18n, edit=edit)
 
 
 @router.message(AchievementForm.collecting_responsibilities)
@@ -202,11 +252,13 @@ async def fsm_collect_responsibilities(
 
 
 async def _advance_responsibilities_step(
-    message,
+    message: Message,
     state: FSMContext,
     data: dict,
     current_index: int,
     i18n: I18nContext,
+    *,
+    edit: bool = False,
 ) -> None:
     exp_names: list[str] = data["ach_exp_names"]
     total = len(exp_names)
@@ -214,20 +266,15 @@ async def _advance_responsibilities_step(
 
     if next_index < total:
         await state.update_data(ach_index=next_index)
-        await _ask_for_input(
-            message,
-            {**data, "ach_index": next_index},
-            _STEP_RESP,
-            next_index,
-            i18n,
-        )
+        updated_data = {**data, "ach_index": next_index}
+        await _ask_for_input(message, updated_data, _STEP_RESP, next_index, i18n, edit=edit)
         return
 
     await _show_proceed(message, state, i18n)
 
 
 async def _show_proceed(
-    message,
+    message: Message,
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:

@@ -247,12 +247,53 @@ work-exp-enter-stack =
     Введите стек технологий для <b>{ $company }</b>
     (через запятую, например: Python, Django, PostgreSQL):
 work-exp-name-invalid = Название компании не может быть пустым (макс. 255 символов).
+work-exp-title-invalid = Должность не может превышать 255 символов.
 work-exp-stack-invalid = Стек технологий не может быть пустым.
 work-exp-max-reached = Максимум 6 компаний. Удалите одну, чтобы добавить новую.
+work-exp-not-found = Запись об опыте работы не найдена.
+work-exp-enter-title =
+    Введите вашу должность в этой компании
+    (например: Backend Developer, Senior Engineer) или пропустите:
+work-exp-enter-period =
+    Укажите период работы
+    (например: 2020-2023, 3 года) или пропустите:
+work-exp-enter-achievements-edit = Введите новые достижения (или выберите вариант ниже):
+work-exp-enter-duties-edit = Введите новые обязанности (или выберите вариант ниже):
+we-edit-enter-stack = Введите новый стек технологий (через запятую):
+we-label-achievements = Достижения
+we-label-duties = Обязанности
+we-not-set = Не указано
+we-deleted = ✅ Запись удалена
+we-btn-edit-company-name = ✏️ Название компании
+we-btn-edit-title = 📋 Должность
+we-btn-edit-period = 📅 Период работы
+we-btn-edit-stack = 🛠 Стек технологий
+we-btn-edit-achievements = 🏆 Достижения
+we-btn-edit-duties = 🔧 Обязанности
+we-btn-delete = 🗑 Удалить
+work-exp-enter-achievements =
+    🏆 <b>{ $company }</b> — достижения
+
+    Опишите ваши реальные достижения (или выберите вариант ниже):
+work-exp-enter-duties =
+    🔧 <b>{ $company }</b> — обязанности
+
+    Опишите ваши рабочие обязанности и задачи (или выберите вариант ниже):
+work-exp-generating = ⏳ Генерирую...
+work-exp-generated-achievements =
+    ✅ Сгенерированные достижения:
+
+    { $text }
+work-exp-generated-duties =
+    ✅ Сгенерированные обязанности:
+
+    { $text }
+work-exp-generation-failed = Не удалось сгенерировать. Введите вручную или пропустите.
 btn-add-company = ➕ Добавить компанию
 btn-remove = Удалить
 btn-skip = ⏭ Пропустить
 btn-continue = ▶️ Продолжить
+btn-generate-ai = 🤖 Сгенерировать с AI
 
 # ── Key phrases styles ──────────────────────────────────
 style-formal = формальный / деловой
@@ -785,6 +826,10 @@ iqa-question-biggest_challenge = Расскажите о самом сложно
 iqa-question-five_year_plan = Где вы видите себя через 5 лет?
 iqa-question-team_conflict = Расскажите о конфликте в команде и как вы его разрешили.
 iqa-question-learning_new_tech = Как вы изучаете новые технологии?
+iqa-generate-select-title = ✨ Выберите вопрос для генерации ответа
+iqa-generate-select-description = Нажмите на вопрос, чтобы сгенерировать ответ с вашим опытом работы. ✅ — уже готов, ❌ — ещё не сгенерирован.
+iqa-btn-generate-pending = ✨ Сгенерировать все оставшиеся ({ $count })
+iqa-no-work-experience = Чтобы генерировать ответы, сначала добавьте опыт работы в профиле.
 
 # ── Vacancy Summary Generator ────────────────────────────────
 vs-list-title = 📄 Мои резюме "О себе"

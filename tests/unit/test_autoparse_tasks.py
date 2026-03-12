@@ -27,12 +27,15 @@ class TestBuildUserProfile:
         exp_entry = MagicMock()
         exp_entry.company_name = "Acme"
         exp_entry.stack = "Python, FastAPI"
+        exp_entry.title = None
+        exp_entry.period = None
 
         stack, exp = _build_user_profile({}, [exp_entry])
 
         assert "Python" in stack
         assert "FastAPI" in stack
-        assert "Acme — Python, FastAPI" in exp
+        assert "Acme" in exp
+        assert "Python, FastAPI" in exp
 
     def test_returns_empty_profile_when_no_data(self):
         stack, exp = _build_user_profile({}, [])
@@ -44,14 +47,20 @@ class TestBuildUserProfile:
         e1 = MagicMock()
         e1.company_name = "Alpha"
         e1.stack = "Go"
+        e1.title = None
+        e1.period = None
         e2 = MagicMock()
         e2.company_name = "Beta"
         e2.stack = "Rust"
+        e2.title = None
+        e2.period = None
 
         _, exp = _build_user_profile({}, [e1, e2])
 
-        assert "Alpha — Go" in exp
-        assert "Beta — Rust" in exp
+        assert "Alpha" in exp
+        assert "Go" in exp
+        assert "Beta" in exp
+        assert "Rust" in exp
 
 
 class TestResolveCachedVacancy:

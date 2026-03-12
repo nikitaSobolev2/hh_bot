@@ -22,6 +22,12 @@ class VacancySummary(Base):
     generated_text: Mapped[str | None] = mapped_column(Text, default=None)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Generation params stored so regenerate can reuse them without re-asking
+    excluded_industries: Mapped[str | None] = mapped_column(Text, default=None)
+    location: Mapped[str | None] = mapped_column(Text, default=None)
+    remote_preference: Mapped[str | None] = mapped_column(Text, default=None)
+    additional_notes: Mapped[str | None] = mapped_column(Text, default=None)
+
     user: Mapped[User] = relationship(back_populates="vacancy_summaries")
 
     def __repr__(self) -> str:

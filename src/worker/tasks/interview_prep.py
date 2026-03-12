@@ -96,11 +96,17 @@ async def _generate_preparation_async(
         experiences = await we_repo.get_active_by_user(interview.user_id)
 
     tech_stack = [e.stack for e in experiences] if experiences else []
-    work_exp_str = (
-        "; ".join(f"{e.company_name} ({e.stack})" for e in experiences)
-        if experiences
-        else "не указан"
-    )
+
+    def _fmt_exp(e) -> str:
+        parts = [e.company_name]
+        if e.title:
+            parts.append(f"— {e.title}")
+        if e.period:
+            parts.append(f"({e.period})")
+        parts.append(f"[{e.stack}]")
+        return " ".join(parts)
+
+    work_exp_str = "; ".join(_fmt_exp(e) for e in experiences) if experiences else "не указан"
 
     prompt = build_preparation_guide_prompt(
         vacancy_title=interview.vacancy_title,

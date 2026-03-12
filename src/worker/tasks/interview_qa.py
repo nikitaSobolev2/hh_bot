@@ -28,8 +28,11 @@ def generate_interview_qa_task(
     chat_id: int,
     message_id: int,
     locale: str = "ru",
+    question_key: str | None = None,
 ) -> dict:
-    return run_async(lambda sf: _generate_qa_async(sf, user_id, chat_id, message_id, locale))
+    return run_async(
+        lambda sf: _generate_qa_async(sf, user_id, chat_id, message_id, locale, question_key)
+    )
 
 
 async def _generate_qa_async(
@@ -38,6 +41,7 @@ async def _generate_qa_async(
     chat_id: int,
     message_id: int,
     locale: str,
+    question_key: str | None = None,
 ) -> dict:
     from src.config import settings
     from src.models.interview_qa import (
@@ -66,14 +70,25 @@ async def _generate_qa_async(
         existing_keys = {q.question_key for q in await qa_repo.get_ai_generated(user_id)}
 
     ai_question_keys = [k for k in BASE_QUESTION_KEYS if k != "why_new_job"]
-    keys_to_generate = [k for k in ai_question_keys if k not in existing_keys]
+
+    if question_key is not None:
+        keys_to_generate = [question_key]
+    else:
+        keys_to_generate = [k for k in ai_question_keys if k not in existing_keys]
 
     if not keys_to_generate:
         await _notify_user(settings.bot_token, chat_id, message_id, locale)
         return {"status": "already_generated"}
 
     experiences = [
-        WorkExperienceEntry(company_name=e.company_name, stack=e.stack)
+        WorkExperienceEntry(
+            company_name=e.company_name,
+            stack=e.stack,
+            title=e.title,
+            period=e.period,
+            achievements=e.achievements,
+            duties=e.duties,
+        )
         for e in work_experiences_raw
     ]
 

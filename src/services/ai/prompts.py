@@ -114,6 +114,27 @@ def build_vacancy_analysis_user_content(
 class WorkExperienceEntry:
     company_name: str
     stack: str
+    title: str | None = None
+    period: str | None = None
+    achievements: str | None = None
+    duties: str | None = None
+
+
+def _format_experience_entry(index: int, e: WorkExperienceEntry) -> str:
+    """Format a single work experience entry with all available context."""
+    parts = []
+    header = f"{e.company_name}"
+    if e.title:
+        header += f" ({e.title})"
+    if e.period:
+        header += f", {e.period}"
+    parts.append(f"  {index + 1}. {header}")
+    parts.append(f"     Стек: {e.stack}")
+    if e.achievements:
+        parts.append(f"     Достижения: {e.achievements}")
+    if e.duties:
+        parts.append(f"     Обязанности: {e.duties}")
+    return "\n".join(parts)
 
 
 def _quality_rules() -> str:
@@ -369,9 +390,7 @@ def build_standard_qa_user_content(
     question_texts: list[str],
 ) -> str:
     """Return the user message for standard Q&A generation."""
-    exp_block = "\n".join(
-        f"  {i + 1}. {e.company_name} — {e.stack}" for i, e in enumerate(work_experiences)
-    )
+    exp_block = "\n".join(_format_experience_entry(i, e) for i, e in enumerate(work_experiences))
     questions_block = "\n".join(
         f"  {key}: {text}" for key, text in zip(question_keys, question_texts, strict=True)
     )
@@ -419,9 +438,7 @@ def build_vacancy_summary_user_content(
     additional_notes: str | None,
 ) -> str:
     """Return the user message for vacancy summary generation."""
-    exp_block = "\n".join(
-        f"  {i + 1}. {e.company_name} — {e.stack}" for i, e in enumerate(work_experiences)
-    )
+    exp_block = "\n".join(_format_experience_entry(i, e) for i, e in enumerate(work_experiences))
     stack_str = ", ".join(tech_stack) if tech_stack else "не указан"
     parts = [
         f"[ОПЫТ РАБОТЫ]\n{exp_block}",
@@ -540,7 +557,7 @@ def build_per_company_key_phrases_prompt(
     secondary_joined = ", ".join(secondary_keywords)
 
     companies_block = "\n".join(
-        f"  {idx}. {e.company_name} — стек: {e.stack}" for idx, e in enumerate(work_experiences, 1)
+        _format_experience_entry(idx, e) for idx, e in enumerate(work_experiences)
     )
 
     return (
@@ -564,4 +581,53 @@ def build_per_company_key_phrases_prompt(
         f"- пункт 2\n\n"
         f"{_quality_rules()}\n"
         f"{_format_rules(style, language)}"
+    )
+
+
+def build_work_experience_achievements_prompt(
+    company_name: str,
+    stack: str,
+    title: str | None = None,
+    period: str | None = None,
+) -> str:
+    """Return a prompt to generate 3-4 professional achievements for a work experience entry."""
+    role_info = f"«{company_name}»"
+    if title:
+        role_info += f" на должности «{title}»"
+    if period:
+        role_info += f" ({period})"
+    return (
+        f"Ты — карьерный консультант. Сгенерируй 3–4 конкретных профессиональных достижения "
+        f"для специалиста, который работал в компании {role_info} со стеком: {stack}.\n\n"
+        f"[ПРАВИЛА]\n"
+        f"1. Используй формат «глагол + результат + измеримый эффект» (например: "
+        f"«Оптимизировал запросы к БД, сократив время отклика с 3с до 0.3с»).\n"
+        f"2. Пиши конкретно и реалистично, без выдуманных цифр — "
+        f"используй фразы вроде «значительно», «в несколько раз».\n"
+        f"3. Избегай общих фраз: «улучшил процессы», «повысил эффективность».\n"
+        f"4. Каждое достижение — отдельная строка, начинающаяся с «- ».\n"
+        f"5. Только список достижений, без вступлений и пояснений."
+    )
+
+
+def build_work_experience_duties_prompt(
+    company_name: str,
+    stack: str,
+    title: str | None = None,
+    period: str | None = None,
+) -> str:
+    """Return a prompt to generate 3-5 professional duties for a work experience entry."""
+    role_info = f"«{company_name}»"
+    if title:
+        role_info += f" на должности «{title}»"
+    if period:
+        role_info += f" ({period})"
+    return (
+        f"Ты — карьерный консультант. Сгенерируй 3–5 типичных рабочих обязанностей "
+        f"для специалиста, который работал в компании {role_info} со стеком: {stack}.\n\n"
+        f"[ПРАВИЛА]\n"
+        f"1. Используй глаголы несовершенного вида (разрабатывал, поддерживал, оптимизировал).\n"
+        f"2. Описывай реальные задачи, характерные для данного стека технологий.\n"
+        f"3. Каждая обязанность — отдельная строка, начинающаяся с «- ».\n"
+        f"4. Только список обязанностей, без вступлений и пояснений."
     )

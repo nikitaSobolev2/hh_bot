@@ -147,7 +147,14 @@ def _build_prompt(
 
     if mode == "w" and work_experiences:
         entries = [
-            WorkExperienceEntry(company_name=we["company_name"], stack=we["stack"])
+            WorkExperienceEntry(
+                company_name=we["company_name"],
+                stack=we["stack"],
+                title=we.get("title"),
+                period=we.get("period"),
+                achievements=we.get("achievements"),
+                duties=we.get("duties"),
+            )
             for we in work_experiences
         ]
         return build_per_company_key_phrases_prompt(
@@ -179,7 +186,17 @@ async def _load_work_experiences(
     async with session_factory() as session:
         repo = WorkExperienceRepository(session)
         entries = await repo.get_active_by_user(user_id)
-        return [{"company_name": e.company_name, "stack": e.stack} for e in entries]
+        return [
+            {
+                "company_name": e.company_name,
+                "stack": e.stack,
+                "title": e.title,
+                "period": e.period,
+                "achievements": e.achievements,
+                "duties": e.duties,
+            }
+            for e in entries
+        ]
 
 
 async def _generate_key_phrases_async(

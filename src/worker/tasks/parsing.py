@@ -391,7 +391,16 @@ async def _fetch_user_tech_profile(
             kw.strip() for exp in experiences for kw in exp.stack.split(",") if kw.strip()
         ]
 
-    work_exp_text = "; ".join(f"{exp.company_name}: {exp.stack}" for exp in experiences)
+    def _fmt_parsing_exp(exp) -> str:
+        parts = [exp.company_name]
+        if exp.title:
+            parts.append(f"— {exp.title}")
+        if exp.period:
+            parts.append(f"({exp.period})")
+        parts.append(f"[{exp.stack}]")
+        return " ".join(parts)
+
+    work_exp_text = "; ".join(_fmt_parsing_exp(exp) for exp in experiences)
     return tech_stack, work_exp_text
 
 

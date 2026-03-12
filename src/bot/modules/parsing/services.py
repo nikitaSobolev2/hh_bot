@@ -196,9 +196,22 @@ async def add_work_experience(
     user_id: int,
     company_name: str,
     stack: str,
+    *,
+    title: str | None = None,
+    period: str | None = None,
+    achievements: str | None = None,
+    duties: str | None = None,
 ) -> UserWorkExperience:
     repo = WorkExperienceRepository(session)
-    experience = await repo.create(user_id=user_id, company_name=company_name, stack=stack)
+    experience = await repo.create(
+        user_id=user_id,
+        company_name=company_name,
+        stack=stack,
+        title=title,
+        period=period,
+        achievements=achievements,
+        duties=duties,
+    )
     await session.commit()
     return experience
 

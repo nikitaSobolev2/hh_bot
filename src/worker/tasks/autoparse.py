@@ -100,11 +100,16 @@ def _build_user_profile(
     else:
         user_stack = []
 
-    user_exp = (
-        "\n".join(f"{e.company_name} — {e.stack}" for e in work_experiences)
-        if work_experiences
-        else ""
-    )
+    def _format_exp_line(e) -> str:
+        parts = [e.company_name]
+        if e.title:
+            parts.append(f"({e.title})")
+        if e.period:
+            parts.append(f"[{e.period}]")
+        parts.append(f"— {e.stack}")
+        return " ".join(parts)
+
+    user_exp = "\n".join(_format_exp_line(e) for e in work_experiences) if work_experiences else ""
     return user_stack, user_exp
 
 

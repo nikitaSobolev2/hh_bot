@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.modules.interview_qa.callbacks import InterviewQACallback
-from src.models.interview_qa import WHY_NEW_JOB_REASONS
+from src.models.interview_qa import BASE_QUESTION_KEYS, WHY_NEW_JOB_REASONS
 
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
@@ -76,6 +76,49 @@ def why_new_job_reasons_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         ]
         for reason in WHY_NEW_JOB_REASONS
     ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=InterviewQACallback(action="list").pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def generate_select_keyboard(
+    generated_keys: set[str],
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    ai_keys = [k for k in BASE_QUESTION_KEYS if k != "why_new_job"]
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for key in ai_keys:
+        status = "✅" if key in generated_keys else "❌"
+        question_text = i18n.get(f"iqa-question-{key}")
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{status} {question_text[:45]}",
+                    callback_data=InterviewQACallback(
+                        action="generate_one", question_key=key
+                    ).pack(),
+                )
+            ]
+        )
+
+    pending_count = sum(1 for k in ai_keys if k not in generated_keys)
+    if pending_count > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("iqa-btn-generate-pending", count=pending_count),
+                    callback_data=InterviewQACallback(action="generate_pending").pack(),
+                )
+            ]
+        )
+
     rows.append(
         [
             InlineKeyboardButton(

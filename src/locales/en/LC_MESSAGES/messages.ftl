@@ -247,12 +247,53 @@ work-exp-enter-stack =
     Enter the tech stack for <b>{ $company }</b>
     (comma-separated, e.g. Python, Django, PostgreSQL):
 work-exp-name-invalid = Company name cannot be empty (max 255 characters).
+work-exp-title-invalid = Job title cannot exceed 255 characters.
 work-exp-stack-invalid = Tech stack cannot be empty.
 work-exp-max-reached = Maximum 6 companies. Remove one to add another.
+work-exp-not-found = Work experience entry not found.
+work-exp-enter-title =
+    Enter your job title at this company
+    (e.g. Backend Developer, Senior Engineer) or skip:
+work-exp-enter-period =
+    Enter your work period
+    (e.g. 2020-2023, 3 years) or skip:
+work-exp-enter-achievements-edit = Enter new achievements (or choose an option below):
+work-exp-enter-duties-edit = Enter new duties (or choose an option below):
+we-edit-enter-stack = Enter new tech stack (comma-separated):
+we-label-achievements = Achievements
+we-label-duties = Duties
+we-not-set = Not set
+we-deleted = ✅ Entry deleted
+we-btn-edit-company-name = ✏️ Company name
+we-btn-edit-title = 📋 Job title
+we-btn-edit-period = 📅 Work period
+we-btn-edit-stack = 🛠 Tech stack
+we-btn-edit-achievements = 🏆 Achievements
+we-btn-edit-duties = 🔧 Duties
+we-btn-delete = 🗑 Delete
+work-exp-enter-achievements =
+    🏆 <b>{ $company }</b> — achievements
+
+    Describe your real achievements (or choose an option below):
+work-exp-enter-duties =
+    🔧 <b>{ $company }</b> — duties
+
+    Describe your job duties and responsibilities (or choose an option below):
+work-exp-generating = ⏳ Generating...
+work-exp-generated-achievements =
+    ✅ Generated achievements:
+
+    { $text }
+work-exp-generated-duties =
+    ✅ Generated duties:
+
+    { $text }
+work-exp-generation-failed = Generation failed. Please type manually or skip.
 btn-add-company = ➕ Add Company
 btn-remove = Remove
 btn-skip = ⏭ Skip
 btn-continue = ▶️ Continue
+btn-generate-ai = 🤖 Generate with AI
 
 # ── Key phrases styles ──────────────────────────────────
 style-formal = formal / business
@@ -784,6 +825,10 @@ iqa-question-biggest_challenge = Tell me about the most challenging project or t
 iqa-question-five_year_plan = Where do you see yourself in 5 years?
 iqa-question-team_conflict = Tell me about a team conflict and how you resolved it.
 iqa-question-learning_new_tech = How do you learn new technologies?
+iqa-generate-select-title = ✨ Select a question to generate an answer
+iqa-generate-select-description = Tap a question to generate an answer using your work experience. ✅ = ready, ❌ = not yet generated.
+iqa-btn-generate-pending = ✨ Generate all remaining ({ $count })
+iqa-no-work-experience = Please add work experience in your profile before generating answers.
 
 # ── Vacancy Summary Generator ────────────────────────────────
 vs-list-title = 📄 My About-Me Summaries

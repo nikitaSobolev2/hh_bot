@@ -23,15 +23,21 @@ def work_experience_keyboard(
     show_continue: bool = False,
     show_skip: bool = False,
 ) -> InlineKeyboardMarkup:
+    """List view — each job is a clickable button leading to the detail view."""
     rows: list[list[InlineKeyboardButton]] = []
 
     for exp in experiences:
+        label = f"🏢 {exp.company_name}"
+        if exp.title:
+            label += f" — {exp.title}"
+        if exp.period:
+            label += f" ({exp.period})"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"\u274c {i18n.get('btn-remove')} {exp.company_name}",
+                    text=label,
                     callback_data=WorkExpCallback(
-                        action="remove",
+                        action="detail",
                         work_exp_id=exp.id,
                         return_to=return_to,
                     ).pack(),
@@ -93,6 +99,55 @@ def work_experience_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def work_exp_detail_keyboard(
+    work_exp_id: int,
+    return_to: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Detail view — buttons to edit each field and delete."""
+
+    def _edit_btn(label: str, field: str) -> InlineKeyboardButton:
+        return InlineKeyboardButton(
+            text=label,
+            callback_data=WorkExpCallback(
+                action="edit_field",
+                work_exp_id=work_exp_id,
+                return_to=return_to,
+                field=field,
+            ).pack(),
+        )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_edit_btn(i18n.get("we-btn-edit-company-name"), "company_name")],
+            [_edit_btn(i18n.get("we-btn-edit-title"), "title")],
+            [_edit_btn(i18n.get("we-btn-edit-period"), "period")],
+            [_edit_btn(i18n.get("we-btn-edit-stack"), "stack")],
+            [_edit_btn(i18n.get("we-btn-edit-achievements"), "achievements")],
+            [_edit_btn(i18n.get("we-btn-edit-duties"), "duties")],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("we-btn-delete"),
+                    callback_data=WorkExpCallback(
+                        action="delete",
+                        work_exp_id=work_exp_id,
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=WorkExpCallback(
+                        action="view",
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
 def cancel_add_keyboard(return_to: str, i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -101,6 +156,100 @@ def cancel_add_keyboard(return_to: str, i18n: I18nContext) -> InlineKeyboardMark
                     text=i18n.get("btn-cancel"),
                     callback_data=WorkExpCallback(
                         action="cancel_add",
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ]
+        ]
+    )
+
+
+def work_exp_optional_keyboard(
+    return_to: str,
+    field: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Skip + Cancel keyboard for optional creation steps (title, period)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-skip"),
+                    callback_data=WorkExpCallback(
+                        action="skip_field",
+                        return_to=return_to,
+                        field=field,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=WorkExpCallback(
+                        action="cancel_add",
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
+def work_exp_ai_input_keyboard(
+    return_to: str,
+    field: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Generate with AI + Skip + Cancel keyboard for achievements/duties steps."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-generate-ai"),
+                    callback_data=WorkExpCallback(
+                        action="generate_ai",
+                        return_to=return_to,
+                        field=field,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-skip"),
+                    callback_data=WorkExpCallback(
+                        action="skip_field",
+                        return_to=return_to,
+                        field=field,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=WorkExpCallback(
+                        action="cancel_add",
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
+def cancel_edit_keyboard(
+    work_exp_id: int,
+    return_to: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Cancel button during field editing — returns to detail view."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=WorkExpCallback(
+                        action="detail",
+                        work_exp_id=work_exp_id,
                         return_to=return_to,
                     ).pack(),
                 )

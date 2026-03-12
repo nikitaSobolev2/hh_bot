@@ -16,8 +16,12 @@ class UserWorkExperience(Base):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255), default=None)
+    period: Mapped[str | None] = mapped_column(String(100), default=None)
     stack: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    achievements: Mapped[str | None] = mapped_column(Text, default=None)
+    duties: Mapped[str | None] = mapped_column(Text, default=None)
 
     user: Mapped[User] = relationship(back_populates="work_experiences")
 

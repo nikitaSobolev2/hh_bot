@@ -14,8 +14,21 @@ class VacancySummaryRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(self, user_id: int) -> VacancySummary:
-        summary = VacancySummary(user_id=user_id)
+    async def create(
+        self,
+        user_id: int,
+        excluded_industries: str | None = None,
+        location: str | None = None,
+        remote_preference: str | None = None,
+        additional_notes: str | None = None,
+    ) -> VacancySummary:
+        summary = VacancySummary(
+            user_id=user_id,
+            excluded_industries=excluded_industries,
+            location=location,
+            remote_preference=remote_preference,
+            additional_notes=additional_notes,
+        )
         self._session.add(summary)
         await self._session.flush()
         return summary
