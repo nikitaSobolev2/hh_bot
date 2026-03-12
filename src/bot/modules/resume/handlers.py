@@ -77,8 +77,7 @@ async def handle_step2_keyphrases(
     i18n: I18nContext,
 ) -> None:
     from src.bot.modules.parsing import services as we_service
-    from src.bot.modules.parsing.services import get_key_phrases_context_from_user
-    from src.worker.tasks.ai import generate_key_phrases_task
+    from src.worker.tasks.work_experience import generate_resume_key_phrases_task
 
     experiences = await we_service.get_active_work_experiences(session, user.id)
     if not experiences:
@@ -90,7 +89,6 @@ async def handle_step2_keyphrases(
         await callback.answer()
         return
 
-    context = await get_key_phrases_context_from_user(session, user)
     wait_msg = await callback.message.edit_text(
         i18n.get("res-generating-keyphrases"),
         reply_markup=resume_cancel_keyboard(i18n),
@@ -98,13 +96,11 @@ async def handle_step2_keyphrases(
 
     await state.update_data(res_chat_id=callback.message.chat.id)
 
-    generate_key_phrases_task.delay(
+    generate_resume_key_phrases_task.delay(
         user_id=user.id,
         chat_id=callback.message.chat.id,
-        company_id=None,
-        context=context,
-        telegram_message_id=wait_msg.message_id if wait_msg else None,
-        resume_mode=True,
+        message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
+        locale=user.language_code or "ru",
     )
     await callback.answer()
 

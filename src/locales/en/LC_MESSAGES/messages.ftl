@@ -878,6 +878,7 @@ res-step2-keyphrases = 🧠 <b>Step 2: Key Phrases</b>
 
     Click to generate key phrases, or skip this step.
 res-generating-keyphrases = ⏳ Generating key phrases...
+res-keyphrases-ready = ✅ Key phrases for your resume:
 res-step3-summary = 📄 <b>Step 3: About-Me Summary</b>
 
     Create or select an existing about-me text for your resume.
