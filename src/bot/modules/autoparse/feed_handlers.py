@@ -24,7 +24,10 @@ def feed_vacancy_keyboard(
     vacancy_id: int,
     vacancy_url: str,
     i18n: I18nContext,
+    mode: str = "summary",
 ) -> InlineKeyboardMarkup:
+    next_mode = "description" if mode == "summary" else "summary"
+    toggle_key = "feed-btn-show-description" if mode == "summary" else "feed-btn-show-summary"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -35,13 +38,24 @@ def feed_vacancy_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text=i18n.get("feed-btn-like"),
+                    text=i18n.get(toggle_key),
+                    callback_data=FeedCallback(
+                        action="toggle_view",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                        mode=next_mode,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("feed-btn-fits-me"),
                     callback_data=FeedCallback(
                         action="like", session_id=session_id, vacancy_id=vacancy_id
                     ).pack(),
                 ),
                 InlineKeyboardButton(
-                    text=i18n.get("feed-btn-dislike"),
+                    text=i18n.get("feed-btn-not-fit"),
                     callback_data=FeedCallback(
                         action="dislike", session_id=session_id, vacancy_id=vacancy_id
                     ).pack(),
@@ -82,6 +96,37 @@ def feed_start_keyboard(session_id: int, i18n: I18nContext) -> InlineKeyboardMar
             ],
         ]
     )
+
+
+@router.callback_query(FeedCallback.filter(F.action == "toggle_view"))
+async def handle_feed_toggle_view(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed:
+        await callback.answer()
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    total = len(feed_session.vacancy_ids)
+    mode = callback_data.mode
+    text = feed_services.build_vacancy_card(
+        vacancy, feed_session.current_index, total, i18n.locale, mode
+    )
+    keyboard = feed_vacancy_keyboard(feed_session.id, vacancy.id, vacancy.url, i18n, mode)
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
 
 
 @router.callback_query(FeedCallback.filter(F.action == "start"))

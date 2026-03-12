@@ -12,6 +12,19 @@ btn-settings = ⚙️ Settings
 btn-admin = 🛠 Admin Panel
 btn-back = ◀️ Back
 btn-back-menu = ◀️ Back to Menu
+btn-my-interviews = 🎤 My Interviews
+btn-autoparse = 🤖 Auto Parse
+btn-work-experience = 💼 Work Experience
+btn-achievements = 🏆 Achievements
+btn-interview-qa = 💬 Interview Q&A
+btn-vacancy-summary = 📄 About Me Summary
+btn-resume = 📋 Resume Generator
+btn-support-user = 🆘 Support
+btn-skip = ⏩ Skip
+btn-continue = ▶️ Continue
+btn-cancel = ✖️ Cancel
+btn-add-company = ➕ Add Company
+btn-remove = ❌ Remove
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Profile</b>
@@ -704,3 +717,145 @@ progress-completed-title = ✅ All tasks completed!
 progress-bar-scraping = 🌐 Scraping
 progress-bar-keywords = 🧠 Keywords
 progress-bar-ai = 🧠 AI Analysis
+
+# ── Work Experience (shared module) ──────────────────────────
+work-exp-title = 💼 Work Experience
+
+# ── Feed buttons (F1, F2) ─────────────────────────────────────
+feed-btn-fits-me = ✅ Fits me
+feed-btn-not-fit = ❌ Does not fit
+feed-btn-show-description = 📄 Show full description
+feed-btn-show-summary = 📝 Show summary
+
+# ── Achievement Generator ─────────────────────────────────────
+ach-list-title = 🏆 My Achievements
+ach-list-empty = No achievement generations yet. Press the button below to create your first!
+ach-btn-generate-new = ✨ Generate Achievements
+ach-companies-count = companies
+ach-detail-title = 🏆 Achievements
+ach-no-generated-text = Text is still being generated...
+ach-enter-achievements = 📝 Company <b>{ $company }</b> ({ $current } of { $total })
+
+    Describe your real achievements at this company (or press Skip):
+ach-enter-responsibilities = 🔧 Company <b>{ $company }</b> ({ $current } of { $total })
+
+    Describe your responsibilities and tasks (or press Skip):
+ach-proceed-title = 📋 Confirmation
+ach-has-achievements = achievements ✓
+ach-has-responsibilities = responsibilities ✓
+ach-no-input = no data
+ach-btn-proceed = 🚀 Generate Achievements
+ach-btn-delete = 🗑 Remove from List
+ach-generating = ⏳ Generating achievements... This may take a few minutes.
+ach-generation-completed = ✅ Achievements successfully generated!
+ach-btn-view-result = 🏆 View Result
+ach-not-found = Generation not found.
+ach-deleted = Removed from list.
+
+# ── Interview Q&A Generator ───────────────────────────────────
+iqa-list-title = 💬 Interview Q&A
+iqa-list-description = Here you'll find prepared answers to common interview questions.
+iqa-btn-why-new-job = ❓ Why are you looking for a new job?
+iqa-btn-generate-all = ✨ Generate Answers (AI)
+iqa-btn-view = 💬 View Answers
+iqa-btn-regenerate = 🔄 Regenerate
+iqa-generating = ⏳ Generating answers... Please wait.
+iqa-generation-completed = ✅ Interview answers are ready!
+iqa-why-new-job-title = ❓ Why are you looking for a new job?
+iqa-why-new-job-hint = Select your main reason:
+iqa-reason-label = Reason
+iqa-reason-salary = 💰 Salary wasn't growing
+iqa-reason-bored = 😴 No new challenges
+iqa-reason-relationship = 😤 Team conflicts
+iqa-reason-growth = 📈 No career growth
+iqa-reason-relocation = 🌍 Relocation
+iqa-reason-other = 🔄 Other reason
+iqa-why-answer-salary = I value honest conversation — the main reason is that my compensation didn't match market rates and wasn't growing in line with my development. I don't put money first, but fair compensation is important for a long-term working relationship.
+iqa-why-answer-bored = I greatly value professional growth. After achieving the main goals at my previous role, I felt it was time to move on and find new challenging tasks that would help me develop further.
+iqa-why-answer-relationship = Every organization has situations where views differ. We had professional disagreements with management. I believe it's more productive to find an environment where my approaches are shared.
+iqa-why-answer-growth = Career trajectory is important to me. Unfortunately, at my previous role the growth opportunities were limited, so I made a deliberate decision to move to a place where I can realize more of my potential.
+iqa-why-answer-relocation = I'm relocating, so I'm looking for a position that fits my new geography.
+iqa-why-answer-other = I decided to take a pause to reassess my career path, and I'm now actively looking for an opportunity that aligns with my professional goals.
+iqa-no-answer = Answer not yet generated.
+iqa-not-found = Question not found.
+iqa-question-best_achievement = What are you most proud of at your previous job?
+iqa-question-worst_achievement = What do you consider your biggest professional failure?
+iqa-question-biggest_challenge = Tell me about the most challenging project or task.
+iqa-question-five_year_plan = Where do you see yourself in 5 years?
+iqa-question-team_conflict = Tell me about a team conflict and how you resolved it.
+iqa-question-learning_new_tech = How do you learn new technologies?
+
+# ── Vacancy Summary Generator ────────────────────────────────
+vs-list-title = 📄 My About-Me Summaries
+vs-list-empty = No summaries yet. Press below to create your first!
+vs-btn-generate-new = ✨ Create New
+vs-btn-regenerate = 🔄 Regenerate
+vs-btn-delete = 🗑 Delete
+vs-btn-view = 📄 View
+vs-enter-excluded-industries = 🚫 Which industries/companies do you <b>NOT</b> want to consider?
+
+    List them separated by commas (e.g. gambling, loans) or press Skip:
+vs-enter-location = 📍 Enter your city/country:
+vs-enter-remote = 🏠 Your preferred work format:
+
+    (remote / office / hybrid / open to relocation)
+vs-enter-additional = 📝 Anything else to add? (or Skip):
+vs-generating = ⏳ Generating your about-me summary...
+vs-generation-completed = ✅ About-me summary is ready!
+vs-not-found = Summary not found.
+vs-deleted = Deleted.
+
+# ── Resume Generator ──────────────────────────────────────────
+res-welcome = 📋 <b>Resume Generator</b>
+
+    This tool helps you build a complete resume in a few steps:
+    1. Edit your work experience
+    2. Generate key phrases
+    3. Create an about-me summary
+    4. Get your complete resume
+res-btn-start = 🚀 Start
+res-btn-generate-keyphrases = 🧠 Generate Key Phrases
+res-btn-create-autoparser = 🤖 Create Auto Parser
+res-step2-keyphrases = 🧠 <b>Step 2: Key Phrases</b>
+
+    Click to generate key phrases, or skip this step.
+res-generating-keyphrases = ⏳ Generating key phrases...
+res-step3-summary = 📄 <b>Step 3: About-Me Summary</b>
+
+    Create or select an existing about-me text for your resume.
+res-result-title = 📋 Your Resume
+res-work-experiences = 💼 Work Experience
+res-about-me = 📄 About Me
+res-no-experiences = Please add work experience to generate a resume.
+res-cancelled = Resume generation cancelled.
+
+# ── Interview Preparation ─────────────────────────────────────
+btn-iv-source-plain = 📝 Just save the vacancy
+btn-iv-add-results = ➕ Add Results
+btn-iv-prepare-me = 🎯 Prepare Me
+iv-plain-title = Vacancy
+iv-plain-created = ✅ Vacancy saved. You can now start preparation or add interview results.
+prep-generating = ⏳ Generating preparation guide...
+prep-generating-deep = ⏳ Generating deep learning summary...
+prep-generating-test = ⏳ Generating test...
+prep-guide-completed = ✅ Preparation guide is ready!
+prep-deep-completed = ✅ Deep learning summary is ready!
+prep-test-ready = ✅ Test is ready! Press to start.
+prep-steps-title = 🎯 Preparation Steps
+prep-steps-description = Select a step to study:
+prep-step-not-found = Step not found.
+prep-btn-skip = ⏩ Skip
+prep-btn-continue = 📖 Study Deeper
+prep-btn-view-steps = 📋 View Steps
+prep-btn-view-deep = 📚 Deep Learning
+prep-btn-start-test = 🧪 Take Test
+prep-btn-create-test = 🧪 Create Test
+prep-deep-title = 📚 Deep Learning
+prep-deep-not-ready = Deep learning summary not ready yet.
+prep-test-not-ready = Test not ready yet.
+prep-test-done = Test completed.
+prep-test-question = Question
+prep-test-correct = ✅ Correct!
+prep-test-wrong = ❌ Wrong.
+prep-test-right-answer = Correct answer
+prep-test-results = Score

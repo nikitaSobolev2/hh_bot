@@ -8,7 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.models.interview import Interview, InterviewImprovement, InterviewQuestion
+from src.models.interview import (
+    Interview,
+    InterviewImprovement,
+    InterviewPreparationStep,
+    InterviewPreparationTest,
+    InterviewQuestion,
+)
 from src.repositories.base import BaseRepository
 
 _PAGE_SIZE = 5
@@ -55,6 +61,7 @@ class InterviewRepository(BaseRepository[Interview]):
             .options(
                 selectinload(Interview.questions),
                 selectinload(Interview.improvements),
+                selectinload(Interview.preparation_steps),
             )
         )
         result = await self._session.execute(stmt)
@@ -96,6 +103,59 @@ class InterviewQuestionRepository(BaseRepository[InterviewQuestion]):
             created.append(instance)
         await self._session.flush()
         return created
+
+
+class InterviewPreparationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_steps_for_interview(self, interview_id: int) -> list[InterviewPreparationStep]:
+        result = await self._session.execute(
+            select(InterviewPreparationStep)
+            .where(
+                InterviewPreparationStep.interview_id == interview_id,
+                InterviewPreparationStep.is_deleted.is_(False),
+            )
+            .order_by(InterviewPreparationStep.step_number)
+        )
+        return list(result.scalars().all())
+
+    async def get_step_by_id(self, step_id: int) -> InterviewPreparationStep | None:
+        from sqlalchemy.orm import joinedload
+
+        result = await self._session.execute(
+            select(InterviewPreparationStep)
+            .where(InterviewPreparationStep.id == step_id)
+            .options(
+                joinedload(InterviewPreparationStep.interview),
+                joinedload(InterviewPreparationStep.test),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update_step_status(self, step_id: int, status: str) -> None:
+        step = await self.get_step_by_id(step_id)
+        if step:
+            step.status = status
+            await self._session.flush()
+
+    async def update_step_deep_summary(self, step_id: int, deep_summary: str) -> None:
+        step = await self.get_step_by_id(step_id)
+        if step:
+            step.deep_summary = deep_summary
+            await self._session.flush()
+
+    async def get_test_by_step(self, step_id: int) -> InterviewPreparationTest | None:
+        result = await self._session.execute(
+            select(InterviewPreparationTest).where(InterviewPreparationTest.step_id == step_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def save_test_answers(self, step_id: int, answers: dict) -> None:
+        test = await self.get_test_by_step(step_id)
+        if test:
+            test.user_answers_json = answers
+            await self._session.flush()
 
 
 class InterviewImprovementRepository(BaseRepository[InterviewImprovement]):

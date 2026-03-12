@@ -12,6 +12,19 @@ btn-settings = ⚙️ Настройки
 btn-admin = 🛠 Админ панель
 btn-back = ◀️ Назад
 btn-back-menu = ◀️ В меню
+btn-my-interviews = 🎤 Мои собеседования
+btn-autoparse = 🤖 Автопарсинг
+btn-work-experience = 💼 Опыт работы
+btn-achievements = 🏆 Достижения
+btn-interview-qa = 💬 Вопросы собеседования
+btn-vacancy-summary = 📄 Резюме "О себе"
+btn-resume = 📋 Генератор резюме
+btn-support-user = 🆘 Поддержка
+btn-skip = ⏩ Пропустить
+btn-continue = ▶️ Продолжить
+btn-cancel = ✖️ Отмена
+btn-add-company = ➕ Добавить компанию
+btn-remove = ❌ Удалить
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Профиль</b>
@@ -705,3 +718,145 @@ progress-completed-title = ✅ Все задачи выполнены!
 progress-bar-scraping = 🌐 Парсинг
 progress-bar-keywords = 🧠 Ключевые слова
 progress-bar-ai = 🧠 AI-совместимость
+
+# ── Work Experience (shared module) ──────────────────────────
+work-exp-title = 💼 Опыт работы
+
+# ── Feed buttons (F1, F2) ─────────────────────────────────────
+feed-btn-fits-me = ✅ Подходит
+feed-btn-not-fit = ❌ Не подходит
+feed-btn-show-description = 📄 Показать описание
+feed-btn-show-summary = 📝 Показать краткое
+
+# ── Achievement Generator ─────────────────────────────────────
+ach-list-title = 🏆 Мои достижения
+ach-list-empty = У вас пока нет сгенерированных достижений. Нажмите кнопку ниже, чтобы создать первые!
+ach-btn-generate-new = ✨ Сгенерировать достижения
+ach-companies-count = компаний
+ach-detail-title = 🏆 Достижения
+ach-no-generated-text = Текст ещё генерируется...
+ach-enter-achievements = 📝 Компания <b>{ $company }</b> ({ $current } из { $total })
+
+    Опишите ваши реальные достижения в этой компании (или нажмите Пропустить):
+ach-enter-responsibilities = 🔧 Компания <b>{ $company }</b> ({ $current } из { $total })
+
+    Опишите ваши обязанности и задачи (или нажмите Пропустить):
+ach-proceed-title = 📋 Подтверждение
+ach-has-achievements = достижения ✓
+ach-has-responsibilities = обязанности ✓
+ach-no-input = без данных
+ach-btn-proceed = 🚀 Генерировать достижения
+ach-btn-delete = 🗑 Удалить из списка
+ach-generating = ⏳ Генерирую достижения... Это может занять несколько минут.
+ach-generation-completed = ✅ Достижения успешно сгенерированы!
+ach-btn-view-result = 🏆 Посмотреть результат
+ach-not-found = Генерация не найдена.
+ach-deleted = Удалено из списка.
+
+# ── Interview Q&A Generator ───────────────────────────────────
+iqa-list-title = 💬 Вопросы к собеседованию
+iqa-list-description = Здесь вы найдёте подготовленные ответы на стандартные вопросы работодателей.
+iqa-btn-why-new-job = ❓ Почему ищете новую работу?
+iqa-btn-generate-all = ✨ Сгенерировать ответы (AI)
+iqa-btn-view = 💬 Посмотреть ответы
+iqa-btn-regenerate = 🔄 Перегенерировать
+iqa-generating = ⏳ Генерирую ответы... Подождите немного.
+iqa-generation-completed = ✅ Ответы на вопросы готовы!
+iqa-why-new-job-title = ❓ Почему вы ищете новую работу?
+iqa-why-new-job-hint = Выберите вашу основную причину:
+iqa-reason-label = Причина
+iqa-reason-salary = 💰 Зарплата не росла
+iqa-reason-bored = 😴 Не было новых задач
+iqa-reason-relationship = 😤 Конфликты в коллективе
+iqa-reason-growth = 📈 Нет карьерного роста
+iqa-reason-relocation = 🌍 Переезд / смена локации
+iqa-reason-other = 🔄 Другая причина
+iqa-why-answer-salary = Я ценю честный разговор — основная причина в том, что мой доход не соответствовал рыночному уровню и не рос пропорционально моему развитию. Я не ставлю деньги на первое место, но считаю, что справедливая компенсация важна для долгосрочного сотрудничества.
+iqa-why-answer-bored = Я очень ценю профессиональный рост. После того как я реализовал основные цели на прежнем месте, почувствовал, что пора двигаться дальше — искать новые сложные задачи, которые позволят мне развиваться.
+iqa-why-answer-relationship = В каждой организации бывают ситуации, когда взгляды расходятся. У нас возникли разногласия в профессиональных вопросах с руководством. Я убеждён, что продуктивнее найти среду, где мои подходы разделяют.
+iqa-why-answer-growth = Мне важна траектория развития. К сожалению, на прежнем месте возможности для роста были ограничены, и я принял осознанное решение двигаться туда, где смогу реализовать больший потенциал.
+iqa-why-answer-relocation = Я переезжаю / меняю город проживания, поэтому ищу позицию, которая соответствует новой географии моей жизни.
+iqa-why-answer-other = Я решил взять паузу для переосмысления своего карьерного пути и сейчас нахожусь в активном поиске возможности, которая совпадёт с моими профессиональными целями.
+iqa-no-answer = Ответ ещё не сгенерирован.
+iqa-not-found = Вопрос не найден.
+iqa-question-best_achievement = Чем вы больше всего гордитесь на предыдущей работе?
+iqa-question-worst_achievement = Что вы считаете своей наибольшей профессиональной неудачей?
+iqa-question-biggest_challenge = Расскажите о самом сложном проекте или задаче.
+iqa-question-five_year_plan = Где вы видите себя через 5 лет?
+iqa-question-team_conflict = Расскажите о конфликте в команде и как вы его разрешили.
+iqa-question-learning_new_tech = Как вы изучаете новые технологии?
+
+# ── Vacancy Summary Generator ────────────────────────────────
+vs-list-title = 📄 Мои резюме "О себе"
+vs-list-empty = У вас пока нет сгенерированных текстов. Нажмите ниже, чтобы создать первый!
+vs-btn-generate-new = ✨ Создать новый
+vs-btn-regenerate = 🔄 Перегенерировать
+vs-btn-delete = 🗑 Удалить
+vs-btn-view = 📄 Посмотреть
+vs-enter-excluded-industries = 🚫 Какие сферы/компании <b>НЕ</b> хотите рассматривать?
+
+    Напишите через запятую (например: казино, ставки, микрозаймы) или нажмите Пропустить:
+vs-enter-location = 📍 Укажите ваш город/страну:
+vs-enter-remote = 🏠 Ваши предпочтения по формату работы:
+
+    (удалёнка / офис / гибрид / готов к релокации)
+vs-enter-additional = 📝 Хотите добавить что-то ещё? (или Пропустить):
+vs-generating = ⏳ Генерирую текст резюме... Подождите немного.
+vs-generation-completed = ✅ Текст "О себе" готов!
+vs-not-found = Текст не найден.
+vs-deleted = Удалено.
+
+# ── Resume Generator ──────────────────────────────────────────
+res-welcome = 📋 <b>Генератор резюме</b>
+
+    Этот инструмент поможет вам создать готовое резюме за несколько шагов:
+    1. Отредактируйте опыт работы
+    2. Сгенерируйте ключевые фразы
+    3. Создайте текст "О себе"
+    4. Получите готовое резюме
+res-btn-start = 🚀 Начать
+res-btn-generate-keyphrases = 🧠 Генерировать ключевые фразы
+res-btn-create-autoparser = 🤖 Создать автопарсинг
+res-step2-keyphrases = 🧠 <b>Шаг 2: Ключевые фразы</b>
+
+    Нажмите кнопку, чтобы сгенерировать ключевые фразы, или пропустите этот шаг.
+res-generating-keyphrases = ⏳ Генерирую ключевые фразы...
+res-step3-summary = 📄 <b>Шаг 3: Текст "О себе"</b>
+
+    Создайте или выберите существующий текст для резюме.
+res-result-title = 📋 Ваше резюме
+res-work-experiences = 💼 Опыт работы
+res-about-me = 📄 О себе
+res-no-experiences = Добавьте опыт работы для генерации резюме.
+res-cancelled = Генерация резюме отменена.
+
+# ── Interview Preparation ─────────────────────────────────────
+btn-iv-source-plain = 📝 Просто сохранить вакансию
+btn-iv-add-results = ➕ Добавить результаты
+btn-iv-prepare-me = 🎯 Подготовь меня
+iv-plain-title = Вакансия
+iv-plain-created = ✅ Вакансия сохранена. Теперь вы можете начать подготовку или добавить результаты интервью.
+prep-generating = ⏳ Генерирую план подготовки...
+prep-generating-deep = ⏳ Генерирую углублённый материал...
+prep-generating-test = ⏳ Генерирую тест...
+prep-guide-completed = ✅ План подготовки готов!
+prep-deep-completed = ✅ Углублённый материал готов!
+prep-test-ready = ✅ Тест готов! Нажмите, чтобы начать.
+prep-steps-title = 🎯 Шаги подготовки
+prep-steps-description = Выберите шаг для изучения:
+prep-step-not-found = Шаг не найден.
+prep-btn-skip = ⏩ Пропустить
+prep-btn-continue = 📖 Изучить глубже
+prep-btn-view-steps = 📋 Посмотреть шаги
+prep-btn-view-deep = 📚 Углублённый материал
+prep-btn-start-test = 🧪 Пройти тест
+prep-btn-create-test = 🧪 Создать тест
+prep-deep-title = 📚 Углублённое изучение
+prep-deep-not-ready = Углублённый материал ещё не готов.
+prep-test-not-ready = Тест ещё не готов.
+prep-test-done = Тест завершён.
+prep-test-question = Вопрос
+prep-test-correct = ✅ Правильно!
+prep-test-wrong = ❌ Неверно.
+prep-test-right-answer = Правильный ответ
+prep-test-results = Результат

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base
@@ -53,6 +54,11 @@ class Interview(Base):
         back_populates="interview",
         cascade="all, delete-orphan",
     )
+    preparation_steps: Mapped[list[InterviewPreparationStep]] = relationship(
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        order_by="InterviewPreparationStep.step_number",
+    )
 
     def __repr__(self) -> str:
         return f"<Interview id={self.id} title={self.vacancy_title!r}>"
@@ -92,3 +98,50 @@ class InterviewImprovement(Base):
             f"<InterviewImprovement id={self.id} "
             f"tech={self.technology_title!r} status={self.status}>"
         )
+
+
+class PrepStepStatus:
+    PENDING = "pending"
+    SKIPPED = "skipped"
+    COMPLETED = "completed"
+
+
+class InterviewPreparationStep(Base):
+    __tablename__ = "interview_preparation_steps"
+
+    interview_id: Mapped[int] = mapped_column(
+        ForeignKey("interviews.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_number: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default=PrepStepStatus.PENDING)
+    deep_summary: Mapped[str | None] = mapped_column(Text, default=None)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    interview: Mapped[Interview] = relationship(back_populates="preparation_steps")
+    test: Mapped[InterviewPreparationTest | None] = relationship(
+        back_populates="step", uselist=False, cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<InterviewPreparationStep id={self.id} step={self.step_number} status={self.status}>"
+        )
+
+
+class InterviewPreparationTest(Base):
+    __tablename__ = "interview_preparation_tests"
+
+    step_id: Mapped[int] = mapped_column(
+        ForeignKey("interview_preparation_steps.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    questions_json: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    user_answers_json: Mapped[dict | None] = mapped_column(JSONB, default=None)
+
+    step: Mapped[InterviewPreparationStep] = relationship(back_populates="test")
+
+    def __repr__(self) -> str:
+        return f"<InterviewPreparationTest id={self.id} step_id={self.step_id}>"

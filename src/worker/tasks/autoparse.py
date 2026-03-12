@@ -476,7 +476,7 @@ async def _deliver_results_async(
 
         company_repo = AutoparseCompanyRepository(session)
         company = await company_repo.get_by_id(company_id)
-        if not company:
+        if not company or company.is_deleted:
             return {"status": "company_not_found"}
 
         vacancy_repo = AutoparsedVacancyRepository(session)

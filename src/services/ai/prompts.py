@@ -293,6 +293,240 @@ def build_improvement_flow_user_content(
     )
 
 
+@dataclass(frozen=True)
+class AchievementExperienceEntry:
+    company_name: str
+    stack: str
+    user_achievements: str | None
+    user_responsibilities: str | None
+
+
+def build_achievement_generation_prompt(
+    experiences: list[AchievementExperienceEntry],
+) -> str:
+    """Return a prompt for generating resume achievement bullet points per work experience."""
+    companies_block_parts = []
+    for e in experiences:
+        lines = [f"Компания: {e.company_name}", f"Технологии: {e.stack}"]
+        if e.user_achievements:
+            lines.append(f"Реальные достижения (от пользователя): {e.user_achievements}")
+        if e.user_responsibilities:
+            lines.append(f"Обязанности и задачи (от пользователя): {e.user_responsibilities}")
+        companies_block_parts.append("\n".join(lines))
+
+    companies_block = "\n\n".join(companies_block_parts)
+
+    return (
+        "Ты — опытный карьерный консультант, специализирующийся на написании резюме.\n\n"
+        "[ЗАДАЧА]\n"
+        "Сгенерируй достижения для каждого места работы кандидата. "
+        "Достижения должны звучать убедительно, конкретно и профессионально.\n\n"
+        "[ДАННЫЕ КАНДИДАТА]\n"
+        f"{companies_block}\n\n"
+        "[ПРАВИЛА]\n"
+        "- Для каждой компании сгенерируй 4-6 пунктов достижений.\n"
+        "- Используй реальные достижения и обязанности, предоставленные пользователем, "
+        "как основу. Если не предоставлены — придумай реалистичные на основе стека.\n"
+        "- ЗАПРЕЩЕНО выдумывать конкретные цифры и проценты. "
+        "Пиши 'значительно', 'существенно', 'заметно' вместо 'на X%'.\n"
+        "- Пункты должны начинаться с глагола действия.\n"
+        "- Органично вплетай технологии из стека.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответ ТОЛЬКО в следующем формате, без лишнего текста:\n\n"
+        "[AchStart]:<название_компании>\n"
+        "- пункт 1\n"
+        "- пункт 2\n"
+        "[AchEnd]:<название_компании>\n\n"
+        "Повтори блок [AchStart]/[AchEnd] для каждой компании."
+    )
+
+
+def build_standard_qa_system_prompt() -> str:
+    """Return the system prompt for generating interview Q&A answers."""
+    return (
+        "Ты — опытный карьерный консультант и эксперт по подготовке к собеседованиям.\n\n"
+        "[ЗАДАЧА]\n"
+        "Составь подготовленные, убедительные ответы на стандартные вопросы собеседования "
+        "для конкретного кандидата на основе его опыта работы.\n\n"
+        "[ПРАВИЛА]\n"
+        "- Ответы должны быть честными, конкретными и адаптированными под опыт кандидата.\n"
+        "- Каждый ответ должен демонстрировать профессиональную зрелость.\n"
+        "- Используй технологии и достижения из опыта кандидата.\n"
+        "- Пиши от первого лица, естественно и профессионально.\n"
+        "- Не используй клише и шаблонные фразы.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответ ТОЛЬКО в следующем формате:\n\n"
+        "[QAStart]:<ключ_вопроса>\n"
+        "Текст ответа (2-5 предложений).\n"
+        "[QAEnd]:<ключ_вопроса>\n\n"
+        "Повтори блок для каждого вопроса."
+    )
+
+
+def build_standard_qa_user_content(
+    work_experiences: list[WorkExperienceEntry],
+    question_keys: list[str],
+    question_texts: list[str],
+) -> str:
+    """Return the user message for standard Q&A generation."""
+    exp_block = "\n".join(
+        f"  {i + 1}. {e.company_name} — {e.stack}" for i, e in enumerate(work_experiences)
+    )
+    questions_block = "\n".join(
+        f"  {key}: {text}" for key, text in zip(question_keys, question_texts, strict=True)
+    )
+    return (
+        f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n{exp_block}\n\n"
+        f"[ВОПРОСЫ ДЛЯ ПОДГОТОВКИ]\n{questions_block}\n\n"
+        "Составь развёрнутые ответы на каждый вопрос."
+    )
+
+
+def build_vacancy_summary_system_prompt() -> str:
+    """Return the system prompt for generating a vacancy application summary (about-me text)."""
+    return (
+        "Ты — опытный карьерный консультант, специализирующийся на написании "
+        "профессиональных резюме и сопроводительных текстов.\n\n"
+        "[ЗАДАЧА]\n"
+        "Напиши профессиональный текст 'О себе' для резюме кандидата. "
+        "Текст должен быть структурированным, убедительным и ориентированным на работодателя.\n\n"
+        "[СТРУКТУРА ТЕКСТА]\n"
+        "1. Кто я — представление: специальность, опыт, ключевые технологии и достижения.\n"
+        "2. Как достигаю результата — методы и подходы к работе.\n"
+        "3. Мои сильные стороны — конкретные достижения и вклад в проекты.\n"
+        "4. Для кого буду полезен — тип компаний и задач, где я наиболее эффективен.\n"
+        "5. Ограничения — сферы, которые не рассматриваю (если указаны).\n"
+        "6. Локация и формат — где живу, готовность к удалёнке/релокации.\n\n"
+        "[ПРАВИЛА]\n"
+        "- Пиши конкретно, избегай расплывчатых фраз.\n"
+        "- Используй эмодзи для структурирования (🔥, ⭐️, ⚠️) — "
+        "как в профессиональных LinkedIn-профилях.\n"
+        "- ЗАПРЕЩЕНО выдумывать цифры и метрики без подтверждения от кандидата.\n"
+        "- Каждый раздел должен быть отдельным абзацем.\n"
+        "- Объём: 300-600 слов.\n\n"
+        "[ФОРМАТ]\n"
+        "Обычный текст без markdown. Только эмодзи для структурирования. "
+        "Каждый раздел с новой строки."
+    )
+
+
+def build_vacancy_summary_user_content(
+    work_experiences: list[WorkExperienceEntry],
+    tech_stack: list[str],
+    excluded_industries: str | None,
+    location: str | None,
+    remote_preference: str | None,
+    additional_notes: str | None,
+) -> str:
+    """Return the user message for vacancy summary generation."""
+    exp_block = "\n".join(
+        f"  {i + 1}. {e.company_name} — {e.stack}" for i, e in enumerate(work_experiences)
+    )
+    stack_str = ", ".join(tech_stack) if tech_stack else "не указан"
+    parts = [
+        f"[ОПЫТ РАБОТЫ]\n{exp_block}",
+        f"[ТЕХНОЛОГИЧЕСКИЙ СТЕК]\n{stack_str}",
+    ]
+    if excluded_industries:
+        parts.append(f"[НЕ РАССМАТРИВАЕТ СФЕРЫ]\n{excluded_industries}")
+    if location:
+        parts.append(f"[ЛОКАЦИЯ]\n{location}")
+    if remote_preference:
+        parts.append(f"[ПРЕДПОЧТЕНИЯ ПО ФОРМАТУ РАБОТЫ]\n{remote_preference}")
+    if additional_notes:
+        parts.append(f"[ДОПОЛНИТЕЛЬНО]\n{additional_notes}")
+    parts.append("Напиши профессиональный текст 'О себе' на основе этих данных.")
+    return "\n\n".join(parts)
+
+
+def build_preparation_guide_prompt(
+    vacancy_title: str,
+    vacancy_description: str | None,
+    user_tech_stack: list[str],
+    user_work_experience: str,
+) -> str:
+    """Return a prompt for generating an interview preparation guide."""
+    stack_str = ", ".join(user_tech_stack) if user_tech_stack else "не указан"
+    desc_block = (
+        f"\n[ОПИСАНИЕ ВАКАНСИИ]\n{vacancy_description[:2000]}" if vacancy_description else ""
+    )
+    return (
+        "Ты — эксперт по техническим собеседованиям.\n\n"
+        "[ЗАДАЧА]\n"
+        "Составь подробный пошаговый план подготовки к собеседованию на позицию: "
+        f"<{vacancy_title}>.\n\n"
+        f"[ТЕХНОЛОГИЧЕСКИЙ СТЕК КАНДИДАТА]\n{stack_str}\n\n"
+        f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n{user_work_experience}"
+        f"{desc_block}\n\n"
+        "[ПРАВИЛА]\n"
+        "- Создай 5-8 шагов подготовки.\n"
+        "- Каждый шаг должен быть конкретным и практичным.\n"
+        "- Учитывай текущий стек кандидата и опыт работы.\n"
+        "- Шаги должны логически следовать один за другим.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответ ТОЛЬКО в следующем формате:\n\n"
+        "[PrepStepStart]:1:<название_шага>\n"
+        "Содержание шага (2-4 абзаца).\n"
+        "[PrepStepEnd]:1:<название_шага>\n\n"
+        "[PrepStepStart]:2:<название_шага>\n"
+        "Содержание шага.\n"
+        "[PrepStepEnd]:2:<название_шага>\n\n"
+        "И так далее для каждого шага."
+    )
+
+
+def build_deep_learning_summary_prompt(
+    step_title: str,
+    step_content: str,
+    vacancy_context: str,
+) -> str:
+    """Return a prompt for generating a deep-dive summary for a prep step."""
+    return (
+        "Ты — технический ментор и эксперт по собеседованиям.\n\n"
+        "[ЗАДАЧА]\n"
+        f"Создай углублённый учебный материал по теме: <{step_title}>.\n\n"
+        f"[КОНТЕКСТ ВАКАНСИИ]\n{vacancy_context}\n\n"
+        f"[БАЗОВЫЙ МАТЕРИАЛ]\n{step_content}\n\n"
+        "[ПРАВИЛА]\n"
+        "- Углубись значительно глубже базового материала.\n"
+        "- Приведи конкретные примеры, антипаттерны, типичные вопросы на интервью.\n"
+        "- Используй структуру: 1) Теория 2) Практика 3) Типичные вопросы интервью "
+        "4) Красные флаги (чего избегать).\n"
+        "- Объём: 400-800 слов.\n\n"
+        "Напиши углублённый материал."
+    )
+
+
+def build_preparation_test_prompt(
+    step_title: str,
+    step_content: str,
+    deep_summary: str | None,
+) -> str:
+    """Return a prompt for generating a multiple-choice test for a prep step."""
+    material = (deep_summary or step_content)[:2000]
+    return (
+        "Ты — эксперт по техническим собеседованиям.\n\n"
+        "[ЗАДАЧА]\n"
+        f"Создай тест с вопросами на тему: <{step_title}>.\n\n"
+        f"[УЧЕБНЫЙ МАТЕРИАЛ]\n{material}\n\n"
+        "[ПРАВИЛА]\n"
+        "- 3-5 вопросов с вариантами ответов.\n"
+        "- 4 варианта ответа на каждый вопрос.\n"
+        "- Один правильный ответ, помеченный звёздочкой (*).\n"
+        "- Вопросы должны проверять понимание, а не памятование.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответ ТОЛЬКО в следующем формате:\n\n"
+        "[TestStart]\n"
+        "[Q]:Текст вопроса\n"
+        "[A]:Вариант 1\n"
+        "[A]:Вариант 2*\n"
+        "[A]:Вариант 3\n"
+        "[A]:Вариант 4\n"
+        "[TestEnd]\n\n"
+        "Символ * обозначает правильный ответ. Повтори блок [Q]/[A] для каждого вопроса."
+    )
+
+
 def build_per_company_key_phrases_prompt(
     resume_title: str,
     main_keywords: list[str],

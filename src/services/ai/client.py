@@ -301,6 +301,28 @@ class AIClient:
             logger.error("Improvement flow generation failed", error=str(exc))
             return ""
 
+    async def generate_text(
+        self,
+        prompt: str,
+        *,
+        timeout: int = 180,
+        max_tokens: int = 4000,
+        temperature: float = 0.5,
+    ) -> str:
+        """Send a single user prompt and return the full text response."""
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=timeout,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            logger.error("OpenAI generate_text failed", error=str(exc))
+            raise
+
     async def stream_key_phrases(
         self,
         prompt: str,

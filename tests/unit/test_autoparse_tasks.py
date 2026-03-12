@@ -228,6 +228,7 @@ class TestDeliverLastDeliveredAt:
         company = MagicMock()
         company.last_delivered_at = last_delivered_at
         company.vacancy_title = "Python Dev"
+        company.is_deleted = False
         return company
 
     def _make_vacancy(self) -> MagicMock:
@@ -594,6 +595,7 @@ class TestDeliverSeenIdsFilter:
         company = MagicMock()
         company.last_delivered_at = datetime(2026, 1, 1, 12, 0, 0)
         company.vacancy_title = "Python Dev"
+        company.is_deleted = False
         return company
 
     def _make_vacancy(self, vacancy_id: int) -> MagicMock:

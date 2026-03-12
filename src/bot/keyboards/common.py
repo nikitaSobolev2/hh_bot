@@ -33,6 +33,36 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("btn-work-experience"),
+                    callback_data=MenuCallback(action="work_experience").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-achievements"),
+                    callback_data=MenuCallback(action="achievements").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-interview-qa"),
+                    callback_data=MenuCallback(action="interview_qa").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-vacancy-summary"),
+                    callback_data=MenuCallback(action="vacancy_summary").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-resume"),
+                    callback_data=MenuCallback(action="resume").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-profile"),
                     callback_data=MenuCallback(action="profile").pack(),
                 )

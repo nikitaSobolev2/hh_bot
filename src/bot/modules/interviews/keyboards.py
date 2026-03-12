@@ -115,6 +115,12 @@ def source_choice_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                     callback_data=InterviewFormCallback(action="source", value="manual").pack(),
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-iv-source-plain"),
+                    callback_data=InterviewFormCallback(action="source", value="plain").pack(),
+                )
+            ],
             [_cancel_button(i18n)],
         ]
     )
@@ -198,6 +204,7 @@ def interview_detail_keyboard(
     improvements: list[InterviewImprovement],
     i18n: I18nContext | None = None,
     locale: str = "ru",
+    has_questions: bool = True,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -216,6 +223,29 @@ def interview_detail_keyboard(
             ]
         )
 
+    if not has_questions:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-iv-add-results", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="add_results", interview_id=interview_id
+                    ).pack(),
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-prepare-me", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prepare_me", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+
     rows.append(
         [
             InlineKeyboardButton(
@@ -233,6 +263,181 @@ def interview_detail_keyboard(
         ]
     )
 
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def prep_steps_keyboard(
+    steps: list,
+    interview_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    from src.models.interview import PrepStepStatus
+
+    status_icons = {
+        PrepStepStatus.PENDING: "⏳",
+        PrepStepStatus.SKIPPED: "⏭️",
+        PrepStepStatus.COMPLETED: "✅",
+    }
+    rows = []
+    for step in steps:
+        icon = status_icons.get(step.status, "⏳")
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{icon} {step.step_number}. {step.title[:40]}",
+                    callback_data=InterviewCallback(
+                        action="prep_step_detail",
+                        interview_id=interview_id,
+                        prep_step_id=step.id,
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-back", i18n, locale),
+                callback_data=InterviewCallback(action="detail", interview_id=interview_id).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def prep_step_detail_keyboard(
+    step_id: int,
+    interview_id: int,
+    has_deep_summary: bool = False,
+    has_test: bool = False,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    rows = []
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("prep-btn-skip", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_skip",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text=_t("prep-btn-continue", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_continue",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                ).pack(),
+            ),
+        ]
+    )
+
+    if has_deep_summary:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("prep-btn-view-deep", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_step_deep",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ]
+        )
+
+    if has_test:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("prep-btn-start-test", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_test",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                        test_q_index=0,
+                    ).pack(),
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-back", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_steps", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def deep_summary_keyboard(
+    step_id: int,
+    interview_id: int,
+    has_test: bool = False,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    rows = []
+    if not has_test:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("prep-btn-create-test", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_create_test",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-back", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_step_detail",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                ).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def test_question_keyboard(
+    options: list[str],
+    step_id: int,
+    interview_id: int,
+    q_index: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    rows = []
+    for i, option in enumerate(options):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{chr(65 + i)}. {option[:80]}",
+                    callback_data=InterviewCallback(
+                        action="prep_test_answer",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                        test_q_index=q_index,
+                        test_answer=i,
+                    ).pack(),
+                )
+            ]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

@@ -58,10 +58,32 @@ async def toggle_autoparse_company(session: AsyncSession, company_id: int) -> bo
     return new_state
 
 
-async def soft_delete_autoparse_company(session: AsyncSession, company_id: int) -> None:
+async def soft_delete_autoparse_company(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int | None = None,
+) -> None:
     repo = AutoparseCompanyRepository(session)
     await repo.soft_delete(company_id)
     await session.commit()
+
+    if user_id is not None:
+        _revoke_scheduled_delivery(company_id, user_id)
+
+
+def _revoke_scheduled_delivery(company_id: int, user_id: int) -> None:
+    import redis
+
+    from src.config import settings
+    from src.worker.app import celery_app
+    from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX
+
+    r = redis.Redis.from_url(settings.redis_url)
+    task_key = f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}"
+    scheduled_id = r.get(task_key)
+    if scheduled_id:
+        celery_app.control.revoke(scheduled_id.decode(), terminate=False)
+        r.delete(task_key)
 
 
 async def get_autoparse_detail(session: AsyncSession, company_id: int) -> AutoparseCompany | None:

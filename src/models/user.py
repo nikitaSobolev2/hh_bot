@@ -11,15 +11,18 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.db.base import Base
 
 if TYPE_CHECKING:
+    from src.models.achievement import AchievementGeneration
     from src.models.autoparse import AutoparseCompany
     from src.models.balance import BalanceTransaction
     from src.models.ban import UserBan
     from src.models.blacklist import VacancyBlacklist
     from src.models.interview import Interview
+    from src.models.interview_qa import StandardQuestion
     from src.models.parsing import ParsingCompany
     from src.models.referral import ReferralEvent
     from src.models.role import Role
     from src.models.support import SupportTicket
+    from src.models.vacancy_summary import VacancySummary
     from src.models.work_experience import UserWorkExperience
 
 
@@ -71,6 +74,18 @@ class User(Base):
         foreign_keys="UserBan.user_id",
     )
     interviews: Mapped[list[Interview]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    achievement_generations: Mapped[list[AchievementGeneration]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    standard_questions: Mapped[list[StandardQuestion]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    vacancy_summaries: Mapped[list[VacancySummary]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )

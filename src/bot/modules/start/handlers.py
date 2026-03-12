@@ -1,4 +1,7 @@
+import contextlib
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +23,11 @@ _HANDLED_IN_START = {
     "autoparse",
     "admin",
     "support",
+    "work_experience",
+    "achievements",
+    "interview_qa",
+    "vacancy_summary",
+    "resume",
 }
 
 
@@ -97,5 +105,34 @@ async def menu_navigation(
         from src.bot.modules.support.user_handlers import show_ticket_list
 
         await show_ticket_list(callback, user, session, i18n)
+
+    elif action == "work_experience":
+        from src.bot.modules.work_experience.handlers import show_work_experience
+
+        await show_work_experience(callback.message, user, "menu", session, i18n)
+
+    elif action == "achievements":
+        from src.bot.modules.achievements.handlers import show_achievement_list
+
+        await show_achievement_list(callback, user, session, i18n)
+
+    elif action == "interview_qa":
+        from src.bot.modules.interview_qa.handlers import show_interview_qa_list
+
+        await show_interview_qa_list(callback, user, session, i18n)
+
+    elif action == "vacancy_summary":
+        from src.bot.modules.vacancy_summary.handlers import show_vacancy_summary_list
+
+        await show_vacancy_summary_list(callback, user, session, i18n)
+
+    elif action == "resume":
+        from src.bot.modules.resume.keyboards import resume_start_keyboard
+
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("res-welcome"),
+                reply_markup=resume_start_keyboard(i18n),
+            )
 
     await callback.answer()

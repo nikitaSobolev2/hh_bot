@@ -14,6 +14,9 @@ from src.models.vacancy_feed import VacancyFeedSession
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
 _MAX_DESCRIPTION_LENGTH = 1500
+_MAX_FULL_DESCRIPTION_LENGTH = 3000
+_TELEGRAM_MESSAGE_LIMIT = 4096
+_DESCRIPTION_TRUNCATION_SUFFIX = "… (текст обрезан)"
 _CURRENCY_MARKERS = frozenset({"₽", "$", "€", "£", "¥", "руб", "rub", "usd", "eur", "₴"})
 
 # Patterns used by _clean_salary to insert missing spaces in HH.ru salary strings.
@@ -166,6 +169,7 @@ def build_vacancy_card(
     index: int,
     total: int,
     locale: str = "ru",
+    mode: str = "summary",
 ) -> str:
     progress = get_text("feed-vacancy-progress", locale, current=index + 1, total=total)
     safe_title = html.escape(vacancy.title)
@@ -204,7 +208,16 @@ def build_vacancy_card(
         label = get_text("autoparse-compatibility-label", locale)
         lines.append(f"\n🎯 {label}: {vacancy.compatibility_score:.0f}%")
 
-    if vacancy.ai_summary:
+    if mode == "description":
+        if vacancy.description:
+            header_length = len("\n".join(lines))
+            available = _TELEGRAM_MESSAGE_LIMIT - header_length - 50
+            limit = min(_MAX_FULL_DESCRIPTION_LENGTH, max(available, 500))
+            raw = vacancy.description
+            if len(raw) > limit:
+                raw = raw[:limit] + _DESCRIPTION_TRUNCATION_SUFFIX
+            lines.append(f"\n{html.escape(raw)}")
+    elif vacancy.ai_summary:
         lines.append(f"\n{html.escape(vacancy.ai_summary)}")
     elif vacancy.description:
         truncated = vacancy.description[:_MAX_DESCRIPTION_LENGTH]

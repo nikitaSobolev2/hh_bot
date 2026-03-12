@@ -22,6 +22,7 @@ from src.bot.modules.interviews.keyboards import (
     improvement_detail_keyboard,
     interview_detail_keyboard,
     interview_list_keyboard,
+    prep_steps_keyboard,
     questions_keyboard,
     skip_notes_keyboard,
     source_choice_keyboard,
@@ -30,6 +31,7 @@ from src.bot.modules.interviews.states import InterviewForm
 from src.core.i18n import I18nContext
 from src.models.interview import ImprovementStatus
 from src.models.user import User
+from src.repositories.interview import InterviewRepository
 from src.services.parser.scraper import HHScraper
 
 router = Router(name="interviews")
@@ -114,6 +116,13 @@ async def fsm_source_chosen(
             i18n.get("iv-fsm-enter-hh-link"),
             reply_markup=cancel_keyboard(i18n),
         )
+    elif source == "plain":
+        await state.set_state(InterviewForm.vacancy_title)
+        await callback.message.edit_text(
+            i18n.get("iv-fsm-enter-title"),
+            reply_markup=cancel_keyboard(i18n),
+        )
+        await state.update_data(plain_mode=True)
     else:
         await state.set_state(InterviewForm.vacancy_title)
         await callback.message.edit_text(
@@ -242,9 +251,16 @@ async def fsm_experience_chosen(
     callback: CallbackQuery,
     callback_data: InterviewFormCallback,
     state: FSMContext,
+    user: User,
+    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
     await state.update_data(experience_level=callback_data.value)
+    data = await state.get_data()
+    if data.get("plain_mode"):
+        await _create_plain_interview(callback, user, state, session, i18n)
+        await callback.answer()
+        return
     await state.set_state(InterviewForm.adding_question)
     await callback.message.edit_text(
         i18n.get("iv-fsm-now-add-questions"),
@@ -389,15 +405,21 @@ async def fsm_proceed(
     data = await state.get_data()
     await state.clear()
 
-    interview = await interview_service.create_interview(
-        session=session,
-        user_id=user.id,
-        vacancy_title=data.get("vacancy_title", ""),
-        vacancy_description=data.get("vacancy_description"),
-        company_name=data.get("company_name"),
-        experience_level=data.get("experience_level"),
-        hh_vacancy_url=data.get("hh_vacancy_url"),
-    )
+    existing_interview_id: int | None = data.get("interview_id")
+
+    if existing_interview_id:
+        interview_repo = InterviewRepository(session)
+        interview = await interview_repo.get_by_id(existing_interview_id)
+    else:
+        interview = await interview_service.create_interview(
+            session=session,
+            user_id=user.id,
+            vacancy_title=data.get("vacancy_title", ""),
+            vacancy_description=data.get("vacancy_description"),
+            company_name=data.get("company_name"),
+            experience_level=data.get("experience_level"),
+            hh_vacancy_url=data.get("hh_vacancy_url"),
+        )
 
     questions: list[dict[str, str]] = data.get("questions", [])
     await interview_service.bulk_create_questions(session, interview.id, questions)
@@ -481,10 +503,428 @@ async def handle_detail(
 
     await callback.message.edit_text(
         text,
-        reply_markup=interview_detail_keyboard(interview.id, interview.improvements, i18n),
+        reply_markup=interview_detail_keyboard(
+            interview.id,
+            interview.improvements,
+            i18n,
+            has_questions=bool(interview.questions),
+        ),
         disable_web_page_preview=True,
     )
     await callback.answer()
+
+
+async def _create_plain_interview(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    data = await state.get_data()
+    await state.clear()
+    interview = await interview_service.create_interview(
+        session,
+        user_id=user.id,
+        vacancy_title=data.get("vacancy_title", i18n.get("iv-plain-title")),
+        vacancy_description=data.get("vacancy_description"),
+        company_name=data.get("company_name"),
+        experience_level=data.get("experience_level"),
+        hh_vacancy_url=data.get("hh_vacancy_url"),
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        from src.bot.modules.interviews.keyboards import interview_detail_keyboard
+
+        header = interview_service.format_vacancy_header(
+            interview.vacancy_title,
+            interview.company_name,
+            interview.experience_level,
+            interview.hh_vacancy_url,
+        )
+        await callback.message.edit_text(
+            f"{header}\n\n{i18n.get('iv-plain-created')}",
+            reply_markup=interview_detail_keyboard(
+                interview.id,
+                [],
+                i18n,
+                has_questions=False,
+            ),
+            disable_web_page_preview=True,
+        )
+
+
+# ── Add results (for plain interview) ───────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "add_results"))
+async def handle_add_results(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.clear()
+    await state.update_data(interview_id=callback_data.interview_id)
+    await state.set_state(InterviewForm.adding_question)
+    from src.bot.modules.interviews.keyboards import questions_keyboard
+
+    await callback.message.edit_text(
+        i18n.get("iv-fsm-now-add-questions"),
+        reply_markup=questions_keyboard(0, i18n),
+    )
+    await callback.answer()
+
+
+# ── Prepare me ───────────────────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prepare_me"))
+async def handle_prepare_me(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.worker.tasks.interview_prep import generate_preparation_task
+
+    wait_msg = await callback.message.edit_text(i18n.get("prep-generating"))
+    generate_preparation_task.delay(
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
+# ── Preparation steps list ──────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_steps"))
+async def handle_prep_steps(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    steps = await prep_repo.get_steps_for_interview(callback_data.interview_id)
+
+    text = f"<b>{i18n.get('prep-steps-title')}</b>\n\n{i18n.get('prep-steps-description')}"
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=prep_steps_keyboard(steps, callback_data.interview_id, i18n),
+        )
+    await callback.answer()
+
+
+# ── Preparation step detail ─────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_step_detail"))
+async def handle_prep_step_detail(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.bot.modules.interviews.keyboards import prep_step_detail_keyboard
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
+    if not step:
+        await callback.answer(i18n.get("prep-step-not-found"), show_alert=True)
+        return
+
+    text = f"<b>{step.step_number}. {step.title}</b>\n\n{step.content}"
+    if len(text) > 4000:
+        text = text[:3900] + "\n..."
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=prep_step_detail_keyboard(
+                step.id,
+                callback_data.interview_id,
+                has_deep_summary=bool(step.deep_summary),
+                has_test=bool(step.test),
+                i18n=i18n,
+            ),
+        )
+    await callback.answer()
+
+
+# ── Skip preparation step ───────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_skip"))
+async def handle_prep_skip(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.models.interview import PrepStepStatus
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    await prep_repo.update_step_status(callback_data.prep_step_id, PrepStepStatus.SKIPPED)
+    await session.commit()
+    await handle_prep_steps(callback, callback_data, session, i18n)
+
+
+# ── Continue (generate deep summary) ───────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_continue"))
+async def handle_prep_continue(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.worker.tasks.interview_prep import generate_deep_summary_task
+
+    wait_msg = await callback.message.edit_text(i18n.get("prep-generating-deep"))
+    generate_deep_summary_task.delay(
+        callback_data.prep_step_id,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
+# ── View deep summary ───────────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_step_deep"))
+async def handle_prep_step_deep(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.bot.modules.interviews.keyboards import deep_summary_keyboard
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
+    if not step or not step.deep_summary:
+        await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
+        return
+
+    text = f"<b>{i18n.get('prep-deep-title')}: {step.title}</b>\n\n{step.deep_summary}"
+    if len(text) > 4000:
+        text = text[:3900] + "\n..."
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=deep_summary_keyboard(
+                step.id,
+                callback_data.interview_id,
+                has_test=bool(step.test),
+                i18n=i18n,
+            ),
+        )
+    await callback.answer()
+
+
+# ── Create test ─────────────────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_create_test"))
+async def handle_prep_create_test(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.worker.tasks.interview_prep import generate_test_task
+
+    wait_msg = await callback.message.edit_text(i18n.get("prep-generating-test"))
+    generate_test_task.delay(
+        callback_data.prep_step_id,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
+# ── Test: show question ─────────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_test"))
+async def handle_prep_test_start(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.bot.modules.interviews.keyboards import test_question_keyboard
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    test = await prep_repo.get_test_by_step(callback_data.prep_step_id)
+    if not test or not test.questions_json:
+        await callback.answer(i18n.get("prep-test-not-ready"), show_alert=True)
+        return
+
+    questions = test.questions_json.get("questions", [])
+    q_index = callback_data.test_q_index
+    if q_index >= len(questions):
+        await callback.answer(i18n.get("prep-test-done"), show_alert=True)
+        return
+
+    question = questions[q_index]
+    text = (
+        f"<b>{i18n.get('prep-test-question')} {q_index + 1}/{len(questions)}</b>\n\n"
+        f"{question['question']}"
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=test_question_keyboard(
+                question["options"],
+                callback_data.prep_step_id,
+                callback_data.interview_id,
+                q_index,
+                i18n=i18n,
+            ),
+        )
+    await callback.answer()
+
+
+# ── Test: record answer ─────────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_test_answer"))
+async def handle_prep_test_answer(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    test = await prep_repo.get_test_by_step(callback_data.prep_step_id)
+    if not test or not test.questions_json:
+        await callback.answer()
+        return
+
+    questions = test.questions_json.get("questions", [])
+    q_index = callback_data.test_q_index
+    user_answer = callback_data.test_answer
+
+    answers = dict(test.user_answers_json or {})
+    answers[str(q_index)] = user_answer
+    await prep_repo.save_test_answers(callback_data.prep_step_id, answers)
+    await session.commit()
+
+    correct = questions[q_index]["correct_index"] if q_index < len(questions) else -1
+    is_correct = user_answer == correct
+    feedback = (
+        i18n.get("prep-test-correct")
+        if is_correct
+        else (
+            i18n.get("prep-test-wrong") + f" ({i18n.get('prep-test-right-answer')}: "
+            f"{chr(65 + correct)}. {questions[q_index]['options'][correct]})"
+        )
+    )
+
+    next_index = q_index + 1
+    if next_index < len(questions):
+        from src.bot.modules.interviews.keyboards import test_question_keyboard
+
+        next_q = questions[next_index]
+        text = (
+            f"{feedback}\n\n"
+            f"<b>{i18n.get('prep-test-question')} {next_index + 1}/{len(questions)}</b>\n\n"
+            f"{next_q['question']}"
+        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                text,
+                reply_markup=test_question_keyboard(
+                    next_q["options"],
+                    callback_data.prep_step_id,
+                    callback_data.interview_id,
+                    next_index,
+                    i18n=i18n,
+                ),
+            )
+    else:
+        correct_count = sum(
+            1
+            for idx, q in enumerate(questions)
+            if str(idx) in answers and answers[str(idx)] == q["correct_index"]
+        )
+        score_text = f"{correct_count}/{len(questions)}"
+        back_kb = _make_back_to_step_keyboard(
+            callback_data.prep_step_id,
+            callback_data.interview_id,
+            i18n,
+        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                f"{feedback}\n\n<b>{i18n.get('prep-test-results')}: {score_text}</b>",
+                reply_markup=back_kb,
+            )
+    await callback.answer()
+
+
+def _make_back_to_step_keyboard(step_id: int, interview_id: int, i18n: I18nContext):
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=InterviewCallback(
+                        action="prep_step_detail",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ]
+        ]
+    )
 
 
 # ── Delete interview ─────────────────────────────────────────────────────────
