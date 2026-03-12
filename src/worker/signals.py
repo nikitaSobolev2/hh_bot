@@ -65,6 +65,7 @@ def connect_signals(app) -> None:  # app: Celery
 
     @task_failure.connect
     def on_task_failure(
+        sender,
         task_id: str,
         exception: BaseException,
         traceback: object,
@@ -73,7 +74,6 @@ def connect_signals(app) -> None:  # app: Celery
         kwargs: dict,
         **extra,
     ) -> None:
-        sender = extra.get("sender")
         task_name = getattr(sender, "name", "unknown") if sender else "unknown"
         message = _format_failure(task_id, task_name, args, kwargs, exception, traceback)
         _send_telegram_message(message)
