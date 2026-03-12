@@ -27,6 +27,7 @@ from src.bot.modules.resume.keyboards import (
     resume_cancel_keyboard,
     resume_job_view_keyboard,
     resume_keywords_source_keyboard,
+    resume_list_keyboard,
     resume_parsing_companies_keyboard,
     resume_rec_character_keyboard,
     resume_rec_focus_keyboard,
@@ -45,7 +46,84 @@ router = Router(name="resume")
 _SKILL_LEVELS = ["Junior", "Middle", "Senior", "Lead"]
 
 
-# ── Step 0: entry point ───────────────────────────────────────────────────────
+# ── Resume hub: list and view ──────────────────────────────────────────────────
+
+
+async def show_resume_list(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    page: int = 0,
+) -> None:
+    from src.repositories.resume import ResumeRepository
+
+    repo = ResumeRepository(session)
+    resumes, total = await repo.get_by_user_paginated(user.id, page)
+
+    text = (
+        i18n.get("res-list-empty")
+        if not resumes and page == 0
+        else i18n.get("res-list-title")
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=resume_list_keyboard(resumes, page, total, i18n),
+        )
+
+
+@router.callback_query(ResumeCallback.filter(F.action == "list"))
+async def handle_resume_list(
+    callback: CallbackQuery,
+    callback_data: ResumeCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await show_resume_list(callback, user, session, i18n, callback_data.page)
+    await callback.answer()
+
+
+@router.callback_query(ResumeCallback.filter(F.action == "view"))
+async def handle_resume_view(
+    callback: CallbackQuery,
+    callback_data: ResumeCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    """Show an existing resume's result view."""
+    resume_id = callback_data.work_exp_id
+    from src.repositories.recommendation_letter import RecommendationLetterRepository
+    from src.repositories.resume import ResumeRepository
+
+    repo = ResumeRepository(session)
+    resume = await repo.get_by_id(resume_id)
+    if not resume or resume.user_id != user.id or resume.is_deleted:
+        await callback.answer(i18n.get("res-not-found"), show_alert=True)
+        return
+
+    await state.update_data(res_resume_id=resume_id, res_viewing_from_list=True)
+
+    letter_repo = RecommendationLetterRepository(session)
+    letters = await letter_repo.get_by_resume(resume_id)
+
+    lines = _build_result_text(resume, i18n)
+    locale = user.language_code or "ru"
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=resume_result_keyboard(
+                resume, letters, locale, i18n, from_list=True
+            ),
+        )
+    await callback.answer()
+
+
+# ── Step 0: entry point (create new) ────────────────────────────────────────────
 
 
 @router.callback_query(ResumeCallback.filter(F.action == "start"))
@@ -857,13 +935,17 @@ async def _show_final_result(
             )
         return
 
+    from_list = bool(data.get("res_viewing_from_list"))
+
     lines = _build_result_text(resume, i18n)
     locale = user.language_code or "ru"
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             "\n".join(lines),
-            reply_markup=resume_result_keyboard(resume, letters, locale, i18n),
+            reply_markup=resume_result_keyboard(
+                resume, letters, locale, i18n, from_list=from_list
+            ),
         )
 
 

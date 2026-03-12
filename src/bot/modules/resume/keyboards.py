@@ -17,6 +17,77 @@ if TYPE_CHECKING:
     from src.models.resume import Resume
 
 _SKILL_LEVELS: list[str] = ["Junior", "Middle", "Senior", "Lead"]
+_PAGE_SIZE = 5
+
+
+def resume_list_keyboard(
+    resumes: list[Resume],
+    page: int,
+    total: int,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Paginated list of resumes with Create New and Back to Menu."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("res-btn-create-new"),
+                callback_data=ResumeCallback(action="start").pack(),
+            )
+        ]
+    ]
+
+    for r in resumes:
+        date_str = r.created_at.strftime("%m/%d %H:%M")
+        label = f"📋 {r.job_title}"
+        if r.skill_level:
+            label += f" ({r.skill_level})"
+        label += f" — {date_str}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label[:64],
+                    callback_data=ResumeCallback(
+                        action="view",
+                        work_exp_id=r.id,
+                    ).pack(),
+                )
+            ]
+        )
+
+    total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="◀️",
+                    callback_data=ResumeCallback(action="list", page=page - 1).pack(),
+                )
+            )
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data=ResumeCallback(action="list", page=page).pack(),
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="▶️",
+                    callback_data=ResumeCallback(action="list", page=page + 1).pack(),
+                )
+            )
+        rows.append(nav)
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back-menu"),
+                callback_data=MenuCallback(action="main").pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def resume_start_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
@@ -231,6 +302,8 @@ def resume_result_keyboard(
     letters: list[RecommendationLetter],
     locale: str,
     i18n: I18nContext,
+    *,
+    from_list: bool = False,
 ) -> InlineKeyboardMarkup:
     """Final result view keyboard — keywords, per-job buttons, summary, autoparser."""
     rows: list[list[InlineKeyboardButton]] = []
@@ -296,6 +369,15 @@ def resume_result_keyboard(
             )
         ]
     )
+    if from_list:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=ResumeCallback(action="list").pack(),
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(

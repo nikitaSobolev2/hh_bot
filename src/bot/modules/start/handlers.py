@@ -1,7 +1,4 @@
-import contextlib
-
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -127,12 +124,8 @@ async def menu_navigation(
         await show_vacancy_summary_list(callback, user, session, i18n)
 
     elif action == "resume":
-        from src.bot.modules.resume.keyboards import resume_start_keyboard
+        from src.bot.modules.resume.handlers import show_resume_list
 
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                i18n.get("res-welcome"),
-                reply_markup=resume_start_keyboard(i18n),
-            )
+        await show_resume_list(callback, user, session, i18n)
 
     await callback.answer()

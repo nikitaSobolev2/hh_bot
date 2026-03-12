@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.resume import Resume
+
+_PAGE_SIZE = 5
 
 
 class ResumeRepository:
@@ -38,6 +40,31 @@ class ResumeRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def get_by_user_paginated(
+        self,
+        user_id: int,
+        page: int = 0,
+    ) -> tuple[list[Resume], int]:
+        count_result = await self._session.execute(
+            select(func.count()).select_from(Resume).where(
+                Resume.user_id == user_id,
+                Resume.is_deleted.is_(False),
+            )
+        )
+        total = count_result.scalar_one()
+
+        result = await self._session.execute(
+            select(Resume)
+            .where(
+                Resume.user_id == user_id,
+                Resume.is_deleted.is_(False),
+            )
+            .order_by(Resume.created_at.desc())
+            .offset(page * _PAGE_SIZE)
+            .limit(_PAGE_SIZE)
+        )
+        return list(result.scalars().all()), total
 
     async def update(self, resume: Resume, **kwargs) -> Resume:
         for key, value in kwargs.items():

@@ -6,3 +6,4 @@ class ResumeCallback(CallbackData, prefix="res"):
     summary_id: int = 0
     company_id: int = 0
     work_exp_id: int = 0
+    page: int = 0

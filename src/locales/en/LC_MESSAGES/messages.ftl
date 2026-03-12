@@ -874,6 +874,10 @@ res-welcome = 📋 <b>Resume Generator</b>
     2. Generate key phrases
     3. Create an about-me summary
     4. Get your complete resume
+res-list-empty = 📋 You have no saved resumes yet. Tap below to create your first!
+res-list-title = 📋 <b>Your Resumes</b>
+res-btn-create-new = ✨ Create New
+res-not-found = Resume not found.
 res-btn-start = 🚀 Start
 res-btn-generate-keyphrases = 🧠 Generate Key Phrases
 res-btn-create-autoparser = 🤖 Create Auto Parser
