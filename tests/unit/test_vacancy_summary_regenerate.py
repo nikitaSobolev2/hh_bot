@@ -100,7 +100,8 @@ def test_has_stored_params_returns_false_when_all_none():
     assert has_stored is False
 
 
-def test_regenerate_clones_params_to_new_summary_and_enqueues():
+@pytest.mark.asyncio
+async def test_regenerate_clones_params_to_new_summary_and_enqueues():
     """
     When old summary has stored params, regenerate creates a new row with
     cloned params and calls the Celery task — without touching FSM.
@@ -124,16 +125,16 @@ def test_regenerate_clones_params_to_new_summary_and_enqueues():
 
     with patch("src.worker.tasks.vacancy_summary.generate_vacancy_summary_task") as mock_task:
         mock_task.delay = MagicMock()
-        _enqueue_summary(
+        await _enqueue_summary(
             new_summary.id,
             1,
             new_summary.excluded_industries,
             new_summary.location,
             new_summary.remote_preference,
             new_summary.additional_notes,
-            chat_id=123,
-            message_id=456,
-            locale="ru",
+            123,
+            456,
+            "ru",
         )
         mock_task.delay.assert_called_once_with(
             100,
@@ -149,13 +150,14 @@ def test_regenerate_clones_params_to_new_summary_and_enqueues():
         )
 
 
-def test_enqueue_summary_passes_none_params():
+@pytest.mark.asyncio
+async def test_enqueue_summary_passes_none_params():
     """_enqueue_summary passes None values unchanged to the task."""
     from src.bot.modules.vacancy_summary.handlers import _enqueue_summary
 
     with patch("src.worker.tasks.vacancy_summary.generate_vacancy_summary_task") as mock_task:
         mock_task.delay = MagicMock()
-        _enqueue_summary(
+        await _enqueue_summary(
             summary_id=1,
             user_id=2,
             excluded_industries=None,
