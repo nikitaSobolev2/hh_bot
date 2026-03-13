@@ -3,7 +3,6 @@
 import contextlib
 from datetime import UTC, datetime, timedelta
 
-import redis as redis_sync
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -29,7 +28,6 @@ from src.bot.modules.autoparse.keyboards import (
 )
 from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
-from src.config import settings
 from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
 from src.models.user import User
@@ -399,15 +397,19 @@ async def show_new_vacancies_now(
     user: User,
     i18n: I18nContext,
 ) -> None:
+    from src.core.redis import create_async_redis
     from src.worker.app import celery_app
     from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
 
-    r = redis_sync.Redis.from_url(settings.redis_url)
     task_key = f"{_DELIVER_TASK_PREFIX}{callback_data.company_id}:{user.id}"
-    scheduled_id = r.get(task_key)
-    if scheduled_id:
-        celery_app.control.revoke(scheduled_id.decode(), terminate=False)
-        r.delete(task_key)
+    redis = create_async_redis()
+    try:
+        scheduled_id = await redis.get(task_key)
+        if scheduled_id:
+            celery_app.control.revoke(scheduled_id, terminate=False)
+            await redis.delete(task_key)
+    finally:
+        await redis.aclose()
 
     deliver_autoparse_results.delay(callback_data.company_id, user.id, True)
     await callback.answer(i18n.get("autoparse-delivering-now"), show_alert=True)

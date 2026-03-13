@@ -23,7 +23,7 @@ def test_deliver_results_async_proceeds_for_active_company():
 
 @pytest.mark.asyncio
 async def test_soft_delete_revokes_delivery_when_user_id_provided():
-    """soft_delete_autoparse_company with user_id calls _revoke_scheduled_delivery."""
+    """soft_delete_autoparse_company with user_id calls _revoke_scheduled_delivery_async."""
     mock_session = AsyncMock()
     mock_repo = AsyncMock()
     mock_repo.soft_delete = AsyncMock()
@@ -34,7 +34,10 @@ async def test_soft_delete_revokes_delivery_when_user_id_provided():
             "src.bot.modules.autoparse.services.AutoparseCompanyRepository",
             return_value=mock_repo,
         ),
-        patch("src.bot.modules.autoparse.services._revoke_scheduled_delivery") as mock_revoke,
+        patch(
+            "src.bot.modules.autoparse.services._revoke_scheduled_delivery_async",
+            new=AsyncMock(),
+        ) as mock_revoke,
     ):
         from src.bot.modules.autoparse.services import soft_delete_autoparse_company
 
@@ -56,7 +59,10 @@ async def test_soft_delete_no_revoke_when_no_user_id():
             "src.bot.modules.autoparse.services.AutoparseCompanyRepository",
             return_value=mock_repo,
         ),
-        patch("src.bot.modules.autoparse.services._revoke_scheduled_delivery") as mock_revoke,
+        patch(
+            "src.bot.modules.autoparse.services._revoke_scheduled_delivery_async",
+            new=AsyncMock(),
+        ) as mock_revoke,
     ):
         from src.bot.modules.autoparse.services import soft_delete_autoparse_company
 
