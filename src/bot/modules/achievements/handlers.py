@@ -118,8 +118,8 @@ async def start_achievement_collection(
         ach_stacks=[exp.stack for exp in experiences],
         ach_step=_STEP_ACH,
         ach_index=0,
-        ach_achievements=[None] * len(experiences),
-        ach_responsibilities=[None] * len(experiences),
+        ach_achievements=[exp.achievements or None for exp in experiences],
+        ach_responsibilities=[exp.duties or None for exp in experiences],
     )
     await state.set_state(AchievementForm.collecting_achievements)
     data = await state.get_data()
@@ -140,19 +140,33 @@ async def _ask_for_input(
     company_name = exp_names[index]
 
     if step == _STEP_ACH:
+        existing = (
+            (data.get("ach_achievements") or [])[index]
+            if index < len(data.get("ach_achievements") or [])
+            else None
+        )
         text = i18n.get(
             "ach-enter-achievements",
             company=company_name,
             current=index + 1,
             total=total,
         )
+        if existing:
+            text += f"\n\n<b>{i18n.get('ach-current-value')}</b>\n{existing}"
     else:
+        existing = (
+            (data.get("ach_responsibilities") or [])[index]
+            if index < len(data.get("ach_responsibilities") or [])
+            else None
+        )
         text = i18n.get(
             "ach-enter-responsibilities",
             company=company_name,
             current=index + 1,
             total=total,
         )
+        if existing:
+            text += f"\n\n<b>{i18n.get('ach-current-value')}</b>\n{existing}"
 
     kb = achievement_input_keyboard(company_name, index, total, i18n)
     if edit:

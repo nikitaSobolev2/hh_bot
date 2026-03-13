@@ -64,6 +64,7 @@ async def _generate_achievements_async(
     from src.services.ai.prompts import (
         AchievementExperienceEntry,
         build_achievement_generation_prompt,
+        build_achievement_generation_system_prompt,
     )
 
     enabled = await task.check_enabled(AppSettingKey.TASK_ACHIEVEMENTS_ENABLED, session_factory)
@@ -105,10 +106,11 @@ async def _generate_achievements_async(
     ]
 
     prompt = build_achievement_generation_prompt(entries)
+    system_prompt = build_achievement_generation_system_prompt()
     ai_client = AIClient()
 
     try:
-        response = await ai_client.generate_text(prompt)
+        response = await ai_client.generate_text(prompt, system_prompt=system_prompt)
         blocks = _parse_achievement_blocks(response)
         cb.record_success()
     except Exception as exc:

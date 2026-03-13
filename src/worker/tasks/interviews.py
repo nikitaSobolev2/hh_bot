@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
-
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.logging import get_logger
 from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -15,9 +14,12 @@ logger = get_logger(__name__)
 
 @celery_app.task(
     bind=True,
+    base=HHBotTask,
     name="interviews.analyze",
     max_retries=2,
     default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
 )
 def analyze_interview_task(
     self,
@@ -29,8 +31,8 @@ def analyze_interview_task(
 ) -> dict:
     return run_async(
         lambda sf: _analyze_interview_async(
-            sf,
             self,
+            sf,
             interview_id,
             chat_id,
             message_id,
@@ -42,9 +44,12 @@ def analyze_interview_task(
 
 @celery_app.task(
     bind=True,
+    base=HHBotTask,
     name="interviews.generate_flow",
     max_retries=2,
     default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
 )
 def generate_improvement_flow_task(
     self,
@@ -56,8 +61,8 @@ def generate_improvement_flow_task(
 ) -> dict:
     return run_async(
         lambda sf: _generate_flow_async(
-            sf,
             self,
+            sf,
             improvement_id,
             interview_id,
             chat_id,
@@ -67,60 +72,40 @@ def generate_improvement_flow_task(
     )
 
 
-async def _load_circuit_breaker_config(
-    session_factory: async_sessionmaker[AsyncSession],
-    enabled_key: str,
-    threshold_key: str,
-    timeout_key: str,
-) -> tuple[bool, int, int]:
-    """Return (enabled, failure_threshold, recovery_timeout) from app settings."""
-    from src.repositories.app_settings import AppSettingRepository
-
-    async with session_factory() as session:
-        repo = AppSettingRepository(session)
-        enabled = await repo.get_value(enabled_key, default=True)
-        threshold = await repo.get_value(threshold_key, default=5)
-        timeout = await repo.get_value(timeout_key, default=60)
-    return bool(enabled), int(threshold), int(timeout)
-
-
 async def _analyze_interview_async(
+    task: HHBotTask,
     session_factory: async_sessionmaker[AsyncSession],
-    task,
     interview_id: int,
     chat_id: int,
     message_id: int,
     locale: str,
     user_improvement_notes: str | None,
 ) -> dict:
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
+    from celery.exceptions import SoftTimeLimitExceeded
 
-    from src.config import settings as app_settings
+    from src.core.constants import AppSettingKey
     from src.core.i18n import get_text
-    from src.worker.circuit_breaker import CircuitBreaker
 
-    cb = CircuitBreaker("interview_analysis")
-
-    enabled, cb_threshold, cb_timeout = await _load_circuit_breaker_config(
-        session_factory,
-        "task_interview_analysis_enabled",
-        "cb_interview_analysis_failure_threshold",
-        "cb_interview_analysis_recovery_timeout",
+    enabled = await task.check_enabled(
+        AppSettingKey.TASK_INTERVIEW_ANALYSIS_ENABLED, session_factory
     )
     if not enabled:
         return {"status": "disabled"}
 
-    cb.update_config(failure_threshold=cb_threshold, recovery_timeout=cb_timeout)
-
+    cb = await task.load_circuit_breaker(
+        "interview_analysis",
+        AppSettingKey.CB_INTERVIEW_ANALYSIS_FAILURE_THRESHOLD,
+        AppSettingKey.CB_INTERVIEW_ANALYSIS_RECOVERY_TIMEOUT,
+        session_factory,
+    )
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
-    bot = Bot(
-        token=app_settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = task.create_bot()
+    idempotency_key = f"analyze_interview:{interview_id}"
+
+    if await task.is_already_completed(idempotency_key, session_factory):
+        return {"status": "already_completed"}
 
     try:
         async with session_factory() as session:
@@ -163,33 +148,35 @@ async def _analyze_interview_async(
         summary_text = summary or get_text("iv-no-summary", locale)
         text = f"{header}\n\n<b>{get_text('iv-summary-label', locale)}</b>\n{summary_text}"
 
-        with contextlib.suppress(Exception):
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=interview_detail_keyboard(
-                    interview_id=interview_id,
-                    improvements=improvements,
-                    locale=locale,
-                ),
-                disable_web_page_preview=True,
-            )
+        await task.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            text,
+            reply_markup=interview_detail_keyboard(
+                interview_id=interview_id,
+                improvements=improvements,
+                locale=locale,
+            ),
+        )
 
         cb.record_success()
+        await task.mark_completed(
+            idempotency_key, "interview_analysis", interview_id, session_factory
+        )
         return {"status": "completed", "interview_id": interview_id}
+
+    except SoftTimeLimitExceeded:
+        await task.handle_soft_timeout(bot, chat_id, message_id, locale)
+        task.request.retries = task.max_retries
+        raise
 
     except Exception as exc:
         cb.record_failure()
         logger.error("Interview analysis task failed", interview_id=interview_id, error=str(exc))
 
         if task.request.retries >= task.max_retries:
-            with contextlib.suppress(Exception):
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=get_text("iv-analysis-failed", locale),
-                )
+            await task.notify_user(bot, chat_id, message_id, get_text("iv-analysis-failed", locale))
 
         raise task.retry(exc=exc) from exc
 
@@ -198,42 +185,37 @@ async def _analyze_interview_async(
 
 
 async def _generate_flow_async(
+    task: HHBotTask,
     session_factory: async_sessionmaker[AsyncSession],
-    task,
     improvement_id: int,
     interview_id: int,
     chat_id: int,
     message_id: int,
     locale: str,
 ) -> dict:
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
+    from celery.exceptions import SoftTimeLimitExceeded
 
-    from src.config import settings as app_settings
+    from src.core.constants import AppSettingKey
     from src.core.i18n import get_text
-    from src.worker.circuit_breaker import CircuitBreaker
 
-    cb = CircuitBreaker("improvement_flow")
-
-    enabled, cb_threshold, cb_timeout = await _load_circuit_breaker_config(
-        session_factory,
-        "task_improvement_flow_enabled",
-        "cb_improvement_flow_failure_threshold",
-        "cb_improvement_flow_recovery_timeout",
-    )
+    enabled = await task.check_enabled(AppSettingKey.TASK_IMPROVEMENT_FLOW_ENABLED, session_factory)
     if not enabled:
         return {"status": "disabled"}
 
-    cb.update_config(failure_threshold=cb_threshold, recovery_timeout=cb_timeout)
-
+    cb = await task.load_circuit_breaker(
+        "improvement_flow",
+        AppSettingKey.CB_IMPROVEMENT_FLOW_FAILURE_THRESHOLD,
+        AppSettingKey.CB_IMPROVEMENT_FLOW_RECOVERY_TIMEOUT,
+        session_factory,
+    )
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
-    bot = Bot(
-        token=app_settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = task.create_bot()
+    idempotency_key = f"generate_flow:{improvement_id}"
+
+    if await task.is_already_completed(idempotency_key, session_factory):
+        return {"status": "already_completed"}
 
     try:
         async with session_factory() as session:
@@ -287,34 +269,38 @@ async def _generate_flow_async(
         imp_summary = improvement.summary if improvement else ""
         text = f"{header}\n\n<b>{tech_title}</b>\n\n{imp_summary}{flow_section}"
 
-        with contextlib.suppress(Exception):
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=improvement_detail_keyboard(
-                    interview_id=interview_id,
-                    improvement_id=improvement_id,
-                    has_flow=bool(flow),
-                    locale=locale,
-                ),
-                disable_web_page_preview=True,
-            )
+        await task.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            text,
+            reply_markup=improvement_detail_keyboard(
+                interview_id=interview_id,
+                improvement_id=improvement_id,
+                has_flow=bool(flow),
+                locale=locale,
+            ),
+        )
 
         cb.record_success()
+        await task.mark_completed(
+            idempotency_key, "improvement_flow", improvement_id, session_factory
+        )
         return {"status": "completed", "improvement_id": improvement_id}
+
+    except SoftTimeLimitExceeded:
+        await task.handle_soft_timeout(bot, chat_id, message_id, locale)
+        task.request.retries = task.max_retries
+        raise
 
     except Exception as exc:
         cb.record_failure()
         logger.error("Improvement flow task failed", improvement_id=improvement_id, error=str(exc))
 
         if task.request.retries >= task.max_retries:
-            with contextlib.suppress(Exception):
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=get_text("iv-flow-generation-failed", locale),
-                )
+            await task.notify_user(
+                bot, chat_id, message_id, get_text("iv-flow-generation-failed", locale)
+            )
 
         raise task.retry(exc=exc) from exc
 

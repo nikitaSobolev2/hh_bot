@@ -62,12 +62,14 @@ class HHScraper:
         retries: int = 3,
         page_delay: tuple[float, float] = (1.0, 2.0),
         vacancy_delay: tuple[float, float] = (1.0, 2.5),
+        rate_limiter=None,
     ) -> None:
         self._ua = UserAgent()
         self._timeout = timeout
         self._retries = retries
         self._page_delay = page_delay
         self._vacancy_delay = vacancy_delay
+        self._rate_limiter = rate_limiter
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -79,6 +81,8 @@ class HHScraper:
         }
 
     async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> BeautifulSoup | None:
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
         for attempt in range(self._retries):
             try:
                 resp = await client.get(url, headers=self._headers(), timeout=self._timeout)

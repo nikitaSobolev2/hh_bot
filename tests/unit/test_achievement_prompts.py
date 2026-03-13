@@ -23,10 +23,20 @@ def test_build_achievement_generation_prompt_contains_company_name():
     assert "Backend development" in prompt
 
 
-def test_build_achievement_generation_prompt_format_markers_present():
+def test_build_achievement_generation_system_prompt_format_markers_present():
+    from src.services.ai.prompts import build_achievement_generation_system_prompt
+
+    system_prompt = build_achievement_generation_system_prompt()
+
+    assert "[AchStart]" in system_prompt
+    assert "[AchEnd]" in system_prompt
+
+
+def test_build_achievement_generation_prompt_format_markers_in_system():
     from src.services.ai.prompts import (
         AchievementExperienceEntry,
         build_achievement_generation_prompt,
+        build_achievement_generation_system_prompt,
     )
 
     entries = [
@@ -37,10 +47,12 @@ def test_build_achievement_generation_prompt_format_markers_present():
             user_responsibilities=None,
         )
     ]
-    prompt = build_achievement_generation_prompt(entries)
+    user_prompt = build_achievement_generation_prompt(entries)
+    system_prompt = build_achievement_generation_system_prompt()
 
-    assert "[AchStart]" in prompt
-    assert "[AchEnd]" in prompt
+    assert "[AchStart]" in system_prompt
+    assert "[AchEnd]" in system_prompt
+    assert "Tech Inc" in user_prompt
 
 
 def test_build_achievement_generation_prompt_multiple_companies():

@@ -11,9 +11,13 @@ All Celery tasks in this project should inherit from ``HHBotTask`` (or use the
 - Shared bot creation via ``create_bot()``.
 - Idempotency checking via ``is_already_completed(key, session_factory)``.
 - Idempotency key marking via ``mark_completed(key, session_factory, ...)``.
+- Per-user task lock via ``acquire_user_task_lock`` / ``release_user_task_lock``.
+- Universal soft-timeout handling via ``handle_soft_timeout``.
 """
 
 from __future__ import annotations
+
+import contextlib
 
 import structlog
 from celery import Task
@@ -123,6 +127,46 @@ class HHBotTask(Task):
         )
 
     # ------------------------------------------------------------------
+    # Soft time-limit handler
+    # ------------------------------------------------------------------
+
+    async def handle_soft_timeout(
+        self,
+        bot: Bot,  # noqa: F821
+        chat_id: int,
+        message_id: int,
+        locale: str,
+        *,
+        idempotency_key: str | None = None,
+        task_type: str | None = None,
+        user_id: int | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
+        """Notify user of soft timeout and optionally mark the task failed."""
+        from src.core.i18n import get_text
+
+        logger = self.get_logger()
+        logger.warning("Task soft time limit exceeded", task_name=self.name)
+
+        with contextlib.suppress(Exception):
+            await self.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("task-soft-timeout", locale),
+            )
+
+        if idempotency_key and task_type and user_id and session_factory:
+            with contextlib.suppress(Exception):
+                await self.mark_failed(
+                    idempotency_key,
+                    task_type,
+                    user_id,
+                    session_factory,
+                    error="soft_time_limit_exceeded",
+                )
+
+    # ------------------------------------------------------------------
     # Idempotency
     # ------------------------------------------------------------------
 
@@ -186,3 +230,39 @@ class HHBotTask(Task):
                 )
             )
             await session.commit()
+
+    # ------------------------------------------------------------------
+    # Per-user task lock (prevents duplicate concurrent submissions)
+    # ------------------------------------------------------------------
+
+    async def acquire_user_task_lock(
+        self,
+        user_id: int,
+        task_type: str,
+        ttl: int = 600,
+    ) -> bool:
+        """Attempt to acquire a per-user task lock. Returns True if acquired.
+
+        Uses Redis SET NX EX to prevent the same user from running two
+        instances of the same task_type concurrently.
+        """
+        from src.core.redis import create_async_redis
+
+        redis = create_async_redis()
+        key = f"lock:user_task:{task_type}:{user_id}"
+        try:
+            acquired = await redis.set(key, self.request.id or "1", nx=True, ex=ttl)
+            return bool(acquired)
+        finally:
+            await redis.aclose()
+
+    async def release_user_task_lock(self, user_id: int, task_type: str) -> None:
+        """Release the per-user task lock."""
+        from src.core.redis import create_async_redis
+
+        redis = create_async_redis()
+        key = f"lock:user_task:{task_type}:{user_id}"
+        try:
+            await redis.delete(key)
+        finally:
+            await redis.aclose()

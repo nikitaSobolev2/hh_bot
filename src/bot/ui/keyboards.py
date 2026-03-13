@@ -115,3 +115,25 @@ def back_to_main_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         callback_data=MenuCallback(action="main").pack(),
     )
     return builder.as_markup()
+
+
+def step_keyboard(
+    step: int,
+    total: int,
+    back_callback: str,
+    cancel_callback: str,
+    i18n: I18nContext,
+    *,
+    back_key: str = "btn-back",
+    cancel_key: str = "btn-cancel",
+) -> InlineKeyboardMarkup:
+    """FSM step navigation keyboard with Back and Cancel buttons.
+
+    Placed at the bottom of every form step. Back is hidden on the first step.
+    """
+    builder = InlineKeyboardBuilder()
+    if step > 1:
+        builder.button(text=i18n.get(back_key), callback_data=back_callback)
+    builder.button(text=i18n.get(cancel_key), callback_data=cancel_callback)
+    builder.adjust(2 if step > 1 else 1)
+    return builder.as_markup()

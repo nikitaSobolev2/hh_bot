@@ -9,6 +9,7 @@ from src.config import settings
 from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -35,7 +36,7 @@ def _redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url)
 
 
-@celery_app.task(bind=True, name="autoparse.dispatch_all", max_retries=1)
+@celery_app.task(bind=True, base=HHBotTask, name="autoparse.dispatch_all", max_retries=1)
 def dispatch_all_autoparse(self) -> dict:
     return run_async(lambda sf: _dispatch_all_async(sf))
 
@@ -75,9 +76,12 @@ async def _dispatch_all_async(session_factory) -> dict:
 
 @celery_app.task(
     bind=True,
+    base=HHBotTask,
     name="autoparse.run_company",
     max_retries=2,
     default_retry_delay=60,
+    soft_time_limit=600,
+    time_limit=660,
     acks_late=True,
     reject_on_worker_lost=True,
 )
@@ -424,7 +428,7 @@ async def _run_autoparse_company_async(
 _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
 
 
-@celery_app.task(bind=True, name="autoparse.deliver_results", max_retries=3)
+@celery_app.task(bind=True, base=HHBotTask, name="autoparse.deliver_results", max_retries=3)
 def deliver_autoparse_results(self, company_id: int, user_id: int, force_now: bool = False) -> dict:
     return run_async(lambda sf: _deliver_results_async(sf, self, company_id, user_id, force_now))
 

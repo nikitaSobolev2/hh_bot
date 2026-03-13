@@ -73,3 +73,20 @@ def format_status_badge(status: str, icons: dict[str, str]) -> str:
     """Return an icon + status string from a status icon map."""
     icon = icons.get(status, "❓")
     return f"{icon} {status}"
+
+
+def error_template(key: str, i18n: I18nContext) -> str:
+    """Return a short error message with a standard ❌ prefix."""
+    return f"❌ {i18n.get(key)}"
+
+
+def progress_template(title: str, percent: int) -> str:
+    """Return a visual progress bar message.
+
+    Args:
+        title: Human-readable description of the ongoing work.
+        percent: 0–100.
+    """
+    filled = int(percent / 10)
+    bar = "█" * filled + "░" * (10 - filled)
+    return f"⏳ <b>{title}</b>\n[{bar}] {percent}%"

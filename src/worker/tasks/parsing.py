@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.logging import get_logger
 from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -15,9 +16,12 @@ logger = get_logger(__name__)
 
 @celery_app.task(
     bind=True,
+    base=HHBotTask,
     name="parsing.run_company",
     max_retries=2,
     default_retry_delay=30,
+    soft_time_limit=600,
+    time_limit=660,
 )
 def run_parsing_company(
     self,

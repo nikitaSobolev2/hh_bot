@@ -156,6 +156,16 @@ class AppSettingKey(StrEnum):
     CB_WORK_EXPERIENCE_AI_RECOVERY_TIMEOUT = "cb_work_experience_ai_recovery_timeout"
     CB_RECOMMENDATION_LETTER_FAILURE_THRESHOLD = "cb_recommendation_letter_failure_threshold"
     CB_RECOMMENDATION_LETTER_RECOVERY_TIMEOUT = "cb_recommendation_letter_recovery_timeout"
+    CB_INTERVIEW_ANALYSIS_FAILURE_THRESHOLD = "cb_interview_analysis_failure_threshold"
+    CB_INTERVIEW_ANALYSIS_RECOVERY_TIMEOUT = "cb_interview_analysis_recovery_timeout"
+    CB_IMPROVEMENT_FLOW_FAILURE_THRESHOLD = "cb_improvement_flow_failure_threshold"
+    CB_IMPROVEMENT_FLOW_RECOVERY_TIMEOUT = "cb_improvement_flow_recovery_timeout"
+    CB_PREP_GUIDE_FAILURE_THRESHOLD = "cb_interview_prep_guide_failure_threshold"
+    CB_PREP_GUIDE_RECOVERY_TIMEOUT = "cb_interview_prep_guide_recovery_timeout"
+    CB_PREP_DEEP_SUMMARY_FAILURE_THRESHOLD = "cb_interview_prep_deep_summary_failure_threshold"
+    CB_PREP_DEEP_SUMMARY_RECOVERY_TIMEOUT = "cb_interview_prep_deep_summary_recovery_timeout"
+    CB_PREP_TEST_FAILURE_THRESHOLD = "cb_interview_prep_test_failure_threshold"
+    CB_PREP_TEST_RECOVERY_TIMEOUT = "cb_interview_prep_test_recovery_timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -178,3 +188,7 @@ AI_MAX_DESCRIPTION_LENGTH = 8000
 AI_DEFAULT_TIMEOUT = 180
 AI_STREAM_TIMEOUT_CONNECT = 10.0
 AI_STREAM_TIMEOUT_READ = 30.0
+
+# Rate limiting for AI API calls (requests per window)
+AI_RATE_LIMIT_REQUESTS = 10
+AI_RATE_LIMIT_WINDOW_SECONDS = 1

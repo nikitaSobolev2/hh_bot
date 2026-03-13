@@ -2,7 +2,10 @@
 
 
 def test_build_preparation_guide_prompt_contains_vacancy_title():
-    from src.services.ai.prompts import build_preparation_guide_prompt
+    from src.services.ai.prompts import (
+        build_preparation_guide_prompt,
+        build_preparation_guide_system_prompt,
+    )
 
     prompt = build_preparation_guide_prompt(
         vacancy_title="Backend Developer",
@@ -10,10 +13,11 @@ def test_build_preparation_guide_prompt_contains_vacancy_title():
         user_tech_stack=["Python", "FastAPI"],
         user_work_experience="5 years at ACME",
     )
+    system_prompt = build_preparation_guide_system_prompt()
 
     assert "Backend Developer" in prompt
     assert "Python" in prompt
-    assert "[PrepStepStart]" in prompt
+    assert "[PrepStepStart]" in system_prompt
 
 
 def test_build_preparation_guide_prompt_without_description():
@@ -43,18 +47,23 @@ def test_build_deep_learning_summary_prompt_contains_step_title():
 
 
 def test_build_preparation_test_prompt_contains_format_markers():
-    from src.services.ai.prompts import build_preparation_test_prompt
+    from src.services.ai.prompts import (
+        build_preparation_test_prompt,
+        build_preparation_test_system_prompt,
+    )
 
     prompt = build_preparation_test_prompt(
         step_title="Algorithms",
         step_content="Study sorting algorithms",
         deep_summary=None,
     )
+    system_prompt = build_preparation_test_system_prompt()
 
-    assert "[TestStart]" in prompt
-    assert "[TestEnd]" in prompt
-    assert "[Q]:" in prompt
-    assert "[A]:" in prompt
+    assert "Algorithms" in prompt
+    assert "[TestStart]" in system_prompt
+    assert "[TestEnd]" in system_prompt
+    assert "[Q]:" in system_prompt
+    assert "[A]:" in system_prompt
 
 
 def test_parse_prep_steps_extracts_steps_correctly():

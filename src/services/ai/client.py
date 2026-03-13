@@ -66,10 +66,12 @@ class AIClient:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        rate_limiter=None,
     ) -> None:
         self._api_key = api_key or settings.openai_api_key
         self._base_url = base_url or settings.openai_base_url
         self._model = model or settings.openai_model
+        self._rate_limiter = rate_limiter
         # max_retries=1: retry once on transient errors (429, 500, timeout) then
         # let the caller decide — Celery tasks handle their own retry logic.
         self._client = AsyncOpenAI(
@@ -77,6 +79,11 @@ class AIClient:
             base_url=self._base_url,
             max_retries=1,
         )
+
+    async def _acquire_rate_limit(self) -> None:
+        """Wait for an AI rate-limit slot if a limiter is configured."""
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
 
     async def extract_keywords(self, description: str) -> list[str]:
         if not description.strip():
@@ -88,6 +95,7 @@ class AIClient:
             {"role": "user", "content": build_keyword_extraction_user_content(truncated)},
         ]
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=120,
@@ -132,6 +140,7 @@ class AIClient:
             },
         ]
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=120,
@@ -167,6 +176,7 @@ class AIClient:
             },
         ]
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=60,
@@ -186,6 +196,7 @@ class AIClient:
         prompt: str,
     ) -> str | None:
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=300,
@@ -230,6 +241,7 @@ class AIClient:
             },
         ]
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=180,
@@ -266,6 +278,7 @@ class AIClient:
             },
         ]
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=180,
@@ -298,6 +311,7 @@ class AIClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         try:
+            await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=timeout,
@@ -317,6 +331,7 @@ class AIClient:
         chunk_count = 0
         max_chunk_len = 0
         total_chars = 0
+        await self._acquire_rate_limit()
         try:
             stream = await self._client.chat.completions.create(
                 model=self._model,

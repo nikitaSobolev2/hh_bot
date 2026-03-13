@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.logging import get_logger
 from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -13,9 +14,12 @@ logger = get_logger(__name__)
 
 @celery_app.task(
     bind=True,
+    base=HHBotTask,
     name="ai.generate_key_phrases",
     max_retries=1,
     default_retry_delay=15,
+    soft_time_limit=300,
+    time_limit=360,
 )
 def generate_key_phrases_task(
     self,

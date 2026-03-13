@@ -806,6 +806,7 @@ ach-generation-completed = ✅ Achievements successfully generated!
 ach-btn-view-result = 🏆 View Result
 ach-not-found = Generation not found.
 ach-deleted = Removed from list.
+ach-current-value = Current value
 
 # ── Interview Q&A Generator ───────────────────────────────────
 iqa-list-title = 💬 Interview Q&A
@@ -976,3 +977,15 @@ prep-test-correct = ✅ Correct!
 prep-test-wrong = ❌ Wrong.
 prep-test-right-answer = Correct answer
 prep-test-results = Score
+
+# == Task UX ==
+task-soft-timeout = ⏱ The task exceeded the time limit. Please try again.
+task-progress-started = ⏳ { $title }...
+btn-edit-field = ✏️ Edit { $field }
+btn-review = 👁 Review
+form-step-counter = Step { $current } of { $total }
+form-review-title = Review your answers before submitting
+prep-guide-failed = ❌ Failed to generate preparation guide.
+prep-deep-failed = ❌ Failed to generate deep learning material.
+prep-test-failed = ❌ Failed to generate test.
+res-rec-letter-failed = ❌ Failed to generate recommendation letter.
