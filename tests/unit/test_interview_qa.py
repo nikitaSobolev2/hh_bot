@@ -489,6 +489,16 @@ class TestHandleRegenerate:
 # ── _generate_qa_async ────────────────────────────────────────────────────────
 
 
+def _make_mock_task(mock_cb=None, mock_bot=None):
+    """Return a mock HHBotTask with stubbed shared helpers."""
+    task = MagicMock()
+    task.check_enabled = AsyncMock(return_value=True)
+    task.load_circuit_breaker = AsyncMock(return_value=mock_cb or MagicMock())
+    task.create_bot = MagicMock(return_value=mock_bot or AsyncMock())
+    task.notify_user = AsyncMock()
+    return task
+
+
 class TestGenerateQaAsync:
     @pytest.mark.asyncio
     async def test_with_specific_question_key_generates_only_that_key(self):
@@ -516,26 +526,17 @@ class TestGenerateQaAsync:
             "[QAStart]:best_achievement\nI achieved great things.[QAEnd]:best_achievement"
         )
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = raw_response
-
         mock_ai_client = MagicMock()
-        mock_ai_client._client = AsyncMock()
-        mock_ai_client._model = "gpt-4"
-        mock_ai_client._client.chat = MagicMock()
-        mock_ai_client._client.chat.completions = MagicMock()
-        mock_ai_client._client.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_ai_client.generate_text = AsyncMock(return_value=raw_response)
+
+        mock_task = _make_mock_task(mock_cb=mock_cb, mock_bot=mock_bot)
 
         _we_path = "src.repositories.work_experience.WorkExperienceRepository"
         _qa_path = "src.repositories.interview_qa.StandardQuestionRepository"
         with (
-            patch("src.worker.circuit_breaker.CircuitBreaker", return_value=mock_cb),
             patch(_we_path, return_value=mock_we_repo),
             patch(_qa_path, return_value=mock_qa_repo),
             patch("src.services.ai.client.AIClient", return_value=mock_ai_client),
-            patch("aiogram.Bot", return_value=mock_bot),
-            patch("aiogram.client.default.DefaultBotProperties"),
             patch("src.config.settings", bot_token="fake"),
             patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
             patch(
@@ -547,7 +548,7 @@ class TestGenerateQaAsync:
                 return_value="user content",
             ),
         ):
-            result = await _generate_qa_async(sf, 1, 100, 200, "en", "best_achievement")
+            result = await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", "best_achievement")
 
         assert result["status"] == "completed"
         mock_qa_repo.upsert_answer.assert_called_once()
@@ -581,26 +582,17 @@ class TestGenerateQaAsync:
             "[QAStart]:worst_achievement\nAnswer 2.[QAEnd]:worst_achievement"
         )
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = raw_response
-
         mock_ai_client = MagicMock()
-        mock_ai_client._client = AsyncMock()
-        mock_ai_client._model = "gpt-4"
-        mock_ai_client._client.chat = MagicMock()
-        mock_ai_client._client.chat.completions = MagicMock()
-        mock_ai_client._client.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_ai_client.generate_text = AsyncMock(return_value=raw_response)
+
+        mock_task = _make_mock_task(mock_cb=mock_cb, mock_bot=mock_bot)
 
         _we_path = "src.repositories.work_experience.WorkExperienceRepository"
         _qa_path = "src.repositories.interview_qa.StandardQuestionRepository"
         with (
-            patch("src.worker.circuit_breaker.CircuitBreaker", return_value=mock_cb),
             patch(_we_path, return_value=mock_we_repo),
             patch(_qa_path, return_value=mock_qa_repo),
             patch("src.services.ai.client.AIClient", return_value=mock_ai_client),
-            patch("aiogram.Bot", return_value=mock_bot),
-            patch("aiogram.client.default.DefaultBotProperties"),
             patch("src.config.settings", bot_token="fake"),
             patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
             patch(
@@ -612,7 +604,7 @@ class TestGenerateQaAsync:
                 return_value="user content",
             ),
         ):
-            result = await _generate_qa_async(sf, 1, 100, 200, "en", None)
+            result = await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", None)
 
         assert result["status"] == "completed"
         assert mock_qa_repo.upsert_answer.call_count == 2
@@ -627,8 +619,9 @@ class TestGenerateQaAsync:
         mock_cb = MagicMock()
         mock_cb.is_call_allowed.return_value = False
 
-        with patch("src.worker.circuit_breaker.CircuitBreaker", return_value=mock_cb):
-            result = await _generate_qa_async(sf, 1, 100, 200, "en", None)
+        mock_task = _make_mock_task(mock_cb=mock_cb)
+
+        result = await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", None)
 
         assert result == {"status": "circuit_open"}
 
@@ -656,17 +649,16 @@ class TestGenerateQaAsync:
         mock_bot = AsyncMock()
         mock_bot.session = AsyncMock()
 
+        mock_task = _make_mock_task(mock_cb=mock_cb, mock_bot=mock_bot)
+
         _we_path = "src.repositories.work_experience.WorkExperienceRepository"
         _qa_path = "src.repositories.interview_qa.StandardQuestionRepository"
         with (
-            patch("src.worker.circuit_breaker.CircuitBreaker", return_value=mock_cb),
             patch(_we_path, return_value=mock_we_repo),
             patch(_qa_path, return_value=mock_qa_repo),
-            patch("aiogram.Bot", return_value=mock_bot),
-            patch("aiogram.client.default.DefaultBotProperties"),
             patch("src.config.settings", bot_token="fake"),
             patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
         ):
-            result = await _generate_qa_async(sf, 1, 100, 200, "en", None)
+            result = await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", None)
 
         assert result == {"status": "already_generated"}

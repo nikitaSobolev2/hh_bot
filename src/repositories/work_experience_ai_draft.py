@@ -10,6 +10,8 @@ from src.models.work_experience_ai_draft import UserWorkExperienceAiDraft
 
 
 class WorkExperienceAiDraftRepository:
+    """Specialised repository for AI drafts (no PK-based CRUD needed)."""
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 

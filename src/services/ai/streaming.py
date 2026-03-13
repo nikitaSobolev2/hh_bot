@@ -12,14 +12,15 @@ from collections.abc import AsyncGenerator
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
+from src.core.constants import TELEGRAM_MESSAGE_LIMIT, TELEGRAM_TRUNCATE_LIMIT
 from src.core.logging import get_logger
+from src.services.telegram.messenger import send_message_with_retry
 
 logger = get_logger(__name__)
 
 _DRAFT_INTERVAL_MS = 500
-_FLOOD_MAX_RETRIES = 3
-_MAX_MESSAGE_LENGTH = 4096
-_TRUNCATED_LENGTH = 4000
+_MAX_MESSAGE_LENGTH = TELEGRAM_MESSAGE_LIMIT
+_TRUNCATED_LENGTH = TELEGRAM_TRUNCATE_LIMIT
 
 
 async def stream_to_telegram(
@@ -146,12 +147,5 @@ async def _send_with_retry(
     parse_mode: str | None = None,
     **kwargs,
 ) -> None:
-    for attempt in range(_FLOOD_MAX_RETRIES):
-        try:
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode, **kwargs)
-            return
-        except TelegramRetryAfter as exc:
-            if attempt == _FLOOD_MAX_RETRIES - 1:
-                raise
-            logger.warning("send_message flood control, pausing", retry_after=exc.retry_after)
-            await asyncio.sleep(exc.retry_after)
+    """Internal alias — delegates to the shared messenger utility."""
+    await send_message_with_retry(bot, chat_id, text=text, parse_mode=parse_mode, **kwargs)

@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.modules.interviews.callbacks import InterviewCallback, InterviewFormCallback
+from src.core.constants import IMPROVEMENT_STATUS_ICONS as _IMPROVEMENT_STATUS_ICONS_RAW
 from src.models.interview import ImprovementStatus, InterviewImprovement
 
 if TYPE_CHECKING:
@@ -27,9 +28,9 @@ def _t(key: str, i18n: I18nContext | None = None, locale: str = "ru") -> str:
 _PAGE_SIZE = 5
 
 _IMPROVEMENT_STATUS_ICONS = {
-    ImprovementStatus.PENDING: "⏳",
-    ImprovementStatus.SUCCESS: "✅",
-    ImprovementStatus.ERROR: "❌",
+    ImprovementStatus.PENDING: _IMPROVEMENT_STATUS_ICONS_RAW.get("pending", "⏳"),
+    ImprovementStatus.SUCCESS: _IMPROVEMENT_STATUS_ICONS_RAW.get("success", "✅"),
+    ImprovementStatus.ERROR: _IMPROVEMENT_STATUS_ICONS_RAW.get("error", "❌"),
 }
 
 

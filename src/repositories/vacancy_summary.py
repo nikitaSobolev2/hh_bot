@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.vacancy_summary import VacancySummary
+from src.repositories.base import BaseRepository
 
 _PAGE_SIZE = 5
 
 
-class VacancySummaryRepository:
+class VacancySummaryRepository(BaseRepository[VacancySummary]):
     def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+        super().__init__(session, VacancySummary)
 
-    async def create(
+    async def create_for_user(
         self,
         user_id: int,
         excluded_industries: str | None = None,
@@ -33,31 +34,22 @@ class VacancySummaryRepository:
         await self._session.flush()
         return summary
 
-    async def get_by_id(self, summary_id: int) -> VacancySummary | None:
-        result = await self._session.execute(
-            select(VacancySummary).where(VacancySummary.id == summary_id)
-        )
-        return result.scalar_one_or_none()
-
     async def get_by_user_paginated(
         self,
         user_id: int,
         page: int = 0,
     ) -> tuple[list[VacancySummary], int]:
-        count_result = await self._session.execute(
-            select(VacancySummary).where(
-                VacancySummary.user_id == user_id,
-                VacancySummary.is_deleted.is_(False),
-            )
+        base_where = (
+            VacancySummary.user_id == user_id,
+            VacancySummary.is_deleted.is_(False),
         )
-        total = len(count_result.scalars().all())
+
+        count_stmt = select(func.count()).select_from(VacancySummary).where(*base_where)
+        total = await self._session.scalar(count_stmt) or 0
 
         result = await self._session.execute(
             select(VacancySummary)
-            .where(
-                VacancySummary.user_id == user_id,
-                VacancySummary.is_deleted.is_(False),
-            )
+            .where(*base_where)
             .order_by(VacancySummary.created_at.desc())
             .offset(page * _PAGE_SIZE)
             .limit(_PAGE_SIZE)

@@ -27,6 +27,18 @@ class ReportGenerator:
     def _t(self, key: str, **kwargs: str) -> str:
         return get_text(key, self._locale, **kwargs)
 
+    def _rank_items(self, items: dict[str, int], top_n: int) -> list[tuple[int, str, int, str]]:
+        """Return ranked items as (rank, name, count, pct_str) tuples."""
+        total = sum(items.values())
+        ranked = []
+        for rank, (name, count) in enumerate(
+            sorted(items.items(), key=lambda x: -x[1])[:top_n],
+            1,
+        ):
+            pct = f"{count / total * 100:.1f}%" if total else "—"
+            ranked.append((rank, name, count, pct))
+        return ranked
+
     def generate_message(self, top_n: int = 25) -> str:
         lines = [
             self._t("report-msg-title", title=self._title),
@@ -37,22 +49,12 @@ class ReportGenerator:
 
         if self._keywords:
             lines.append(self._t("report-top-keywords", n=str(top_n)))
-            total = sum(self._keywords.values())
-            for rank, (kw, count) in enumerate(
-                sorted(self._keywords.items(), key=lambda x: -x[1])[:top_n],
-                1,
-            ):
-                pct = f"{count / total * 100:.1f}%" if total else "—"
+            for rank, kw, count, pct in self._rank_items(self._keywords, top_n):
                 lines.append(f"  {rank}. <code>{kw}</code> — {count} ({pct})")
 
         if self._skills:
             lines.append(f"\n{self._t('report-top-skills', n=str(top_n))}")
-            total = sum(self._skills.values())
-            for rank, (sk, count) in enumerate(
-                sorted(self._skills.items(), key=lambda x: -x[1])[:top_n],
-                1,
-            ):
-                pct = f"{count / total * 100:.1f}%" if total else "—"
+            for rank, sk, count, pct in self._rank_items(self._skills, top_n):
                 lines.append(f"  {rank}. <code>{sk}</code> — {count} ({pct})")
 
         if self._key_phrases:
@@ -79,12 +81,7 @@ class ReportGenerator:
             count_col = self._t("report-md-count-col")
             lines.append(f"| # | {kw_col} | {count_col} | % |")
             lines.append("|---|---------|-------|---|")
-            total = sum(self._keywords.values())
-            for rank, (kw, count) in enumerate(
-                sorted(self._keywords.items(), key=lambda x: -x[1])[:top_n],
-                1,
-            ):
-                pct = f"{count / total * 100:.1f}%" if total else "—"
+            for rank, kw, count, pct in self._rank_items(self._keywords, top_n):
                 lines.append(f"| {rank} | {kw} | {count} | {pct} |")
 
         if self._skills:
@@ -94,12 +91,7 @@ class ReportGenerator:
             lines.append("")
             lines.append(f"| # | {skill_col} | {count_col} | % |")
             lines.append("|---|-------|-------|---|")
-            total = sum(self._skills.values())
-            for rank, (sk, count) in enumerate(
-                sorted(self._skills.items(), key=lambda x: -x[1])[:top_n],
-                1,
-            ):
-                pct = f"{count / total * 100:.1f}%" if total else "—"
+            for rank, sk, count, pct in self._rank_items(self._skills, top_n):
                 lines.append(f"| {rank} | {sk} | {count} | {pct} |")
 
         if self._key_phrases:
@@ -124,24 +116,14 @@ class ReportGenerator:
         if self._keywords:
             lines.append(self._t("report-txt-keywords-header", n=str(top_n)))
             lines.append("-" * 50)
-            total = sum(self._keywords.values())
-            for rank, (kw, count) in enumerate(
-                sorted(self._keywords.items(), key=lambda x: -x[1])[:top_n],
-                1,
-            ):
-                pct = f"{count / total * 100:.1f}%" if total else "—"
+            for rank, kw, count, pct in self._rank_items(self._keywords, top_n):
                 lines.append(f"  {rank:>3}. {kw:<30} {count:>4}  ({pct})")
             lines.append("")
 
         if self._skills:
             lines.append(self._t("report-txt-skills-header", n=str(top_n)))
             lines.append("-" * 50)
-            total = sum(self._skills.values())
-            for rank, (sk, count) in enumerate(
-                sorted(self._skills.items(), key=lambda x: -x[1])[:top_n],
-                1,
-            ):
-                pct = f"{count / total * 100:.1f}%" if total else "—"
+            for rank, sk, count, pct in self._rank_items(self._skills, top_n):
                 lines.append(f"  {rank:>3}. {sk:<30} {count:>4}  ({pct})")
             lines.append("")
 

@@ -89,14 +89,16 @@ class InterviewQuestionRepository(BaseRepository[InterviewQuestion]):
     async def bulk_create(
         self,
         interview_id: int,
-        questions: list[dict[str, str]],
+        questions: list[QAPair],  # noqa: F821
     ) -> list[InterviewQuestion]:
         created = []
         for idx, qa in enumerate(questions):
+            question_text = qa.question if hasattr(qa, "question") else qa["question"]
+            answer_text = qa.answer if hasattr(qa, "answer") else qa["answer"]
             instance = InterviewQuestion(
                 interview_id=interview_id,
-                question=qa["question"],
-                user_answer=qa["answer"],
+                question=question_text,
+                user_answer=answer_text,
                 sort_order=idx,
             )
             self._session.add(instance)

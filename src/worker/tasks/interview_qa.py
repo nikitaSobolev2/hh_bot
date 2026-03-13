@@ -6,8 +6,10 @@ import re
 
 import httpx
 
+from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
 from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -41,6 +43,7 @@ def _send_timeout_message(bot_token: str, chat_id: int, locale: str) -> None:
 
 @celery_app.task(
     bind=True,
+    base=HHBotTask,
     name="interview_qa.generate",
     max_retries=2,
     default_retry_delay=30,
@@ -61,7 +64,9 @@ def generate_interview_qa_task(
 
     try:
         return run_async(
-            lambda sf: _generate_qa_async(sf, user_id, chat_id, message_id, locale, question_key)
+            lambda sf: _generate_qa_async(
+                self, sf, user_id, chat_id, message_id, locale, question_key
+            )
         )
     except SoftTimeLimitExceeded:
         logger.warning(
@@ -70,14 +75,12 @@ def generate_interview_qa_task(
             chat_id=chat_id,
         )
         _send_timeout_message(settings.bot_token, chat_id, locale)
-        # Exhaust the retry budget so Celery marks this as FAILURE immediately
-        # instead of re-scheduling up to max_retries more times (each of which
-        # would also time out and send another message to the user).
         self.request.retries = self.max_retries
         raise
 
 
 async def _generate_qa_async(
+    task: HHBotTask,
     session_factory,
     user_id: int,
     chat_id: int,
@@ -85,7 +88,6 @@ async def _generate_qa_async(
     locale: str,
     question_key: str | None = None,
 ) -> dict:
-    from src.config import settings
     from src.models.interview_qa import (
         BASE_QUESTION_KEYS,
         QuestionCategory,
@@ -98,9 +100,17 @@ async def _generate_qa_async(
         build_standard_qa_system_prompt,
         build_standard_qa_user_content,
     )
-    from src.worker.circuit_breaker import CircuitBreaker
 
-    cb = CircuitBreaker("interview_qa")
+    enabled = await task.check_enabled(AppSettingKey.TASK_INTERVIEW_QA_ENABLED, session_factory)
+    if not enabled:
+        return {"status": "disabled"}
+
+    cb = await task.load_circuit_breaker(
+        "interview_qa",
+        AppSettingKey.CB_INTERVIEW_QA_FAILURE_THRESHOLD,
+        AppSettingKey.CB_INTERVIEW_QA_RECOVERY_TIMEOUT,
+        session_factory,
+    )
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
@@ -119,7 +129,7 @@ async def _generate_qa_async(
         keys_to_generate = [k for k in ai_question_keys if k not in existing_keys]
 
     if not keys_to_generate:
-        await _notify_user(settings.bot_token, chat_id, message_id, locale)
+        await _notify_user(task, chat_id, message_id, locale)
         return {"status": "already_generated"}
 
     experiences = [
@@ -143,17 +153,13 @@ async def _generate_qa_async(
     user_content = build_standard_qa_user_content(experiences, keys_to_generate, question_texts)
 
     try:
-        response = await ai_client._client.chat.completions.create(
-            model=ai_client._model,
+        raw = await ai_client.generate_text(
+            user_content,
+            system_prompt=system_prompt,
             timeout=180,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
             max_tokens=4000,
             temperature=0.5,
         )
-        raw = (response.choices[0].message.content or "").strip()
         blocks = _parse_qa_blocks(raw)
         cb.record_success()
     except Exception as exc:
@@ -176,20 +182,16 @@ async def _generate_qa_async(
             )
         await session.commit()
 
-    await _notify_user(settings.bot_token, chat_id, message_id, locale)
+    await _notify_user(task, chat_id, message_id, locale)
     return {"status": "completed"}
 
 
-async def _notify_user(bot_token: str, chat_id: int, message_id: int, locale: str) -> None:
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
+async def _notify_user(task: HHBotTask, chat_id: int, message_id: int, locale: str) -> None:
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     from src.bot.modules.interview_qa.callbacks import InterviewQACallback
     from src.core.i18n import get_text
 
-    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -200,17 +202,13 @@ async def _notify_user(bot_token: str, chat_id: int, message_id: int, locale: st
             ]
         ]
     )
+    bot = task.create_bot()
     try:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=get_text("iqa-generation-completed", locale),
-            reply_markup=keyboard,
-        )
-    except Exception:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=get_text("iqa-generation-completed", locale),
+        await task.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            get_text("iqa-generation-completed", locale),
             reply_markup=keyboard,
         )
     finally:

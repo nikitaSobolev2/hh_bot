@@ -97,16 +97,9 @@ async def _generate_preparation_async(
 
     tech_stack = [e.stack for e in experiences] if experiences else []
 
-    def _fmt_exp(e) -> str:
-        parts = [e.company_name]
-        if e.title:
-            parts.append(f"— {e.title}")
-        if e.period:
-            parts.append(f"({e.period})")
-        parts.append(f"[{e.stack}]")
-        return " ".join(parts)
+    from src.services.formatters import format_work_experience_block
 
-    work_exp_str = "; ".join(_fmt_exp(e) for e in experiences) if experiences else "не указан"
+    work_exp_str = format_work_experience_block(experiences) if experiences else "не указан"
 
     prompt = build_preparation_guide_prompt(
         vacancy_title=interview.vacancy_title,

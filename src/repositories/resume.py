@@ -6,15 +6,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.resume import Resume
+from src.repositories.base import BaseRepository
 
 _PAGE_SIZE = 5
 
 
-class ResumeRepository:
+class ResumeRepository(BaseRepository[Resume]):
     def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+        super().__init__(session, Resume)
 
-    async def create(
+    async def create_for_user(
         self,
         user_id: int,
         job_title: str,
@@ -28,9 +29,6 @@ class ResumeRepository:
         self._session.add(resume)
         await self._session.flush()
         return resume
-
-    async def get_by_id(self, resume_id: int) -> Resume | None:
-        return await self._session.get(Resume, resume_id)
 
     async def get_latest_by_user(self, user_id: int) -> Resume | None:
         result = await self._session.execute(

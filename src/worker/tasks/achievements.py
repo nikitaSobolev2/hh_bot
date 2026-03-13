@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 
+from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
 from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -22,7 +24,15 @@ def _parse_achievement_blocks(text: str) -> dict[str, str]:
     return {m.group(1).strip(): m.group(2).strip() for m in matches}
 
 
-@celery_app.task(bind=True, name="achievements.generate", max_retries=2, default_retry_delay=30)
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="achievements.generate",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
+)
 def generate_achievements_task(
     self,
     generation_id: int,
@@ -31,18 +41,20 @@ def generate_achievements_task(
     locale: str = "ru",
 ) -> dict:
     return run_async(
-        lambda sf: _generate_achievements_async(sf, generation_id, chat_id, message_id, locale)
+        lambda sf: _generate_achievements_async(
+            self, sf, generation_id, chat_id, message_id, locale
+        )
     )
 
 
 async def _generate_achievements_async(
+    task: HHBotTask,
     session_factory,
     generation_id: int,
     chat_id: int,
     message_id: int,
     locale: str,
 ) -> dict:
-    from src.config import settings
     from src.models.achievement import GenerationStatus
     from src.repositories.achievement import (
         AchievementGenerationRepository,
@@ -53,11 +65,23 @@ async def _generate_achievements_async(
         AchievementExperienceEntry,
         build_achievement_generation_prompt,
     )
-    from src.worker.circuit_breaker import CircuitBreaker
 
-    cb = CircuitBreaker("achievements")
+    enabled = await task.check_enabled(AppSettingKey.TASK_ACHIEVEMENTS_ENABLED, session_factory)
+    if not enabled:
+        return {"status": "disabled"}
+
+    cb = await task.load_circuit_breaker(
+        "achievements",
+        AppSettingKey.CB_ACHIEVEMENTS_FAILURE_THRESHOLD,
+        AppSettingKey.CB_ACHIEVEMENTS_RECOVERY_TIMEOUT,
+        session_factory,
+    )
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
+
+    idempotency_key = f"generate_achievements:{generation_id}"
+    if await task.is_already_completed(idempotency_key, session_factory):
+        return {"status": "already_completed"}
 
     async with session_factory() as session:
         gen_repo = AchievementGenerationRepository(session)
@@ -110,9 +134,11 @@ async def _generate_achievements_async(
             await item_repo.update_generated_text(item, generated)
 
         await gen_repo.update_status(generation, GenerationStatus.COMPLETED)
+        user_id = generation.user_id
         await session.commit()
 
-    await _notify_user(settings.bot_token, chat_id, message_id, generation_id, locale)
+    await _notify_user(task, chat_id, message_id, generation_id, locale)
+    await task.mark_completed(idempotency_key, "achievements", user_id, session_factory)
     return {"status": "completed", "generation_id": generation_id}
 
 
@@ -123,24 +149,17 @@ def _get_stack(item) -> str:
 
 
 async def _notify_user(
-    bot_token: str,
+    task: HHBotTask,
     chat_id: int,
     message_id: int,
     generation_id: int,
     locale: str,
 ) -> None:
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     from src.bot.modules.achievements.callbacks import AchievementCallback
     from src.core.i18n import get_text
 
-    bot = Bot(
-        token=bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -153,17 +172,13 @@ async def _notify_user(
             ]
         ]
     )
+    bot = task.create_bot()
     try:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=get_text("ach-generation-completed", locale),
-            reply_markup=keyboard,
-        )
-    except Exception:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=get_text("ach-generation-completed", locale),
+        await task.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            get_text("ach-generation-completed", locale),
             reply_markup=keyboard,
         )
     finally:

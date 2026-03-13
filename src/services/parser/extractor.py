@@ -7,13 +7,14 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from src.core.logging import get_logger
+from src.schemas.vacancy import PipelineResult, VacancyData
 from src.services.ai.client import AIClient
 from src.services.parser.scraper import HHScraper
 
 logger = get_logger(__name__)
 
 OnProgressCallback = Callable[[int, int], Awaitable[None]]
-CompatFilterFn = Callable[[dict], Awaitable[bool]]
+CompatFilterFn = Callable[[VacancyData], Awaitable[bool]]
 
 _DEFAULT_CONCURRENCY = 15
 _AI_CONCURRENCY = 3
@@ -42,7 +43,7 @@ class ParsingExtractor:
         compat_filter: CompatFilterFn | None = None,
         concurrency: int = _DEFAULT_CONCURRENCY,
         ai_concurrency: int = _AI_CONCURRENCY,
-    ) -> dict:
+    ) -> PipelineResult:
         vacancies = await self._scraper.collect_vacancy_urls(
             search_url,
             keyword_filter,
@@ -52,7 +53,7 @@ class ParsingExtractor:
 
         if not vacancies:
             logger.warning("No vacancies found")
-            return {"vacancies": [], "keywords": {}, "skills": {}}
+            return PipelineResult(vacancies=[], keywords=[], skills=[])
 
         total = len(vacancies)
         sem = asyncio.Semaphore(concurrency)
@@ -66,15 +67,12 @@ class ParsingExtractor:
         async def _process_vacancy(
             client: httpx.AsyncClient,
             vac: dict,
-        ) -> tuple[dict, list[str], list[str]] | None:
+        ) -> tuple[VacancyData, list[str], list[str]] | None:
             async with sem:
-                page_data = await self._scraper.parse_vacancy_page(
-                    client,
-                    vac["url"],
-                )
+                page_data = await self._scraper.parse_vacancy_page(client, vac["url"])
 
                 description = page_data.get("description", "")
-                skills = page_data.get("skills", [])
+                skills: list[str] = page_data.get("skills", [])
 
                 async with scrape_lock:
                     scraped_count[0] += 1
@@ -83,15 +81,25 @@ class ParsingExtractor:
                 if on_page_scraped:
                     await on_page_scraped(scrape_current, total)
 
+                partial = VacancyData(
+                    hh_vacancy_id=vac["hh_vacancy_id"],
+                    url=vac["url"],
+                    title=vac["title"],
+                    raw_skills=skills,
+                    description=description,
+                    salary=vac.get("salary", ""),
+                    company_name=vac.get("company_name", ""),
+                    work_experience=page_data.get("work_experience", ""),
+                    employment_type=page_data.get("employment_type", ""),
+                    work_schedule=page_data.get("work_schedule", ""),
+                    work_formats=page_data.get("work_formats", ""),
+                    compensation_frequency=page_data.get("compensation_frequency", ""),
+                    working_hours=page_data.get("working_hours", ""),
+                )
+
                 if compat_filter is not None:
                     async with ai_sem:
-                        passes = await compat_filter(
-                            {
-                                "title": vac["title"],
-                                "description": description,
-                                "raw_skills": skills,
-                            }
-                        )
+                        passes = await compat_filter(partial)
                     if not passes:
                         async with kw_lock:
                             kw_count[0] += 1
@@ -127,44 +135,45 @@ class ParsingExtractor:
                 if on_vacancy_processed:
                     await on_vacancy_processed(current, total)
 
-                merged = {
-                    **vac,
-                    "description": description,
-                    "raw_skills": skills,
-                    "ai_keywords": ai_keywords,
-                }
-                for key in (
-                    "compensation_frequency",
-                    "work_experience",
-                    "employment_type",
-                    "work_schedule",
-                    "working_hours",
-                    "work_formats",
-                ):
-                    if key in page_data:
-                        merged[key] = page_data[key]
-
-                return merged, skills, ai_keywords
+                vacancy_data = VacancyData(
+                    hh_vacancy_id=partial.hh_vacancy_id,
+                    url=partial.url,
+                    title=partial.title,
+                    raw_skills=partial.raw_skills,
+                    description=partial.description,
+                    ai_keywords=ai_keywords,
+                    salary=partial.salary,
+                    company_name=partial.company_name,
+                    work_experience=partial.work_experience,
+                    employment_type=partial.employment_type,
+                    work_schedule=partial.work_schedule,
+                    work_formats=partial.work_formats,
+                    compensation_frequency=partial.compensation_frequency,
+                    working_hours=partial.working_hours,
+                )
+                return vacancy_data, skills, ai_keywords
 
         async with httpx.AsyncClient() as client:
-            results = await asyncio.gather(*[_process_vacancy(client, vac) for vac in vacancies])
+            raw_results = await asyncio.gather(
+                *[_process_vacancy(client, vac) for vac in vacancies]
+            )
 
-        keywords_counter: Counter = Counter()
-        skills_counter: Counter = Counter()
-        processed_vacancies: list[dict] = []
+        keywords_counter: Counter[str] = Counter()
+        skills_counter: Counter[str] = Counter()
+        processed_vacancies: list[VacancyData] = []
 
-        for result_item in results:
+        for result_item in raw_results:
             if result_item is None:
                 continue
-            vac_dict, skills, ai_keywords = result_item
-            processed_vacancies.append(vac_dict)
+            vacancy_data, skills, ai_keywords = result_item
+            processed_vacancies.append(vacancy_data)
             for skill in skills:
                 skills_counter[skill.strip()] += 1
             for kw in ai_keywords:
                 keywords_counter[kw.strip()] += 1
 
-        return {
-            "vacancies": processed_vacancies,
-            "keywords": dict(keywords_counter.most_common()),
-            "skills": dict(skills_counter.most_common()),
-        }
+        return PipelineResult(
+            vacancies=processed_vacancies,
+            keywords=keywords_counter.most_common(),
+            skills=skills_counter.most_common(),
+        )

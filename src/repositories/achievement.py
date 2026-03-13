@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from dataclasses import dataclass
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.achievement import AchievementGeneration, AchievementGenerationItem
+from src.repositories.base import BaseRepository
 
 _PAGE_SIZE = 5
 
 
-class AchievementGenerationRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+@dataclass(frozen=True)
+class AchievementItemData:
+    """Typed input for bulk creation of achievement items."""
 
-    async def create(self, user_id: int) -> AchievementGeneration:
+    company_name: str
+    work_experience_id: int | None = None
+    user_achievements_input: str | None = None
+    user_responsibilities_input: str | None = None
+
+
+class AchievementGenerationRepository(BaseRepository[AchievementGeneration]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, AchievementGeneration)
+
+    async def create_for_user(self, user_id: int) -> AchievementGeneration:
         generation = AchievementGeneration(user_id=user_id)
         self._session.add(generation)
         await self._session.flush()
@@ -38,21 +51,17 @@ class AchievementGenerationRepository:
         user_id: int,
         page: int = 0,
     ) -> tuple[list[AchievementGeneration], int]:
-        count_result = await self._session.execute(
-            select(AchievementGeneration).where(
-                AchievementGeneration.user_id == user_id,
-                AchievementGeneration.is_deleted.is_(False),
-            )
+        base_where = (
+            AchievementGeneration.user_id == user_id,
+            AchievementGeneration.is_deleted.is_(False),
         )
-        all_rows = count_result.scalars().all()
-        total = len(all_rows)
+
+        count_stmt = select(func.count()).select_from(AchievementGeneration).where(*base_where)
+        total = await self._session.scalar(count_stmt) or 0
 
         result = await self._session.execute(
             select(AchievementGeneration)
-            .where(
-                AchievementGeneration.user_id == user_id,
-                AchievementGeneration.is_deleted.is_(False),
-            )
+            .where(*base_where)
             .order_by(AchievementGeneration.created_at.desc())
             .offset(page * _PAGE_SIZE)
             .limit(_PAGE_SIZE)
@@ -69,23 +78,23 @@ class AchievementGenerationRepository:
         await self._session.flush()
 
 
-class AchievementItemRepository:
+class AchievementItemRepository(BaseRepository[AchievementGenerationItem]):
     def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+        super().__init__(session, AchievementGenerationItem)
 
     async def create_bulk(
         self,
         generation_id: int,
-        items: list[dict],
+        items: list[AchievementItemData],
     ) -> list[AchievementGenerationItem]:
         created = []
         for idx, item_data in enumerate(items):
             item = AchievementGenerationItem(
                 generation_id=generation_id,
-                work_experience_id=item_data.get("work_experience_id"),
-                company_name=item_data["company_name"],
-                user_achievements_input=item_data.get("user_achievements_input"),
-                user_responsibilities_input=item_data.get("user_responsibilities_input"),
+                work_experience_id=item_data.work_experience_id,
+                company_name=item_data.company_name,
+                user_achievements_input=item_data.user_achievements_input,
+                user_responsibilities_input=item_data.user_responsibilities_input,
                 sort_order=idx,
             )
             self._session.add(item)

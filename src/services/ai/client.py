@@ -10,7 +10,9 @@ import httpx
 from openai import AsyncOpenAI
 
 from src.config import settings
+from src.core.constants import AI_MAX_DESCRIPTION_LENGTH
 from src.core.logging import get_logger
+from src.schemas.ai import QAPair
 from src.services.ai.prompts import (
     build_compatibility_system_prompt,
     build_compatibility_user_content,
@@ -18,13 +20,15 @@ from src.services.ai.prompts import (
     build_improvement_flow_user_content,
     build_interview_analysis_system_prompt,
     build_interview_analysis_user_content,
+    build_keyword_extraction_system_prompt,
+    build_keyword_extraction_user_content,
     build_vacancy_analysis_system_prompt,
     build_vacancy_analysis_user_content,
 )
 
 logger = get_logger(__name__)
 
-MAX_DESCRIPTION_LENGTH = 8000
+MAX_DESCRIPTION_LENGTH = AI_MAX_DESCRIPTION_LENGTH
 
 _STACK_PATTERN = re.compile(r"\[Stack\]:\s*(.+)", re.IGNORECASE)
 _COMPAT_PATTERN = re.compile(r"\[Compatibility\]:\s*(\d+)", re.IGNORECASE)
@@ -79,44 +83,15 @@ class AIClient:
             return []
 
         truncated = description[:MAX_DESCRIPTION_LENGTH]
+        messages = [
+            {"role": "system", "content": build_keyword_extraction_system_prompt()},
+            {"role": "user", "content": build_keyword_extraction_user_content(truncated)},
+        ]
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=120,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Ты — профессиональный HR-аналитик. "
-                            "Твоя задача — извлекать из описания вакансии "
-                            "ТОЛЬКО профессиональные ключевые слова, "
-                            "которые описывают hard skills, технологии, "
-                            "инструменты, языки программирования, "
-                            "фреймворки, методологии, профессиональные "
-                            "навыки и зоны ответственности.\n"
-                            "[ПРАВИЛА]\n"
-                            "1. Извлекай: названия технологий (Python, React, Docker), "
-                            "инструменты (Git, Jira, Figma), методологии (Agile, Scrum, CI/CD), "
-                            "профессиональные навыки (тестирование, код-ревью, архитектура), "
-                            "предметные области (финтех, e-commerce, ML).\n"
-                            "2. НЕ извлекай: формат работы (удалённая работа, офис, гибрид), "
-                            "условия (ДМС, отпуск, бонусы, зарплата), "
-                            "soft skills (коммуникабельность, ответственность, командная работа), "
-                            "общие фразы (опыт работы, высшее образование, знание английского).\n"
-                            "3. Приводи ключевые слова в каноничной форме: "
-                            "'JavaScript' а не 'знание JavaScript', "
-                            "'микросервисы' а не 'разработка микросервисов'.\n"
-                            "4. Возвращай ТОЛЬКО список через запятую, без пояснений, "
-                            "без нумерации, без лишних символов."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Извлеки профессиональные ключевые слова из вакансии:\n\n{truncated}"
-                        ),
-                    },
-                ],
+                messages=messages,
                 max_tokens=20000,
                 temperature=0.2,
             )
@@ -229,7 +204,7 @@ class AIClient:
         vacancy_description: str | None,
         company_name: str | None,
         experience_level: str | None,
-        questions_answers: list[dict[str, str]],
+        questions_answers: list[QAPair],
         user_improvement_notes: str | None,
     ) -> str:
         """Analyze interview Q&A against the vacancy and return a structured report.
@@ -307,16 +282,26 @@ class AIClient:
         self,
         prompt: str,
         *,
+        system_prompt: str | None = None,
         timeout: int = 180,
         max_tokens: int = 4000,
         temperature: float = 0.5,
     ) -> str:
-        """Send a single user prompt and return the full text response."""
+        """Send a prompt and return the full text response.
+
+        If system_prompt is provided, sends [system, user] messages; otherwise
+        sends only the user prompt. Use system_prompt when the model must
+        follow a specific output format (e.g. [QAStart]:key/[QAEnd]:key).
+        """
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
                 timeout=timeout,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )

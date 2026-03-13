@@ -5,6 +5,38 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def build_keyword_extraction_system_prompt() -> str:
+    """Return the system prompt for extracting professional keywords from a vacancy."""
+    return (
+        "Ты — профессиональный HR-аналитик. "
+        "Твоя задача — извлекать из описания вакансии "
+        "ТОЛЬКО профессиональные ключевые слова, "
+        "которые описывают hard skills, технологии, "
+        "инструменты, языки программирования, "
+        "фреймворки, методологии, профессиональные "
+        "навыки и зоны ответственности.\n"
+        "[ПРАВИЛА]\n"
+        "1. Извлекай: названия технологий (Python, React, Docker), "
+        "инструменты (Git, Jira, Figma), методологии (Agile, Scrum, CI/CD), "
+        "профессиональные навыки (тестирование, код-ревью, архитектура), "
+        "предметные области (финтех, e-commerce, ML).\n"
+        "2. НЕ извлекай: формат работы (удалённая работа, офис, гибрид), "
+        "условия (ДМС, отпуск, бонусы, зарплата), "
+        "soft skills (коммуникабельность, ответственность, командная работа), "
+        "общие фразы (опыт работы, высшее образование, знание английского).\n"
+        "3. Приводи ключевые слова в каноничной форме: "
+        "'JavaScript' а не 'знание JavaScript', "
+        "'микросервисы' а не 'разработка микросервисов'.\n"
+        "4. Возвращай ТОЛЬКО список через запятую, без пояснений, "
+        "без нумерации, без лишних символов."
+    )
+
+
+def build_keyword_extraction_user_content(description: str) -> str:
+    """Return the user message for the keyword extraction request."""
+    return f"Извлеки профессиональные ключевые слова из вакансии:\n\n{description}"
+
+
 def build_compatibility_system_prompt() -> str:
     """Return the system prompt for candidate-vacancy compatibility scoring."""
     return (
@@ -234,7 +266,7 @@ def build_interview_analysis_user_content(
     vacancy_description: str | None,
     company_name: str | None,
     experience_level: str | None,
-    questions_answers: list[dict[str, str]],
+    questions_answers: list[QAPair],  # noqa: F821
     user_improvement_notes: str | None,
 ) -> str:
     """Return the user message for interview analysis.
@@ -250,8 +282,10 @@ def build_interview_analysis_user_content(
 
     qa_lines = []
     for idx, qa in enumerate(questions_answers, 1):
-        qa_lines.append(f"Вопрос {idx}: {qa['question']}")
-        qa_lines.append(f"Ответ кандидата: {qa['answer']}\n")
+        question = qa.question if hasattr(qa, "question") else qa["question"]
+        answer = qa.answer if hasattr(qa, "answer") else qa["answer"]
+        qa_lines.append(f"Вопрос {idx}: {question}")
+        qa_lines.append(f"Ответ кандидата: {answer}\n")
     qa_block = "\n".join(qa_lines)
 
     notes_block = (
@@ -589,6 +623,16 @@ def build_per_company_key_phrases_prompt(
     )
 
 
+def _format_role_info(company_name: str, title: str | None, period: str | None) -> str:
+    """Format «CompanyName» with optional title and period for work experience prompts."""
+    role = f"«{company_name}»"
+    if title:
+        role += f" на должности «{title}»"
+    if period:
+        role += f" ({period})"
+    return role
+
+
 def build_work_experience_achievements_prompt(
     company_name: str,
     stack: str,
@@ -596,11 +640,7 @@ def build_work_experience_achievements_prompt(
     period: str | None = None,
 ) -> str:
     """Return a prompt to generate 3-4 professional achievements for a work experience entry."""
-    role_info = f"«{company_name}»"
-    if title:
-        role_info += f" на должности «{title}»"
-    if period:
-        role_info += f" ({period})"
+    role_info = _format_role_info(company_name, title, period)
     return (
         f"Ты — карьерный консультант. Сгенерируй 3–4 конкретных профессиональных достижения "
         f"для специалиста, который работал в компании {role_info} со стеком: {stack}.\n\n"
@@ -622,11 +662,7 @@ def build_work_experience_duties_prompt(
     period: str | None = None,
 ) -> str:
     """Return a prompt to generate 3-5 professional duties for a work experience entry."""
-    role_info = f"«{company_name}»"
-    if title:
-        role_info += f" на должности «{title}»"
-    if period:
-        role_info += f" ({period})"
+    role_info = _format_role_info(company_name, title, period)
     return (
         f"Ты — карьерный консультант. Сгенерируй 3–5 типичных рабочих обязанностей "
         f"для специалиста, который работал в компании {role_info} со стеком: {stack}.\n\n"

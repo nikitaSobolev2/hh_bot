@@ -238,7 +238,11 @@ python -m src
 ### 7. Start the Celery worker (separate terminal)
 
 ```bash
+# Linux / macOS
 celery -A src.worker.app worker --loglevel=info --concurrency=4
+
+# Windows — use solo pool (prefork causes PermissionError with billiard semaphores)
+celery -A src.worker.app worker --loglevel=info --pool=solo
 ```
 
 ### 8. Run tests

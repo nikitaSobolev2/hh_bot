@@ -58,8 +58,10 @@ class TestManualParseBlacklist:
             on_vacancy_processed=None,
             **_kwargs,
         ):
+            from src.schemas.vacancy import PipelineResult
+
             captured.append(set(blacklisted_ids or set()))
-            return {"vacancies": [], "keywords": {}, "skills": {}}
+            return PipelineResult(vacancies=[], keywords=[], skills=[])
 
         company = MagicMock()
         company.vacancy_title = "Backend"

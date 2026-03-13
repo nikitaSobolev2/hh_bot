@@ -166,7 +166,9 @@ class TestTruncate:
         assert _truncate("short") == "short"
 
     def test_long_text_truncated_from_end(self):
+        from src.core.constants import TELEGRAM_TRUNCATE_LIMIT
+
         long_text = "x" * 5000
         result = _truncate(long_text)
-        assert len(result) == 4000
-        assert result == long_text[-4000:]
+        assert len(result) == TELEGRAM_TRUNCATE_LIMIT
+        assert result == long_text[-TELEGRAM_TRUNCATE_LIMIT:]

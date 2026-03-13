@@ -17,12 +17,7 @@ from src.models.work_experience import UserWorkExperience
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
 
-_STATUS_ICONS = {
-    "pending": "⏳",
-    "processing": "🔄",
-    "completed": "✅",
-    "failed": "❌",
-}
+from src.core.constants import TASK_STATUS_ICONS as _STATUS_ICONS
 
 KEY_PHRASES_STYLE_KEYS = ["formal", "results", "brief", "detailed", "expert"]
 

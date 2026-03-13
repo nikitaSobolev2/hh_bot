@@ -4,6 +4,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
+def _make_vacancy(title: str = "Dev", skills: list | None = None, description: str = ""):
+    from src.schemas.vacancy import VacancyData
+
+    return VacancyData(
+        hh_vacancy_id="1",
+        url="https://hh.ru/1",
+        title=title,
+        raw_skills=skills or [],
+        description=description,
+    )
+
+
 # ---------------------------------------------------------------------------
 # _build_compat_predicate
 # ---------------------------------------------------------------------------
@@ -19,7 +32,7 @@ class TestCompatPredicate:
 
         with patch("src.services.ai.client.AIClient", return_value=mock_client):
             predicate = _build_compat_predicate(["Python"], "Company: Python", 70)
-            result = await predicate({"title": "Dev", "raw_skills": [], "description": ""})
+            result = await predicate(_make_vacancy("Dev"))
 
         assert result is True
 
@@ -32,7 +45,7 @@ class TestCompatPredicate:
 
         with patch("src.services.ai.client.AIClient", return_value=mock_client):
             predicate = _build_compat_predicate(["Python"], "Company: Python", 70)
-            result = await predicate({"title": "Dev", "raw_skills": [], "description": ""})
+            result = await predicate(_make_vacancy("Dev"))
 
         assert result is True
 
@@ -45,7 +58,7 @@ class TestCompatPredicate:
 
         with patch("src.services.ai.client.AIClient", return_value=mock_client):
             predicate = _build_compat_predicate(["Python"], "Company: Python", 70)
-            result = await predicate({"title": "Dev", "raw_skills": [], "description": ""})
+            result = await predicate(_make_vacancy("Dev"))
 
         assert result is False
 
@@ -56,11 +69,9 @@ class TestCompatPredicate:
         mock_client = AsyncMock()
         mock_client.calculate_compatibility = AsyncMock(return_value=80.0)
 
-        vacancy = {
-            "title": "Backend Dev",
-            "raw_skills": ["Python", "Docker"],
-            "description": "We need a backend engineer",
-        }
+        vacancy = _make_vacancy(
+            "Backend Dev", skills=["Python", "Docker"], description="We need a backend engineer"
+        )
 
         with patch("src.services.ai.client.AIClient", return_value=mock_client):
             predicate = _build_compat_predicate(
@@ -91,8 +102,8 @@ class TestCompatPredicate:
 
         with patch("src.services.ai.client.AIClient", side_effect=tracking_constructor):
             predicate = _build_compat_predicate([], "", 50)
-            await predicate({"title": "A", "raw_skills": [], "description": ""})
-            await predicate({"title": "B", "raw_skills": [], "description": ""})
+            await predicate(_make_vacancy("A"))
+            await predicate(_make_vacancy("B"))
 
         assert len(constructor_calls) == 1, "AIClient must be instantiated once per predicate"
 
@@ -121,14 +132,14 @@ def _make_scraper(page_data: dict | None = None):
 class TestExtractorCompatFilter:
     @pytest.mark.asyncio
     async def test_vacancy_failing_compat_is_excluded_from_results(self):
-        """A vacancy rejected by the filter must not appear in result['vacancies']."""
+        """A vacancy rejected by the filter must not appear in result.vacancies."""
         from src.services.parser.extractor import ParsingExtractor
 
         titles_seen: list[str] = []
 
-        async def reject_java(vac: dict) -> bool:
-            titles_seen.append(vac["title"])
-            return vac["title"] != "Java Dev"
+        async def reject_java(vac) -> bool:
+            titles_seen.append(vac.title)
+            return vac.title != "Java Dev"
 
         ai_client = MagicMock()
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
@@ -138,7 +149,7 @@ class TestExtractorCompatFilter:
             "https://hh.ru/search", "", 2, compat_filter=reject_java
         )
 
-        result_titles = [v["title"] for v in result["vacancies"]]
+        result_titles = [v.title for v in result.vacancies]
         assert "Backend Dev" in result_titles
         assert "Java Dev" not in result_titles
 
@@ -147,8 +158,8 @@ class TestExtractorCompatFilter:
         """extract_keywords must NOT be called for a vacancy that fails the filter."""
         from src.services.parser.extractor import ParsingExtractor
 
-        async def reject_java(vac: dict) -> bool:
-            return vac["title"] != "Java Dev"
+        async def reject_java(vac) -> bool:
+            return vac.title != "Java Dev"
 
         ai_client = MagicMock()
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
@@ -164,7 +175,7 @@ class TestExtractorCompatFilter:
         """A vacancy that passes the filter must be in results with its keywords."""
         from src.services.parser.extractor import ParsingExtractor
 
-        async def accept_all(vac: dict) -> bool:
+        async def accept_all(_vac) -> bool:
             return True
 
         ai_client = MagicMock()
@@ -175,15 +186,15 @@ class TestExtractorCompatFilter:
             "https://hh.ru/search", "", 2, compat_filter=accept_all
         )
 
-        assert len(result["vacancies"]) == 2
-        assert result["keywords"].get("Python", 0) > 0
+        assert len(result.vacancies) == 2
+        assert dict(result.keywords).get("Python", 0) > 0
 
     @pytest.mark.asyncio
     async def test_progress_callback_called_for_filtered_vacancy(self):
         """on_vacancy_processed must fire even when a vacancy is skipped."""
         from src.services.parser.extractor import ParsingExtractor
 
-        async def reject_all(_vac: dict) -> bool:
+        async def reject_all(_vac) -> bool:
             return False
 
         ai_client = MagicMock()
@@ -216,7 +227,7 @@ class TestExtractorCompatFilter:
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
         result = await extractor.run_pipeline("https://hh.ru/search", "", 2)
 
-        assert len(result["vacancies"]) == 2
+        assert len(result.vacancies) == 2
         assert ai_client.extract_keywords.await_count == 2
 
     @pytest.mark.asyncio
@@ -225,8 +236,8 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         # Java Dev gets rejected; its keywords must not appear.
-        async def reject_java(vac: dict) -> bool:
-            return vac["title"] != "Java Dev"
+        async def reject_java(vac) -> bool:
+            return vac.title != "Java Dev"
 
         async def fake_keywords(description: str) -> list[str]:
             # Both vacancies have the same description in the mock, so we
@@ -242,7 +253,7 @@ class TestExtractorCompatFilter:
         )
 
         # Only 1 vacancy passed → keyword count must be 1, not 2.
-        assert result["keywords"].get("SharedKw", 0) == 1
+        assert dict(result.keywords).get("SharedKw", 0) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +265,8 @@ class TestParsingTaskCompatIntegration:
     @pytest.mark.asyncio
     async def test_compat_filter_passed_to_run_pipeline_when_enabled(self):
         """When use_compatibility_check=True, a compat_filter must reach run_pipeline."""
+        from src.schemas.vacancy import PipelineResult
+
         company = MagicMock()
         company.vacancy_title = "Backend"
         company.search_url = "https://hh.ru/search/vacancy?text=backend"
@@ -263,7 +276,7 @@ class TestParsingTaskCompatIntegration:
         company.use_compatibility_check = True
         company.compatibility_threshold = 70
 
-        pipeline_result = {"vacancies": [], "keywords": {}, "skills": {}}
+        pipeline_result = PipelineResult(vacancies=[], keywords=[], skills=[])
         captured_kwargs: list[dict] = []
 
         async def fake_run_pipeline(_self, *_args, **kwargs):
@@ -333,6 +346,8 @@ class TestParsingTaskCompatIntegration:
     @pytest.mark.asyncio
     async def test_compat_filter_is_none_when_disabled(self):
         """When use_compatibility_check=False, compat_filter=None must be passed."""
+        from src.schemas.vacancy import PipelineResult
+
         company = MagicMock()
         company.vacancy_title = "Backend"
         company.search_url = "https://hh.ru/search/vacancy?text=backend"
@@ -342,7 +357,7 @@ class TestParsingTaskCompatIntegration:
         company.use_compatibility_check = False
         company.compatibility_threshold = None
 
-        pipeline_result = {"vacancies": [], "keywords": {}, "skills": {}}
+        pipeline_result = PipelineResult(vacancies=[], keywords=[], skills=[])
         captured_kwargs: list[dict] = []
 
         async def fake_run_pipeline(_self, *_args, **kwargs):

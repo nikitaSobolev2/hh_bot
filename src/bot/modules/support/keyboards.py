@@ -14,6 +14,7 @@ from src.bot.modules.support.callbacks import (
     TicketFilterCallback,
     TicketSearchCallback,
 )
+from src.core.constants import SUPPORT_TICKET_STATUS_ICONS as _SUPPORT_STATUS_ICONS
 from src.core.i18n import I18nContext
 from src.models.support import SupportTicket
 
@@ -34,8 +35,7 @@ def user_ticket_list_keyboard(
     unseen = unseen_ticket_ids or set()
 
     def _ticket_button(t: SupportTicket) -> InlineKeyboardButton:
-        status_map = {"new": "🆕", "in_progress": "🔄", "closed": "✅"}
-        icon = status_map.get(t.status, "📝")
+        icon = _SUPPORT_STATUS_ICONS.get(t.status, "📝")
         marker = " 💬" if t.id in unseen else ""
         label = f"{icon} {t.title[:40]}{marker}"
         return InlineKeyboardButton(
@@ -234,8 +234,7 @@ def admin_inbox_keyboard(
     unseen = unseen_ticket_ids or set()
 
     def _ticket_button(t: SupportTicket) -> InlineKeyboardButton:
-        status_map = {"new": "🆕", "in_progress": "🔄", "closed": "✅"}
-        icon = status_map.get(t.status, "📝")
+        icon = _SUPPORT_STATUS_ICONS.get(t.status, "📝")
         marker = " 💬" if t.id in unseen else ""
         admin_label = ""
         if t.admin:

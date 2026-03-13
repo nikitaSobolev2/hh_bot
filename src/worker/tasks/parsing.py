@@ -157,9 +157,9 @@ async def _run_parsing_company_async(
 
         return {
             "status": "completed",
-            "vacancies_count": len(result["vacancies"]),
-            "keywords_count": len(result["keywords"]),
-            "skills_count": len(result["skills"]),
+            "vacancies_count": result.vacancy_count,
+            "keywords_count": result.keyword_count,
+            "skills_count": result.skill_count,
         }
 
     except Exception as exc:
@@ -221,16 +221,9 @@ async def _start_progress(
 
 
 def _create_bot() -> "Bot":  # noqa: F821
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
+    from src.services.telegram.bot_factory import create_task_bot
 
-    from src.config import settings as app_settings
-
-    return Bot(
-        token=app_settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    return create_task_bot()
 
 
 async def _report_progress(
@@ -254,7 +247,7 @@ async def _save_parsing_results(
     parsing_company_id: int,
     user_id: int,
     task,
-    result: dict,
+    result: "PipelineResult",  # noqa: F821
     idempotency_key: str,
 ) -> None:
     from src.models.blacklist import VacancyBlacklist
@@ -267,30 +260,30 @@ async def _save_parsing_results(
         company_repo = ParsingCompanyRepository(session)
         company = await company_repo.get_by_id(parsing_company_id)
 
-        for vac_data in result["vacancies"]:
+        for vac_data in result.vacancies:
             session.add(
                 ParsedVacancy(
                     parsing_company_id=parsing_company_id,
-                    hh_vacancy_id=vac_data["hh_vacancy_id"],
-                    url=vac_data["url"],
-                    title=vac_data["title"],
-                    description=vac_data.get("description", ""),
-                    raw_skills=vac_data.get("raw_skills"),
-                    ai_keywords=vac_data.get("ai_keywords"),
+                    hh_vacancy_id=vac_data.hh_vacancy_id,
+                    url=vac_data.url,
+                    title=vac_data.title,
+                    description=vac_data.description,
+                    raw_skills=vac_data.raw_skills,
+                    ai_keywords=vac_data.ai_keywords,
                 )
             )
 
         session.add(
             AggregatedResult(
                 parsing_company_id=parsing_company_id,
-                top_keywords=result["keywords"],
-                top_skills=result["skills"],
+                top_keywords=dict(result.keywords),
+                top_skills=dict(result.skills),
             )
         )
 
         if company:
             company.status = "completed"
-            company.vacancies_processed = len(result["vacancies"])
+            company.vacancies_processed = result.vacancy_count
             company.completed_at = datetime.now(UTC).replace(tzinfo=None)
 
         settings_repo = AppSettingRepository(session)
@@ -298,22 +291,22 @@ async def _save_parsing_results(
         bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
         vacancy_title = company.vacancy_title if company else ""
 
-        for vac_data in result["vacancies"]:
+        for vac_data in result.vacancies:
             stmt = (
                 pg_insert(VacancyBlacklist)
                 .values(
                     user_id=user_id,
                     vacancy_title_context=vacancy_title,
-                    hh_vacancy_id=vac_data["hh_vacancy_id"],
-                    vacancy_url=vac_data["url"],
-                    vacancy_name=vac_data["title"],
+                    hh_vacancy_id=vac_data.hh_vacancy_id,
+                    vacancy_url=vac_data.url,
+                    vacancy_name=vac_data.title,
                     blacklisted_until=bl_until,
                 )
                 .on_conflict_do_update(
                     constraint="uq_user_vacancy_context",
                     set_={
-                        "vacancy_url": vac_data["url"],
-                        "vacancy_name": vac_data["title"],
+                        "vacancy_url": vac_data.url,
+                        "vacancy_name": vac_data.title,
                         "blacklisted_until": bl_until,
                     },
                 )
@@ -327,7 +320,7 @@ async def _save_parsing_results(
                 user_id=user_id,
                 status="completed",
                 idempotency_key=idempotency_key,
-                result_data={"vacancies_count": len(result["vacancies"])},
+                result_data={"vacancies_count": result.vacancy_count},
             )
         )
 
@@ -391,16 +384,9 @@ async def _fetch_user_tech_profile(
             kw.strip() for exp in experiences for kw in exp.stack.split(",") if kw.strip()
         ]
 
-    def _fmt_parsing_exp(exp) -> str:
-        parts = [exp.company_name]
-        if exp.title:
-            parts.append(f"— {exp.title}")
-        if exp.period:
-            parts.append(f"({exp.period})")
-        parts.append(f"[{exp.stack}]")
-        return " ".join(parts)
+    from src.services.formatters import format_work_experience_block
 
-    work_exp_text = "; ".join(_fmt_parsing_exp(exp) for exp in experiences)
+    work_exp_text = format_work_experience_block(experiences)
     return tech_stack, work_exp_text
 
 
@@ -408,7 +394,7 @@ def _build_compat_predicate(
     tech_stack: list[str],
     work_exp_text: str,
     threshold: int,
-) -> Callable[[dict], Awaitable[bool]]:
+) -> Callable[["VacancyData"], Awaitable[bool]]:  # noqa: F821
     """Return an async predicate that scores a vacancy and checks the threshold.
 
     The predicate is intentionally free of its own semaphore — the extractor's
@@ -419,11 +405,11 @@ def _build_compat_predicate(
 
     ai_client = AIClient()
 
-    async def predicate(vac: dict) -> bool:
+    async def predicate(vac) -> bool:
         score = await ai_client.calculate_compatibility(
-            vacancy_title=vac["title"],
-            vacancy_skills=vac.get("raw_skills") or [],
-            vacancy_description=vac.get("description", ""),
+            vacancy_title=vac.title,
+            vacancy_skills=vac.raw_skills or [],
+            vacancy_description=vac.description,
             user_tech_stack=tech_stack,
             user_work_experience=work_exp_text,
         )

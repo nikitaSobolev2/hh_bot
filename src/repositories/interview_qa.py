@@ -6,11 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.interview_qa import QuestionCategory, StandardQuestion
+from src.repositories.base import BaseRepository
 
 
-class StandardQuestionRepository:
+class StandardQuestionRepository(BaseRepository[StandardQuestion]):
     def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+        super().__init__(session, StandardQuestion)
 
     async def get_all_for_user(self, user_id: int) -> list[StandardQuestion]:
         result = await self._session.execute(

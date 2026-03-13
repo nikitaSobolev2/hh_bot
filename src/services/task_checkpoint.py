@@ -31,11 +31,9 @@ _KEY_PREFIX = "checkpoint:"
 
 def create_checkpoint_redis():
     """Create an async Redis client for TaskCheckpointService."""
-    import redis.asyncio as aioredis
+    from src.core.redis import create_async_redis
 
-    from src.config import settings
-
-    return aioredis.Redis.from_url(settings.redis_url, decode_responses=True)
+    return create_async_redis()
 
 
 class TaskCheckpointService:
