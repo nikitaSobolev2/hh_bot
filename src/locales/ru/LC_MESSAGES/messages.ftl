@@ -690,6 +690,8 @@ iv-fsm-enter-hh-link =
 
 iv-fsm-parsing-hh = ⏳ Загружаю данные вакансии с HH.ru...
 iv-fsm-hh-parsed = ✅ Вакансия загружена:
+iv-parsed-company = Компания: { $value }
+iv-parsed-experience = Опыт: { $value }
 iv-fsm-hh-parse-failed =
     ❌ Не удалось загрузить вакансию. Проверьте ссылку и попробуйте снова.
 iv-fsm-invalid-link = Пожалуйста, введите корректную ссылку (начинающуюся с http).

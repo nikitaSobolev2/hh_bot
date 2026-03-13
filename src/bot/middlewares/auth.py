@@ -35,13 +35,10 @@ class AuthMiddleware(BaseMiddleware):
             user = await repo.get_by_telegram_id(tg_user.id)
 
             if user is None:
-                from sqlalchemy import select
+                from src.repositories.role import RoleRepository
 
-                from src.models.role import Role
-
-                stmt = select(Role).where(Role.name == "user")
-                result = await session.execute(stmt)
-                role = result.scalar_one_or_none()
+                role_repo = RoleRepository(session)
+                role = await role_repo.get_by_name("user")
                 if role is None:
                     logger.error("Default 'user' role not found — run seed_roles.py first")
                     return await handler(event, data)

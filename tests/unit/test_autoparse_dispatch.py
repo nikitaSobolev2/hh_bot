@@ -307,7 +307,7 @@ class TestRunAutoparseCompanyLock:
                 _make_session_factory(self._make_session()), MagicMock(), company_id=1
             )
 
-        redis_mock.delete.assert_called_with("autoparse:run:1")
+        redis_mock.delete.assert_called_with("lock:autoparse:run:1")
 
     @pytest.mark.asyncio
     async def test_lock_released_after_task_raises_exception(self):
@@ -338,7 +338,7 @@ class TestRunAutoparseCompanyLock:
                 _make_session_factory(self._make_session()), MagicMock(), company_id=1
             )
 
-        redis_mock.delete.assert_called_with("autoparse:run:1")
+        redis_mock.delete.assert_called_with("lock:autoparse:run:1")
 
     @pytest.mark.asyncio
     async def test_lock_released_when_circuit_breaker_is_open(self):
@@ -356,7 +356,7 @@ class TestRunAutoparseCompanyLock:
             )
 
         assert result == {"status": "circuit_open"}
-        redis_mock.delete.assert_called_with("autoparse:run:5")
+        redis_mock.delete.assert_called_with("lock:autoparse:run:5")
 
     def test_lock_not_acquired_when_already_held(self):
         """When the Redis lock is already held by a different task, return locked immediately."""

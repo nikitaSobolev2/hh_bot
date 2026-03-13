@@ -1,10 +1,6 @@
-from datetime import UTC, datetime
-
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.i18n import I18nContext
-from src.models.blacklist import VacancyBlacklist
 from src.repositories.blacklist import BlacklistRepository
 from src.repositories.user import UserRepository
 
@@ -26,20 +22,8 @@ async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> No
 
 
 async def get_blacklist_contexts(session: AsyncSession, user_id: int) -> list[tuple[str, int]]:
-    now = datetime.now(UTC).replace(tzinfo=None)
-    stmt = (
-        select(
-            VacancyBlacklist.vacancy_title_context,
-            func.count(VacancyBlacklist.id).label("cnt"),
-        )
-        .where(
-            VacancyBlacklist.user_id == user_id,
-            VacancyBlacklist.blacklisted_until > now,
-        )
-        .group_by(VacancyBlacklist.vacancy_title_context)
-    )
-    result = await session.execute(stmt)
-    return [(row[0], row[1]) for row in result.all()]
+    repo = BlacklistRepository(session)
+    return await repo.get_contexts_with_counts(user_id)
 
 
 def format_blacklist_text(contexts: list[tuple[str, int]], i18n: I18nContext) -> str:

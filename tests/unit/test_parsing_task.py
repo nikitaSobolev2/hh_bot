@@ -8,44 +8,19 @@ import pytest
 class TestManualParseBlacklist:
     """Ensure AutoparsedVacancy IDs are never merged into the manual parse blacklist.
 
-    We test this at the source-code level: the function must not import
-    AutoparsedVacancyRepository or call get_all_known_hh_ids.  This is
-    deliberately simple — the integration-level evidence is the fixed
-    log output (blacklisted_skipped=0 for a fresh user blacklist).
+    Behavior tests: run_pipeline is called with only user-blacklist IDs.
+    AutoparsedVacancyRepository is mocked but must not affect blacklisted_ids.
     """
 
-    def test_autoparse_repository_not_imported_in_parsing_task(self):
-        """AutoparsedVacancyRepository must not appear in _run_parsing_company_async."""
-        import inspect
-
-        from src.worker.tasks import parsing as parsing_module
-
-        source = inspect.getsource(parsing_module._run_parsing_company_async)
-        assert "AutoparsedVacancyRepository" not in source, (
-            "_run_parsing_company_async must not use AutoparsedVacancyRepository; "
-            "it incorrectly merges autoparse IDs into the user blacklist"
-        )
-
-    def test_cached_ids_not_merged_into_blacklist(self):
-        """The phrase 'cached_ids' must not appear in _run_parsing_company_async."""
-        import inspect
-
-        from src.worker.tasks import parsing as parsing_module
-
-        source = inspect.getsource(parsing_module._run_parsing_company_async)
-        assert "cached_ids" not in source, (
-            "cached_ids must not be added to blacklisted_ids in the manual parse task"
-        )
-
     @pytest.mark.asyncio
-    async def test_run_pipeline_receives_only_user_blacklist(self):
-        """ParsingExtractor.run_pipeline must be called with only user-blacklist IDs."""
+    async def _run_parsing_with_mocked_repos(
+        self,
+        user_blacklist_ids: set[str],
+        autoparse_ids: set[str],
+        run_pipeline_capture: list,
+    ):
+        """Run _run_parsing_company_async with mocked repos; capture run_pipeline args."""
         from unittest.mock import AsyncMock, MagicMock, patch
-
-        user_blacklist_ids = {"id_aaa", "id_bbb"}
-        autoparse_ids = {"id_ccc", "id_ddd"}
-
-        captured: list[set] = []
 
         async def fake_run_pipeline(
             _self,
@@ -60,7 +35,7 @@ class TestManualParseBlacklist:
         ):
             from src.schemas.vacancy import PipelineResult
 
-            captured.append(set(blacklisted_ids or set()))
+            run_pipeline_capture.append(set(blacklisted_ids or set()))
             return PipelineResult(vacancies=[], keywords=[], skills=[])
 
         company = MagicMock()
@@ -94,8 +69,6 @@ class TestManualParseBlacklist:
         session.commit = AsyncMock()
 
         session_factory = MagicMock(return_value=session)
-
-        from src.worker.tasks.parsing import _run_parsing_company_async
 
         mock_checkpoint = AsyncMock()
         mock_checkpoint.load_parsing = AsyncMock(return_value=None)
@@ -149,6 +122,8 @@ class TestManualParseBlacklist:
                 return_value=mock_scraper,
             ),
         ):
+            from src.worker.tasks.parsing import _run_parsing_company_async
+
             fake_task = MagicMock()
             fake_task.request.id = "test-id"
 
@@ -161,14 +136,42 @@ class TestManualParseBlacklist:
                 telegram_chat_id=0,
             )
 
-        assert len(captured) == 1, "run_pipeline must be called exactly once"
-        passed_blacklist = captured[0]
-
-        assert user_blacklist_ids.issubset(passed_blacklist), "User blacklist IDs must be present"
-        assert not autoparse_ids.intersection(passed_blacklist), (
-            f"Autoparse IDs {autoparse_ids} must NOT be in the blacklist passed to run_pipeline; "
-            f"got {passed_blacklist}"
+    @pytest.mark.asyncio
+    async def test_run_pipeline_called_exactly_once(self):
+        """run_pipeline must be invoked exactly once per parsing task."""
+        captured: list[set] = []
+        await self._run_parsing_with_mocked_repos(
+            user_blacklist_ids={"id_aaa", "id_bbb"},
+            autoparse_ids={"id_ccc", "id_ddd"},
+            run_pipeline_capture=captured,
         )
+        assert len(captured) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_receives_user_blacklist_ids(self):
+        """User blacklist IDs must be present in blacklisted_ids passed to run_pipeline."""
+        captured: list[set] = []
+        user_blacklist_ids = {"id_aaa", "id_bbb"}
+        await self._run_parsing_with_mocked_repos(
+            user_blacklist_ids=user_blacklist_ids,
+            autoparse_ids={"id_ccc", "id_ddd"},
+            run_pipeline_capture=captured,
+        )
+        passed_blacklist = captured[0]
+        assert user_blacklist_ids.issubset(passed_blacklist)
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline_excludes_autoparse_ids(self):
+        """Autoparse IDs must NOT be in the blacklist passed to run_pipeline."""
+        captured: list[set] = []
+        autoparse_ids = {"id_ccc", "id_ddd"}
+        await self._run_parsing_with_mocked_repos(
+            user_blacklist_ids={"id_aaa", "id_bbb"},
+            autoparse_ids=autoparse_ids,
+            run_pipeline_capture=captured,
+        )
+        passed_blacklist = captured[0]
+        assert not autoparse_ids.intersection(passed_blacklist)
 
     @pytest.mark.asyncio
     async def test_resumes_from_checkpoint_when_load_parsing_for_resume_returns_data(self):

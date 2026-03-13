@@ -173,7 +173,7 @@ async def fsm_hh_link_received(
         experience_level=data.get("work_experience", ""),
     )
 
-    parsed_info = _format_parsed_vacancy_preview(data)
+    parsed_info = _format_parsed_vacancy_preview(data, i18n)
     await wait_msg.edit_text(
         f"{i18n.get('iv-fsm-hh-parsed')}\n\n{parsed_info}\n\n{i18n.get('iv-fsm-now-add-questions')}",
         reply_markup=questions_keyboard(0, i18n),
@@ -182,14 +182,14 @@ async def fsm_hh_link_received(
     await state.set_state(InterviewForm.adding_question)
 
 
-def _format_parsed_vacancy_preview(data: dict) -> str:
+def _format_parsed_vacancy_preview(data: dict, i18n: I18nContext) -> str:
     lines = []
     if data.get("title"):
         lines.append(f"<b>{data['title']}</b>")
     if data.get("company_name"):
-        lines.append(f"Компания: {data['company_name']}")
+        lines.append(i18n.get("iv-parsed-company", value=data["company_name"]))
     if data.get("work_experience"):
-        lines.append(f"Опыт: {data['work_experience']}")
+        lines.append(i18n.get("iv-parsed-experience", value=data["work_experience"]))
     return "\n".join(lines)
 
 
@@ -846,6 +846,8 @@ async def handle_prep_test_answer(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    await callback.answer()
+
     import contextlib
 
     from aiogram.exceptions import TelegramBadRequest
@@ -855,7 +857,6 @@ async def handle_prep_test_answer(
     prep_repo = InterviewPreparationRepository(session)
     test = await prep_repo.get_test_by_step(callback_data.prep_step_id)
     if not test or not test.questions_json:
-        await callback.answer()
         return
 
     questions = test.questions_json.get("questions", [])
@@ -916,7 +917,6 @@ async def handle_prep_test_answer(
                 f"{feedback}\n\n<b>{i18n.get('prep-test-results')}: {score_text}</b>",
                 reply_markup=back_kb,
             )
-    await callback.answer()
 
 
 def _make_back_to_step_keyboard(step_id: int, interview_id: int, i18n: I18nContext):

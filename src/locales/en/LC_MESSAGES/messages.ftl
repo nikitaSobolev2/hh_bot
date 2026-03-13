@@ -689,6 +689,8 @@ iv-fsm-enter-hh-link =
 
 iv-fsm-parsing-hh = ⏳ Loading vacancy data from HH.ru...
 iv-fsm-hh-parsed = ✅ Vacancy loaded:
+iv-parsed-company = Company: { $value }
+iv-parsed-experience = Experience: { $value }
 iv-fsm-hh-parse-failed =
     ❌ Could not load the vacancy. Check the link and try again.
 iv-fsm-invalid-link = Please enter a valid link (starting with http).

@@ -96,6 +96,10 @@ async def _generate_preparation_async(
     if not enabled:
         return {"status": "disabled"}
 
+    idempotency_key = f"interview_prep:{interview_id}"
+    if await task.is_already_completed(idempotency_key, session_factory):
+        return {"status": "already_completed"}
+
     cb = await task.load_circuit_breaker(
         "interview_prep",
         AppSettingKey.CB_PREP_GUIDE_FAILURE_THRESHOLD,
@@ -112,6 +116,7 @@ async def _generate_preparation_async(
             interview = await InterviewRepository(session).get_by_id(interview_id)
             if not interview:
                 return {"status": "not_found"}
+            user_id = interview.user_id
 
             experiences = await WorkExperienceRepository(session).get_active_by_user(
                 interview.user_id
@@ -159,6 +164,7 @@ async def _generate_preparation_async(
             await session.commit()
 
         await _notify_user_prep(task, bot, chat_id, message_id, interview_id, locale)
+        await task.mark_completed(idempotency_key, "interview_prep", user_id, session_factory)
         return {"status": "completed", "steps_count": len(steps_data)}
 
     except SoftTimeLimitExceeded:

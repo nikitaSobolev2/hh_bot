@@ -105,6 +105,11 @@ async def _generate_qa_async(
     if not enabled:
         return {"status": "disabled"}
 
+    idempotency_key = f"interview_qa:{user_id}:{question_key or 'all'}"
+    if await task.is_already_completed(idempotency_key, session_factory):
+        await _notify_user(task, chat_id, message_id, locale)
+        return {"status": "already_completed"}
+
     cb = await task.load_circuit_breaker(
         "interview_qa",
         AppSettingKey.CB_INTERVIEW_QA_FAILURE_THRESHOLD,
@@ -183,6 +188,7 @@ async def _generate_qa_async(
         await session.commit()
 
     await _notify_user(task, chat_id, message_id, locale)
+    await task.mark_completed(idempotency_key, "interview_qa", user_id, session_factory)
     return {"status": "completed"}
 
 

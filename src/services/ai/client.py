@@ -6,7 +6,7 @@ import asyncio
 import re
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any
 
 import httpx
 from openai import APIStatusError, AsyncOpenAI, RateLimitError
@@ -37,8 +37,6 @@ _RATE_LIMIT_MIN_WAIT = 30
 _RATE_LIMIT_MAX_RETRIES = 5
 # Matches retry_after in JSON-like strings: "retry_after": 30 or 'retry_after': 30
 _RETRY_AFTER_RE = re.compile(r"retry_after['\"]?\s*:\s*(\d+)", re.IGNORECASE)
-
-T = TypeVar("T")
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -93,7 +91,7 @@ def _extract_retry_after(exc: Exception) -> int:
     return _RATE_LIMIT_MIN_WAIT
 
 
-async def _call_with_rate_limit_retry(
+async def _call_with_rate_limit_retry[T](
     coro_fn: Callable[[], Coroutine[Any, Any, T]],
 ) -> T:
     """Execute an AI API call, retrying on 429 with exponential backoff.
@@ -300,7 +298,7 @@ class AIClient:
     async def generate_key_phrases(
         self,
         prompt: str,
-    ) -> str | None:
+    ) -> str:
         async def _call() -> str:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
@@ -316,7 +314,7 @@ class AIClient:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("OpenAI key phrases generation failed", error=str(exc))
-            return None
+            raise
 
     async def analyze_interview(
         self,

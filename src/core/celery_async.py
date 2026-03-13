@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import Any, ParamSpec, TypeVar
-
-P = ParamSpec("P")
-T = TypeVar("T")
+from typing import Any
 
 
 async def run_celery_task(
@@ -26,6 +23,6 @@ async def run_celery_task(
     )
 
 
-async def run_sync_in_thread(fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+async def run_sync_in_thread[**P, T](fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     """Run any sync callable in a thread pool."""
     return await asyncio.to_thread(fn, *args, **kwargs)

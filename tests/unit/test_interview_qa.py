@@ -493,6 +493,8 @@ def _make_mock_task(mock_cb=None, mock_bot=None):
     """Return a mock HHBotTask with stubbed shared helpers."""
     task = MagicMock()
     task.check_enabled = AsyncMock(return_value=True)
+    task.is_already_completed = AsyncMock(return_value=False)
+    task.mark_completed = AsyncMock()
     task.load_circuit_breaker = AsyncMock(return_value=mock_cb or MagicMock())
     task.create_bot = MagicMock(return_value=mock_bot or AsyncMock())
     task.notify_user = AsyncMock()

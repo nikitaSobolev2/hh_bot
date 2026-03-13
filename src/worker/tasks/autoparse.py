@@ -14,8 +14,8 @@ from src.worker.utils import run_async
 
 logger = get_logger(__name__)
 
-_DISPATCH_LOCK_KEY = "autoparse:dispatch_lock"
-_RUN_LOCK_PREFIX = "autoparse:run:"
+_DISPATCH_LOCK_KEY = "lock:autoparse:dispatch"
+_RUN_LOCK_PREFIX = "lock:autoparse:run:"
 # Safety-net TTL: released explicitly via finally; this guards against a crashed worker
 _CONCURRENT_RUN_LOCK_TTL = 2 * 3600
 

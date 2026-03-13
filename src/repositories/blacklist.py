@@ -43,6 +43,23 @@ class BlacklistRepository(BaseRepository[VacancyBlacklist]):
         result = await self._session.execute(stmt)
         return result.scalar_one()
 
+    async def get_contexts_with_counts(self, user_id: int) -> list[tuple[str, int]]:
+        """Return (vacancy_title_context, count) for active blacklist entries."""
+        now = _utcnow_naive()
+        stmt = (
+            select(
+                VacancyBlacklist.vacancy_title_context,
+                func.count(VacancyBlacklist.id).label("cnt"),
+            )
+            .where(
+                VacancyBlacklist.user_id == user_id,
+                VacancyBlacklist.blacklisted_until > now,
+            )
+            .group_by(VacancyBlacklist.vacancy_title_context)
+        )
+        result = await self._session.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
+
     async def clear_for_user(self, user_id: int) -> int:
         stmt = (
             delete(VacancyBlacklist)
