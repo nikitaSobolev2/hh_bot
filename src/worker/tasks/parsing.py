@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -30,16 +31,30 @@ def run_parsing_company(
     include_blacklisted: bool = False,
     telegram_chat_id: int = 0,
 ) -> dict:
-    return run_async(
-        lambda sf: _run_parsing_company_async(
-            sf,
-            self,
-            parsing_company_id,
-            user_id,
-            include_blacklisted,
-            telegram_chat_id,
+    try:
+        return run_async(
+            lambda sf: _run_parsing_company_async(
+                sf,
+                self,
+                parsing_company_id,
+                user_id,
+                include_blacklisted,
+                telegram_chat_id,
+            )
         )
-    )
+    except SoftTimeLimitExceeded:
+        logger.warning(
+            "Parsing task soft time limit exceeded",
+            company_id=parsing_company_id,
+            user_id=user_id,
+        )
+        run_async(
+            lambda sf: _handle_parsing_soft_timeout(
+                sf, parsing_company_id, user_id, telegram_chat_id
+            )
+        )
+        self.request.retries = self.max_retries
+        raise
 
 
 async def _run_parsing_company_async(
@@ -329,6 +344,55 @@ async def _save_parsing_results(
         )
 
         await session.commit()
+
+
+async def _handle_parsing_soft_timeout(
+    session_factory: async_sessionmaker[AsyncSession],
+    parsing_company_id: int,
+    user_id: int,
+    telegram_chat_id: int,
+) -> None:
+    """Mark parsing as failed and notify user when soft time limit is exceeded."""
+    from src.models.task import BaseCeleryTask
+    from src.repositories.parsing import ParsingCompanyRepository
+    from src.repositories.user import UserRepository
+
+    async with session_factory() as session:
+        company_repo = ParsingCompanyRepository(session)
+        company = await company_repo.get_by_id(parsing_company_id)
+        if company:
+            await company_repo.update(company, status="failed")
+            await session.commit()
+
+        idempotency_key = f"parse_company:{parsing_company_id}"
+        session.add(
+            BaseCeleryTask(
+                celery_task_id=None,
+                task_type="parse_company",
+                user_id=user_id,
+                status="failed",
+                idempotency_key=idempotency_key,
+                error_message="soft_time_limit_exceeded",
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+        if user and user.telegram_id:
+            locale = user.language_code or "ru"
+            from src.core.i18n import get_text
+            from src.services.ai.streaming import _send_with_retry
+            from src.services.telegram.bot_factory import create_task_bot
+
+            bot = create_task_bot()
+            try:
+                text = get_text("task-soft-timeout", locale)
+                await _send_with_retry(
+                    bot, user.telegram_id, text=text, parse_mode="HTML"
+                )
+            finally:
+                await bot.session.close()
 
 
 async def _mark_parsing_failed(

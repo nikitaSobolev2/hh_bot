@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from src.config import settings
 from src.core.constants import AI_MAX_DESCRIPTION_LENGTH
@@ -29,6 +31,67 @@ from src.services.ai.prompts import (
 logger = get_logger(__name__)
 
 MAX_DESCRIPTION_LENGTH = AI_MAX_DESCRIPTION_LENGTH
+
+# 429 rate limit retry: Cloudflare recommends 30s minimum, exponential backoff
+_RATE_LIMIT_MIN_WAIT = 30
+_RATE_LIMIT_MAX_RETRIES = 5
+_RETRY_AFTER_RE = re.compile(r"['\"]retry_after['\"]\s*:\s*(\d+)", re.IGNORECASE)
+
+T = TypeVar("T")
+
+
+def _extract_retry_after(exc: RateLimitError) -> int:
+    """Extract retry_after in seconds from 429 error. Returns _RATE_LIMIT_MIN_WAIT if not found."""
+    if hasattr(exc, "response") and exc.response is not None:
+        ra = exc.response.headers.get("Retry-After")
+        if ra:
+            try:
+                return max(int(ra), _RATE_LIMIT_MIN_WAIT)
+            except ValueError:
+                pass
+    if hasattr(exc, "body") and isinstance(exc.body, dict):
+        for key in ("retry_after", "retry-after"):
+            ra = exc.body.get(key)
+            if ra is not None:
+                try:
+                    return max(int(ra), _RATE_LIMIT_MIN_WAIT)
+                except (ValueError, TypeError):
+                    pass
+        err = exc.body.get("error")
+        if isinstance(err, dict) and err.get("retry_after") is not None:
+            try:
+                return max(int(err["retry_after"]), _RATE_LIMIT_MIN_WAIT)
+            except (ValueError, TypeError, KeyError):
+                pass
+    match = _RETRY_AFTER_RE.search(str(exc))
+    if match:
+        return max(int(match.group(1)), _RATE_LIMIT_MIN_WAIT)
+    return _RATE_LIMIT_MIN_WAIT
+
+
+async def _call_with_rate_limit_retry(
+    coro_fn: Callable[[], Coroutine[Any, Any, T]],
+) -> T:
+    """Execute an AI API call, retrying on 429 with exponential backoff."""
+    last_exc: Exception | None = None
+    for attempt in range(_RATE_LIMIT_MAX_RETRIES):
+        try:
+            return await coro_fn()
+        except RateLimitError as exc:
+            last_exc = exc
+            if attempt >= _RATE_LIMIT_MAX_RETRIES - 1:
+                raise
+            wait = _extract_retry_after(exc)
+            # Exponential backoff: 30, 60, 120, 240
+            wait = min(wait * (2**attempt), 300)
+            logger.warning(
+                "AI rate limited, retrying after wait",
+                attempt=attempt + 1,
+                wait_seconds=wait,
+                retry_after=wait,
+            )
+            await asyncio.sleep(wait)
+    raise last_exc  # type: ignore[misc]
 
 _STACK_PATTERN = re.compile(r"\[Stack\]:\s*(.+)", re.IGNORECASE)
 _COMPAT_PATTERN = re.compile(r"\[Compatibility\]:\s*(\d+)", re.IGNORECASE)
@@ -72,12 +135,12 @@ class AIClient:
         self._base_url = base_url or settings.openai_base_url
         self._model = model or settings.openai_model
         self._rate_limiter = rate_limiter
-        # max_retries=1: retry once on transient errors (429, 500, timeout) then
-        # let the caller decide — Celery tasks handle their own retry logic.
+        # max_retries=0: we handle 429 ourselves with 30s+ backoff; SDK's 9s retry
+        # is too short for Cloudflare/proxy rate limits.
         self._client = AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,
-            max_retries=1,
+            max_retries=0,
         )
 
     async def _acquire_rate_limit(self) -> None:
@@ -94,7 +157,8 @@ class AIClient:
             {"role": "system", "content": build_keyword_extraction_system_prompt()},
             {"role": "user", "content": build_keyword_extraction_user_content(truncated)},
         ]
-        try:
+
+        async def _call() -> list[str]:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -105,6 +169,9 @@ class AIClient:
             )
             raw = response.choices[0].message.content or ""
             return [kw.strip() for kw in raw.split(",") if kw.strip()]
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("OpenAI keyword extraction failed", error=str(exc))
             return []
@@ -139,7 +206,8 @@ class AIClient:
                 ),
             },
         ]
-        try:
+
+        async def _call() -> VacancyAnalysis:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -150,6 +218,9 @@ class AIClient:
             )
             raw = (response.choices[0].message.content or "").strip()
             return _parse_vacancy_analysis(raw)
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("Vacancy analysis failed", error=str(exc))
             return VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
@@ -175,7 +246,8 @@ class AIClient:
                 ),
             },
         ]
-        try:
+
+        async def _call() -> float:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -187,6 +259,9 @@ class AIClient:
             raw = (response.choices[0].message.content or "").strip()
             digits = "".join(c for c in raw if c.isdigit())
             return min(float(int(digits)), 100.0) if digits else 0.0
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("Compatibility scoring failed", error=str(exc))
             return 0.0
@@ -195,7 +270,7 @@ class AIClient:
         self,
         prompt: str,
     ) -> str | None:
-        try:
+        async def _call() -> str:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -205,6 +280,9 @@ class AIClient:
                 temperature=0.7,
             )
             return response.choices[0].message.content or ""
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("OpenAI key phrases generation failed", error=str(exc))
             return None
@@ -240,7 +318,8 @@ class AIClient:
                 ),
             },
         ]
-        try:
+
+        async def _call() -> str:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -250,6 +329,9 @@ class AIClient:
                 temperature=0.3,
             )
             return (response.choices[0].message.content or "").strip()
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("Interview analysis failed", error=str(exc))
             return ""
@@ -277,7 +359,8 @@ class AIClient:
                 ),
             },
         ]
-        try:
+
+        async def _call() -> str:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -287,6 +370,9 @@ class AIClient:
                 temperature=0.4,
             )
             return (response.choices[0].message.content or "").strip()
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("Improvement flow generation failed", error=str(exc))
             return ""
@@ -310,7 +396,8 @@ class AIClient:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        try:
+
+        async def _call() -> str:
             await self._acquire_rate_limit()
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -320,6 +407,9 @@ class AIClient:
                 temperature=temperature,
             )
             return (response.choices[0].message.content or "").strip()
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
             logger.error("OpenAI generate_text failed", error=str(exc))
             raise
@@ -331,9 +421,10 @@ class AIClient:
         chunk_count = 0
         max_chunk_len = 0
         total_chars = 0
-        await self._acquire_rate_limit()
-        try:
-            stream = await self._client.chat.completions.create(
+
+        async def _create_stream():
+            await self._acquire_rate_limit()
+            return await self._client.chat.completions.create(
                 model=self._model,
                 timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0),
                 messages=[{"role": "user", "content": prompt}],
@@ -341,6 +432,14 @@ class AIClient:
                 temperature=0.7,
                 stream=True,
             )
+
+        try:
+            stream = await _call_with_rate_limit_retry(_create_stream)
+        except Exception as exc:
+            logger.error("OpenAI stream_key_phrases create failed", error=str(exc))
+            return
+
+        try:
             async for chunk in stream:
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if not delta:
