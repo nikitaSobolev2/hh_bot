@@ -398,6 +398,7 @@ async def handle_generate_ai(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.work_experience import generate_work_experience_ai_task
 
     data = await state.get_data()
@@ -412,7 +413,8 @@ async def handle_generate_ai(
     with contextlib.suppress(TelegramBadRequest):
         wait_msg = await callback.message.edit_text(i18n.get("work-exp-generating"))
 
-    generate_work_experience_ai_task.delay(
+    await run_celery_task(
+        generate_work_experience_ai_task,
         user_id=user.id,
         chat_id=callback.message.chat.id,
         message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -766,6 +768,7 @@ async def _handle_edit_generate_ai(
     work_exp_id: int = data["we_editing_id"]
     return_to: str = data["we_return_to"]
 
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.work_experience import generate_work_experience_ai_task
 
     repo = WorkExperienceRepository(session)
@@ -781,7 +784,8 @@ async def _handle_edit_generate_ai(
     with contextlib.suppress(TelegramBadRequest):
         wait_msg = await callback.message.edit_text(i18n.get("work-exp-generating"))
 
-    generate_work_experience_ai_task.delay(
+    await run_celery_task(
+        generate_work_experience_ai_task,
         user_id=user.id,
         chat_id=callback.message.chat.id,
         message_id=wait_msg.message_id if wait_msg else callback.message.message_id,

@@ -51,15 +51,22 @@ async def create_parsing_company(
     return company.id
 
 
-def dispatch_parsing_task(
+async def dispatch_parsing_task(
     company_id: int,
     user_id: int,
     include_blacklisted: bool,
     telegram_chat_id: int = 0,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.parsing import run_parsing_company
 
-    run_parsing_company.delay(company_id, user_id, include_blacklisted, telegram_chat_id)
+    await run_celery_task(
+        run_parsing_company,
+        company_id,
+        user_id,
+        include_blacklisted,
+        telegram_chat_id,
+    )
 
 
 async def clone_and_dispatch(
@@ -97,7 +104,7 @@ async def clone_and_dispatch(
         use_compatibility_check=final_use_compat,
         compatibility_threshold=final_threshold,
     )
-    dispatch_parsing_task(
+    await dispatch_parsing_task(
         new_id,
         user_id,
         include_blacklisted=False,
@@ -224,7 +231,7 @@ async def deactivate_work_experience(session: AsyncSession, work_exp_id: int, us
     return deactivated
 
 
-def dispatch_key_phrases_task(
+async def dispatch_key_phrases_task(
     company_id: int,
     user_id: int,
     style_key: str,
@@ -233,9 +240,11 @@ def dispatch_key_phrases_task(
     chat_id: int,
     mode: str = "",
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.ai import generate_key_phrases_task
 
-    generate_key_phrases_task.delay(
+    await run_celery_task(
+        generate_key_phrases_task,
         company_id,
         user_id,
         style_key,

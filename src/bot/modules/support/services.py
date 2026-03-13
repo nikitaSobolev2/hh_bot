@@ -631,7 +631,11 @@ async def check_ban_expiry(session: AsyncSession, user: User) -> bool:
     active_ban = await ban_repo.get_active_ban(user.id)
 
     if not active_ban:
-        return False
+        # No active ban record — stale is_banned flag; clear it
+        user_repo = UserRepository(session)
+        await user_repo.update(user, is_banned=False)
+        await session.commit()
+        return True
 
     now = datetime.now(UTC)
     if active_ban.banned_until and active_ban.banned_until.replace(tzinfo=UTC) < now:

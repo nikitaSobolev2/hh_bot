@@ -343,7 +343,10 @@ async def handle_proceed(
 
     wait_msg = await callback.message.edit_text(i18n.get("ach-generating"))
 
-    generate_achievements_task.delay(
+    from src.core.celery_async import run_celery_task
+
+    await run_celery_task(
+        generate_achievements_task,
         generation.id,
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,

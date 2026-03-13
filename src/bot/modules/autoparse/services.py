@@ -72,6 +72,7 @@ async def soft_delete_autoparse_company(
 
 
 async def _revoke_scheduled_delivery_async(company_id: int, user_id: int) -> None:
+    from src.core.celery_async import run_sync_in_thread
     from src.core.redis import create_async_redis
     from src.worker.app import celery_app
     from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX
@@ -81,7 +82,11 @@ async def _revoke_scheduled_delivery_async(company_id: int, user_id: int) -> Non
     try:
         scheduled_id = await redis.get(task_key)
         if scheduled_id:
-            celery_app.control.revoke(scheduled_id, terminate=False)
+            await run_sync_in_thread(
+                celery_app.control.revoke,
+                scheduled_id,
+                terminate=False,
+            )
             await redis.delete(task_key)
     finally:
         await redis.aclose()

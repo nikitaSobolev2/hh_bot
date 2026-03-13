@@ -263,7 +263,7 @@ async def _confirm_and_launch(
         compatibility_threshold=data.get("compatibility_threshold"),
     )
 
-    parsing_service.dispatch_parsing_task(
+    await parsing_service.dispatch_parsing_task(
         company_id,
         user.id,
         include_blacklisted,
@@ -846,7 +846,7 @@ async def key_phrases_select_style(
         await callback.answer()
         return
 
-    parsing_service.dispatch_key_phrases_task(
+    await parsing_service.dispatch_key_phrases_task(
         company_id=callback_data.company_id,
         user_id=user.id,
         style_key=callback_data.style,

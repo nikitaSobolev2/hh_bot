@@ -349,6 +349,7 @@ async def run_now(
     i18n: I18nContext,
     user: User,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.autoparse import run_autoparse_company
 
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
@@ -373,7 +374,7 @@ async def run_now(
     if company is None:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
-    run_autoparse_company.delay(company.id, notify_user_id=user.id)
+    await run_celery_task(run_autoparse_company, company.id, notify_user_id=user.id)
     await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
 
     count = await ap_service.get_vacancy_count(session, company.id)
@@ -397,6 +398,7 @@ async def show_new_vacancies_now(
     user: User,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task, run_sync_in_thread
     from src.core.redis import create_async_redis
     from src.worker.app import celery_app
     from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
@@ -406,12 +408,21 @@ async def show_new_vacancies_now(
     try:
         scheduled_id = await redis.get(task_key)
         if scheduled_id:
-            celery_app.control.revoke(scheduled_id, terminate=False)
+            await run_sync_in_thread(
+                celery_app.control.revoke,
+                scheduled_id,
+                terminate=False,
+            )
             await redis.delete(task_key)
     finally:
         await redis.aclose()
 
-    deliver_autoparse_results.delay(callback_data.company_id, user.id, True)
+    await run_celery_task(
+        deliver_autoparse_results,
+        callback_data.company_id,
+        user.id,
+        True,
+    )
     await callback.answer(i18n.get("autoparse-delivering-now"), show_alert=True)
 
 

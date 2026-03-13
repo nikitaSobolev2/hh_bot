@@ -27,6 +27,7 @@ def _create_task_session_factory() -> tuple[AsyncEngine, async_sessionmaker[Asyn
         echo=False,
         pool_size=5,
         max_overflow=10,
+        pool_pre_ping=True,
     )
     factory = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
     return eng, factory

@@ -187,7 +187,7 @@ async def handle_cancel(
     await callback.answer()
 
 
-def _enqueue_summary(
+async def _enqueue_summary(
     summary_id: int,
     user_id: int,
     excluded_industries: str | None,
@@ -199,9 +199,11 @@ def _enqueue_summary(
     locale: str,
     context: str = "",
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.vacancy_summary import generate_vacancy_summary_task
 
-    generate_vacancy_summary_task.delay(
+    await run_celery_task(
+        generate_vacancy_summary_task,
         summary_id,
         user_id,
         excluded_industries,
@@ -258,7 +260,7 @@ async def _dispatch_generation(
     else:
         wait_msg = await message.answer(i18n.get("vs-generating"))
 
-    _enqueue_summary(
+    await _enqueue_summary(
         summary.id,
         user.id,
         excluded_industries,
@@ -363,7 +365,7 @@ async def handle_regenerate(
     with contextlib.suppress(TelegramBadRequest):
         wait_msg = await callback.message.edit_text(i18n.get("vs-generating"))
 
-    _enqueue_summary(
+    await _enqueue_summary(
         new_summary.id,
         user.id,
         new_summary.excluded_industries,

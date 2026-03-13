@@ -170,10 +170,12 @@ async def handle_generate_one(
         await qa_repo.soft_delete(existing)
         await session.commit()
 
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.interview_qa import generate_interview_qa_task
 
     wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
-    generate_interview_qa_task.delay(
+    await run_celery_task(
+        generate_interview_qa_task,
         user.id,
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -196,10 +198,12 @@ async def handle_generate_pending(
 
     await callback.answer()
 
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.interview_qa import generate_interview_qa_task
 
     wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
-    generate_interview_qa_task.delay(
+    await run_celery_task(
+        generate_interview_qa_task,
         user.id,
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -223,10 +227,12 @@ async def handle_regenerate(
         await repo.soft_delete(question)
         await session.commit()
 
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.interview_qa import generate_interview_qa_task
 
     wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
-    generate_interview_qa_task.delay(
+    await run_celery_task(
+        generate_interview_qa_task,
         user.id,
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,

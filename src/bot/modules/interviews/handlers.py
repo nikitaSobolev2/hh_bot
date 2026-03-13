@@ -427,7 +427,10 @@ async def fsm_proceed(
 
     await callback.message.edit_text(i18n.get("iv-fsm-analyzing"))
 
-    analyze_interview_task.delay(
+    from src.core.celery_async import run_celery_task
+
+    await run_celery_task(
+        analyze_interview_task,
         interview.id,
         callback.message.chat.id,
         callback.message.message_id,
@@ -588,10 +591,12 @@ async def handle_prepare_me(
     user: User,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.interview_prep import generate_preparation_task
 
     wait_msg = await callback.message.edit_text(i18n.get("prep-generating"))
-    generate_preparation_task.delay(
+    await run_celery_task(
+        generate_preparation_task,
         callback_data.interview_id,
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -698,10 +703,12 @@ async def handle_prep_continue(
     user: User,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.interview_prep import generate_deep_summary_task
 
     wait_msg = await callback.message.edit_text(i18n.get("prep-generating-deep"))
-    generate_deep_summary_task.delay(
+    await run_celery_task(
+        generate_deep_summary_task,
         callback_data.prep_step_id,
         callback_data.interview_id,
         callback.message.chat.id,
@@ -761,10 +768,12 @@ async def handle_prep_create_test(
     user: User,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.interview_prep import generate_test_task
 
     wait_msg = await callback.message.edit_text(i18n.get("prep-generating-test"))
-    generate_test_task.delay(
+    await run_celery_task(
+        generate_test_task,
         callback_data.prep_step_id,
         callback_data.interview_id,
         callback.message.chat.id,
@@ -1027,7 +1036,10 @@ async def handle_generate_flow(
     await callback.message.edit_text(i18n.get("iv-generating-flow"))
     await callback.answer()
 
-    generate_improvement_flow_task.delay(
+    from src.core.celery_async import run_celery_task
+
+    await run_celery_task(
+        generate_improvement_flow_task,
         callback_data.improvement_id,
         callback_data.interview_id,
         callback.message.chat.id,

@@ -316,6 +316,7 @@ async def handle_keywords_skip(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.work_experience import generate_resume_key_phrases_task
 
     data = await state.get_data()
@@ -331,7 +332,8 @@ async def handle_keywords_skip(
             reply_markup=resume_cancel_keyboard(i18n),
         )
 
-    generate_resume_key_phrases_task.delay(
+    await run_celery_task(
+        generate_resume_key_phrases_task,
         user_id=user.id,
         chat_id=callback.message.chat.id,
         message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -370,6 +372,7 @@ async def handle_keywords_typed(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.worker.tasks.work_experience import generate_resume_key_phrases_task
 
     raw = message.text or ""
@@ -386,7 +389,8 @@ async def handle_keywords_typed(
 
     wait_msg = await message.answer(i18n.get("res-generating-keyphrases"))
 
-    generate_resume_key_phrases_task.delay(
+    await run_celery_task(
+        generate_resume_key_phrases_task,
         user_id=user.id,
         chat_id=message.chat.id,
         message_id=wait_msg.message_id,
@@ -432,7 +436,10 @@ async def handle_keywords_from_parsing(
         with contextlib.suppress(TelegramBadRequest):
             wait_msg = await callback.message.edit_text(i18n.get("res-keywords-no-parsings"))
 
-        generate_resume_key_phrases_task.delay(
+        from src.core.celery_async import run_celery_task
+
+        await run_celery_task(
+            generate_resume_key_phrases_task,
             user_id=user.id,
             chat_id=callback.message.chat.id,
             message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -462,6 +469,7 @@ async def handle_keywords_use_company(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    from src.core.celery_async import run_celery_task
     from src.repositories.parsing import AggregatedResultRepository
     from src.worker.tasks.work_experience import generate_resume_key_phrases_task
 
@@ -501,7 +509,8 @@ async def handle_keywords_use_company(
             reply_markup=resume_cancel_keyboard(i18n),
         )
 
-    generate_resume_key_phrases_task.delay(
+    await run_celery_task(
+        generate_resume_key_phrases_task,
         user_id=user.id,
         chat_id=callback.message.chat.id,
         message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
@@ -848,7 +857,10 @@ async def _dispatch_rec_letter(
     else:
         wait_msg = await message.answer(i18n.get("res-rec-generating"))
 
-    generate_recommendation_letter_task.delay(
+    from src.core.celery_async import run_celery_task
+
+    await run_celery_task(
+        generate_recommendation_letter_task,
         letter_id=letter.id,
         user_id=user.id,
         chat_id=message.chat.id,
