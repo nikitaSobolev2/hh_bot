@@ -46,6 +46,16 @@ class ParsingCompanyRepository(BaseRepository[ParsingCompany]):
         result = await self._session.execute(stmt)
         return result.scalar_one()
 
+    async def get_pending_or_processing(self) -> list[ParsingCompany]:
+        """Return all ParsingCompany with status pending or processing, with user loaded."""
+        stmt = (
+            select(ParsingCompany)
+            .where(ParsingCompany.status.in_(["pending", "processing"]))
+            .options(selectinload(ParsingCompany.user))
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().unique().all())
+
 
 class ParsedVacancyRepository(BaseRepository[ParsedVacancy]):
     def __init__(self, session: AsyncSession) -> None:

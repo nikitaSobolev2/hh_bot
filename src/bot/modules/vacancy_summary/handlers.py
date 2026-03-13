@@ -17,6 +17,7 @@ from src.bot.modules.vacancy_summary.keyboards import (
     vacancy_summary_list_keyboard,
 )
 from src.bot.modules.vacancy_summary.states import VacancySummaryForm
+from src.bot.utils.limits import get_max_message_length
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.vacancy_summary import VacancySummaryRepository
@@ -293,8 +294,9 @@ async def handle_detail(
     in_resume_context = bool(data.get("vs_resume_flow"))
 
     text = summary.generated_text or i18n.get("vs-generating")
-    if len(text) > 4000:
-        text = text[:3900] + "\n..."
+    max_len = get_max_message_length(user, "default")
+    if len(text) > max_len:
+        text = text[: max_len - 10] + "\n..."
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(

@@ -37,6 +37,7 @@ from src.bot.modules.resume.keyboards import (
     resume_start_keyboard,
 )
 from src.bot.modules.resume.states import ResumeForm
+from src.bot.utils.limits import get_max_message_length
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.services.ai.prompts import REC_LETTER_CHARACTERS
@@ -1145,6 +1146,7 @@ async def handle_show_job_keyphrases(
 async def handle_show_summary(
     callback: CallbackQuery,
     callback_data: ResumeCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -1157,8 +1159,9 @@ async def handle_show_summary(
         return
 
     text = summary.generated_text
-    if len(text) > 3800:
-        text = text[:3800] + "\n..."
+    max_len = get_max_message_length(user, "resume")
+    if len(text) > max_len:
+        text = text[: max_len - 10] + "\n..."
 
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1179,6 +1182,7 @@ async def handle_show_summary(
 async def handle_show_rec_letter(
     callback: CallbackQuery,
     callback_data: ResumeCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -1191,8 +1195,9 @@ async def handle_show_rec_letter(
         return
 
     text = letter.generated_text
-    if len(text) > 3800:
-        text = text[:3800] + "\n..."
+    max_len = get_max_message_length(user, "resume")
+    if len(text) > max_len:
+        text = text[: max_len - 10] + "\n..."
 
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[

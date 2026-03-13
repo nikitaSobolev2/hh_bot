@@ -287,6 +287,7 @@ def language_selection_keyboard(
     count: int,
     i18n: I18nContext,
     mode: str = "",
+    is_admin: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     items = list(KEY_PHRASES_LANGUAGES.items())
@@ -306,6 +307,20 @@ def language_selection_keyboard(
             for key, label in pair
         ]
         rows.append(row)
+    if is_admin:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-type-manually"),
+                    callback_data=KeyPhrasesCallback(
+                        company_id=company_id,
+                        action="lang_manual",
+                        count=count,
+                        mode=mode,
+                    ).pack(),
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(
@@ -323,6 +338,7 @@ def style_selection_keyboard(
     count: int = 10,
     lang: str = "ru",
     mode: str = "",
+    is_admin: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for key in KEY_PHRASES_STYLE_KEYS:
@@ -335,6 +351,21 @@ def style_selection_keyboard(
                         company_id=company_id,
                         action="select_style",
                         style=key,
+                        count=count,
+                        lang=lang,
+                        mode=mode,
+                    ).pack(),
+                )
+            ]
+        )
+    if is_admin:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-type-manually"),
+                    callback_data=KeyPhrasesCallback(
+                        company_id=company_id,
+                        action="style_manual",
                         count=count,
                         lang=lang,
                         mode=mode,
@@ -357,6 +388,7 @@ def work_experience_keyboard(
     company_id: int,
     experiences: list[UserWorkExperience],
     i18n: I18nContext,
+    is_admin: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
@@ -374,7 +406,7 @@ def work_experience_keyboard(
             ]
         )
 
-    if len(experiences) < MAX_WORK_EXPERIENCES:
+    if is_admin or len(experiences) < MAX_WORK_EXPERIENCES:
         rows.append(
             [
                 InlineKeyboardButton(

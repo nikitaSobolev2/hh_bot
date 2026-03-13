@@ -80,9 +80,7 @@ class TaskCheckpointService:
         )
         await self._redis.set(self._redis_key(key), payload, ex=_TTL)
 
-    async def load_parsing(
-        self, key: str, task_id: str
-    ) -> tuple[int, int, list[dict]] | None:
+    async def load_parsing(self, key: str, task_id: str) -> tuple[int, int, list[dict]] | None:
         """Return ``(processed, total, urls)`` if a matching parsing checkpoint exists.
 
         Returns ``None`` when the key is absent or belongs to a different task.
@@ -93,6 +91,22 @@ class TaskCheckpointService:
         data = json.loads(raw)
         if data.get("task_id") != task_id:
             return None
+        urls = data.get("urls", [])
+        if not urls:
+            return None
+        return data["processed"], data["total"], urls
+
+    async def load_parsing_for_resume(self, key: str) -> tuple[int, int, list[dict]] | None:
+        """Return ``(processed, total, urls)`` if a parsing checkpoint exists, ignoring task_id.
+
+        For resume-after-restart only: when the previous task was killed, its checkpoint
+        is orphaned but valid. Caller must ensure no concurrent execution for this key.
+        Returns ``None`` when the key is absent or urls are empty.
+        """
+        raw = await self._redis.get(self._redis_key(key))
+        if not raw:
+            return None
+        data = json.loads(raw)
         urls = data.get("urls", [])
         if not urls:
             return None

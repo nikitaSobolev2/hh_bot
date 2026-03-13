@@ -28,6 +28,7 @@ from src.bot.modules.interviews.keyboards import (
     source_choice_keyboard,
 )
 from src.bot.modules.interviews.states import InterviewForm
+from src.bot.utils.limits import get_max_message_length
 from src.core.i18n import I18nContext
 from src.models.interview import ImprovementStatus
 from src.models.user import User
@@ -640,6 +641,7 @@ async def handle_prep_steps(
 async def handle_prep_step_detail(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -657,8 +659,9 @@ async def handle_prep_step_detail(
         return
 
     text = f"<b>{step.step_number}. {step.title}</b>\n\n{step.content}"
-    if len(text) > 4000:
-        text = text[:3900] + "\n..."
+    max_len = get_max_message_length(user, "default")
+    if len(text) > max_len:
+        text = text[: max_len - 10] + "\n..."
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
@@ -725,6 +728,7 @@ async def handle_prep_continue(
 async def handle_prep_step_deep(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -742,8 +746,9 @@ async def handle_prep_step_deep(
         return
 
     text = f"<b>{i18n.get('prep-deep-title')}: {step.title}</b>\n\n{step.deep_summary}"
-    if len(text) > 4000:
-        text = text[:3900] + "\n..."
+    max_len = get_max_message_length(user, "default")
+    if len(text) > max_len:
+        text = text[: max_len - 10] + "\n..."
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(

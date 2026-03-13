@@ -17,3 +17,5 @@ class ParsingForm(StatesGroup):
     work_exp_company_name = State()
     work_exp_stack = State()
     key_phrases_per_company_count = State()
+    lang_manual = State()
+    style_manual = State()

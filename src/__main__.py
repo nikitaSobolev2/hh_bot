@@ -30,6 +30,12 @@ async def main() -> None:
     await _load_db_settings()
     logger.info("DB-managed settings loaded")
 
+    from src.services.task_restart import restart_pending_parsing_tasks
+
+    enqueued = await restart_pending_parsing_tasks()
+    if enqueued:
+        logger.info("Restarted pending parsing tasks", count=enqueued)
+
     bot = create_bot()
     dp = create_dispatcher()
 

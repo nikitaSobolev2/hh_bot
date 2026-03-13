@@ -27,6 +27,7 @@ btn-add-company = ➕ Add Company
 btn-remove = ❌ Remove
 btn-yes = ✅ Yes
 btn-no = ❌ No
+btn-type-manually = ✏️ Type manually
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Profile</b>
@@ -234,6 +235,8 @@ keyphrase-max-8 = Maximum is 8 phrases per company. Please enter a smaller numbe
 keyphrase-per-company-count =
     How many phrases per company? (1-8):
 keyphrase-select-style = Select a style:
+parsing-enter-lang-manual = Enter language code (e.g. ru, en, de):
+parsing-enter-style-manual = Enter style key (e.g. formal, results, brief):
 keyphrase-no-keywords = No keywords available. Run parsing first.
 keyphrase-generating =
     ⏳ Generating key phrases with AI streaming...
@@ -823,6 +826,7 @@ iqa-generation-timeout = ⚠️ Generation took too long. Please try again.
 iqa-why-new-job-title = ❓ Why are you looking for a new job?
 iqa-why-new-job-hint = Select your main reason:
 iqa-reason-label = Reason
+iqa-enter-reason-manual = Enter your reason for looking for a new job (custom text):
 iqa-reason-salary = 💰 Salary wasn't growing
 iqa-reason-bored = 😴 No new challenges
 iqa-reason-relationship = 😤 Team conflicts

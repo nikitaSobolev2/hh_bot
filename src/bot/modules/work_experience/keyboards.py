@@ -23,6 +23,7 @@ def work_experience_keyboard(
     show_continue: bool = False,
     show_skip: bool = False,
     disabled_exp_ids: set[int] | None = None,
+    is_admin: bool = False,
 ) -> InlineKeyboardMarkup:
     """List view — each job is a clickable button leading to the detail view."""
     rows: list[list[InlineKeyboardButton]] = []
@@ -48,7 +49,7 @@ def work_experience_keyboard(
             ]
         )
 
-    if len(experiences) < MAX_WORK_EXPERIENCES:
+    if is_admin or len(experiences) < MAX_WORK_EXPERIENCES:
         rows.append(
             [
                 InlineKeyboardButton(

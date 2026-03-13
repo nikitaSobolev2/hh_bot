@@ -66,7 +66,7 @@ def interview_qa_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def why_new_job_reasons_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+def why_new_job_reasons_keyboard(i18n: I18nContext, is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
@@ -76,6 +76,15 @@ def why_new_job_reasons_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         ]
         for reason in WHY_NEW_JOB_REASONS
     ]
+    if is_admin:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-type-manually"),
+                    callback_data=InterviewQACallback(action="why_reason_manual").pack(),
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(

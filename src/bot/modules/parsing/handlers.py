@@ -13,7 +13,6 @@ from src.bot.modules.parsing.callbacks import (
     WorkExperienceCallback,
 )
 from src.bot.modules.parsing.keyboards import (
-    MAX_WORK_EXPERIENCES,
     back_to_company_keyboard,
     blacklist_choice_keyboard,
     cancel_add_company_keyboard,
@@ -31,6 +30,15 @@ from src.bot.modules.parsing.keyboards import (
     work_experience_keyboard,
 )
 from src.bot.modules.parsing.states import ParsingForm
+from src.bot.utils.limits import (
+    get_compat_range,
+    get_max_key_phrases_count,
+    get_max_message_length,
+    get_max_per_company_count,
+    get_max_target_count,
+    get_max_text_length,
+    get_max_work_experiences,
+)
 from src.core.i18n import I18nContext
 from src.models.user import User
 
@@ -141,7 +149,7 @@ async def fsm_target_count(
         return
 
     count = int(text)
-    if not user.is_admin and count > 50:
+    if count > get_max_target_count(user):
         await message.answer(i18n.get("parsing-max-50"))
         return
 
@@ -190,7 +198,8 @@ async def fsm_compat_threshold(
     i18n: I18nContext,
 ) -> None:
     text = message.text.strip()
-    if not text.isdigit() or not (1 <= int(text) <= 100):
+    compat_min, compat_max = get_compat_range(user)
+    if not text.isdigit() or not (compat_min <= int(text) <= compat_max):
         await message.answer(i18n.get("parsing-compat-threshold-invalid"))
         return
 
@@ -381,7 +390,7 @@ async def fsm_retry_count(
         return
 
     count = int(text)
-    if not user.is_admin and count > 50:
+    if count > get_max_target_count(user):
         await message.answer(i18n.get("parsing-max-50"))
         return
 
@@ -446,7 +455,8 @@ async def fsm_retry_compat_threshold(
     i18n: I18nContext,
 ) -> None:
     text = message.text.strip()
-    if not text.isdigit() or not (1 <= int(text) <= 100):
+    compat_min, compat_max = get_compat_range(user)
+    if not text.isdigit() or not (compat_min <= int(text) <= compat_max):
         await message.answer(i18n.get("parsing-compat-threshold-invalid"))
         return
 
@@ -496,8 +506,9 @@ async def _launch_retry(
     use_compatibility_check: bool = False,
     compatibility_threshold: int | None = None,
 ) -> None:
-    if not user.is_admin and target_count > 50:
-        target_count = 50
+    max_count = get_max_target_count(user)
+    if target_count > max_count:
+        target_count = max_count
     new_company_id = await parsing_service.clone_and_dispatch(
         session,
         company.id,
@@ -542,8 +553,9 @@ async def format_selection(
 
     if fmt == "message":
         text = report.generate_message()
-        if len(text) > 4000:
-            text = text[:3950] + "\n\n" + i18n.get("parsing-truncated")
+        max_len = get_max_message_length(user, "default")
+        if len(text) > max_len:
+            text = text[: max_len - 50] + "\n\n" + i18n.get("parsing-truncated")
         await callback.message.edit_text(
             text, reply_markup=back_to_company_keyboard(callback_data.company_id, i18n)
         )
@@ -579,7 +591,7 @@ async def _show_work_experience_step(
         lines = [f"  \u2022 <b>{e.company_name}</b> \u2014 {e.stack}" for e in experiences]
         text += "\n\n" + "\n".join(lines)
 
-    kb = work_experience_keyboard(company_id, experiences, i18n)
+    kb = work_experience_keyboard(company_id, experiences, i18n, is_admin=user.is_admin)
     if edit:
         await message.edit_text(text, reply_markup=kb)
     else:
@@ -612,7 +624,7 @@ async def work_exp_add(
     i18n: I18nContext,
 ) -> None:
     active_count = await parsing_service.count_active_work_experiences(session, user.id)
-    if active_count >= MAX_WORK_EXPERIENCES:
+    if active_count >= get_max_work_experiences(user):
         await callback.answer(i18n.get("work-exp-max-reached"), show_alert=True)
         return
 
@@ -633,7 +645,8 @@ async def fsm_work_exp_company_name(
     i18n: I18nContext,
 ) -> None:
     name = message.text.strip()
-    if not name or len(name) > 255:
+    max_len = get_max_text_length(user, "company_name")
+    if not name or len(name) > max_len:
         await message.answer(i18n.get("work-exp-name-invalid"))
         return
 
@@ -752,7 +765,7 @@ async def fsm_per_company_count(
         return
 
     count = int(text)
-    if count > 8:
+    if count > get_max_per_company_count(user):
         await message.answer(i18n.get("keyphrase-max-8"))
         return
 
@@ -762,7 +775,9 @@ async def fsm_per_company_count(
 
     await message.answer(
         f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-lang')}",
-        reply_markup=language_selection_keyboard(company_id, count, i18n, mode="w"),
+        reply_markup=language_selection_keyboard(
+            company_id, count, i18n, mode="w", is_admin=user.is_admin
+        ),
     )
 
 
@@ -780,7 +795,9 @@ async def key_phrases_skip_count(
     await state.clear()
     await callback.message.edit_text(
         f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-lang')}",
-        reply_markup=language_selection_keyboard(callback_data.company_id, 0, i18n),
+        reply_markup=language_selection_keyboard(
+            callback_data.company_id, 0, i18n, is_admin=user.is_admin
+        ),
     )
     await callback.answer()
 
@@ -795,7 +812,7 @@ async def fsm_key_phrases_count(
         return
 
     count = int(text)
-    if count > 30:
+    if count > get_max_key_phrases_count(user):
         await message.answer(i18n.get("keyphrase-max-30"))
         return
 
@@ -805,7 +822,60 @@ async def fsm_key_phrases_count(
 
     await message.answer(
         f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-lang')}",
-        reply_markup=language_selection_keyboard(company_id, count, i18n),
+        reply_markup=language_selection_keyboard(company_id, count, i18n, is_admin=user.is_admin),
+    )
+
+
+@router.callback_query(KeyPhrasesCallback.filter(F.action == "lang_manual"))
+async def key_phrases_lang_manual(
+    callback: CallbackQuery,
+    callback_data: KeyPhrasesCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+    await state.set_state(ParsingForm.lang_manual)
+    await state.update_data(
+        kp_company_id=callback_data.company_id,
+        kp_count=callback_data.count,
+        kp_mode=callback_data.mode or "",
+    )
+    await callback.message.edit_text(
+        i18n.get("parsing-enter-lang-manual"),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.lang_manual)
+async def fsm_lang_manual(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await state.clear()
+        return
+    lang = (message.text or "").strip()
+    if not lang:
+        await message.answer(i18n.get("parsing-enter-lang-manual"))
+        return
+    data = await state.get_data()
+    await state.clear()
+    await message.answer(
+        f"{i18n.get('keyphrase-title')}\n\n{i18n.get('keyphrase-select-style')}",
+        reply_markup=style_selection_keyboard(
+            data["kp_company_id"],
+            i18n,
+            data["kp_count"],
+            lang,
+            data.get("kp_mode", ""),
+            is_admin=user.is_admin,
+        ),
     )
 
 
@@ -824,9 +894,72 @@ async def key_phrases_select_lang(
             callback_data.count,
             callback_data.lang,
             mode=callback_data.mode,
+            is_admin=user.is_admin,
         ),
     )
     await callback.answer()
+
+
+@router.callback_query(KeyPhrasesCallback.filter(F.action == "style_manual"))
+async def key_phrases_style_manual(
+    callback: CallbackQuery,
+    callback_data: KeyPhrasesCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+    await state.set_state(ParsingForm.style_manual)
+    await state.update_data(
+        kp_company_id=callback_data.company_id,
+        kp_count=callback_data.count,
+        kp_lang=callback_data.lang or "ru",
+        kp_mode=callback_data.mode or "",
+    )
+    await callback.message.edit_text(
+        i18n.get("parsing-enter-style-manual"),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(ParsingForm.style_manual)
+async def fsm_style_manual(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await state.clear()
+        return
+    style = (message.text or "").strip()
+    if not style:
+        await message.answer(i18n.get("parsing-enter-style-manual"))
+        return
+    data = await state.get_data()
+    await state.clear()
+    company = await parsing_service.get_company_by_id(session, data["kp_company_id"])
+    agg = await parsing_service.get_aggregated_result(session, data["kp_company_id"])
+    if not company or not agg or not agg.top_keywords:
+        await message.answer(
+            i18n.get("keyphrase-no-keywords"),
+            reply_markup=back_to_menu_keyboard(i18n),
+        )
+        return
+    await parsing_service.dispatch_key_phrases_task(
+        company_id=data["kp_company_id"],
+        user_id=user.id,
+        style_key=style,
+        count=data["kp_count"],
+        lang=data["kp_lang"],
+        chat_id=message.chat.id,
+        mode=data["kp_mode"],
+    )
+    await message.answer(i18n.get("keyphrase-generating"))
 
 
 @router.callback_query(KeyPhrasesCallback.filter(F.action == "select_style"))

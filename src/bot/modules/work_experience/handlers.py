@@ -27,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bot.modules.parsing import services as we_service
 from src.bot.modules.work_experience.callbacks import WorkExpCallback
 from src.bot.modules.work_experience.keyboards import (
-    MAX_WORK_EXPERIENCES,
     cancel_add_keyboard,
     cancel_edit_keyboard,
     work_exp_ai_input_keyboard,
@@ -36,6 +35,10 @@ from src.bot.modules.work_experience.keyboards import (
     work_experience_keyboard,
 )
 from src.bot.modules.work_experience.states import WorkExpForm
+from src.bot.utils.limits import (
+    get_max_text_length,
+    get_max_work_experiences,
+)
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.work_experience_ai_draft import WorkExperienceAiDraftRepository
@@ -97,6 +100,7 @@ async def show_work_experience(
         show_continue=show_continue,
         show_skip=show_skip,
         disabled_exp_ids=disabled_exp_ids or set(),
+        is_admin=user.is_admin,
     )
     if edit:
         with contextlib.suppress(TelegramBadRequest):
@@ -275,7 +279,7 @@ async def handle_add(
     i18n: I18nContext,
 ) -> None:
     active_count = await we_service.count_active_work_experiences(session, user.id)
-    if active_count >= MAX_WORK_EXPERIENCES:
+    if active_count >= get_max_work_experiences(user):
         await callback.answer(i18n.get("work-exp-max-reached"), show_alert=True)
         return
 
@@ -297,7 +301,8 @@ async def fsm_company_name(
     i18n: I18nContext,
 ) -> None:
     name = (message.text or "").strip()
-    if not name or len(name) > 255:
+    max_len = get_max_text_length(user, "company_name")
+    if not name or len(name) > max_len:
         await message.answer(i18n.get("work-exp-name-invalid"))
         return
 
@@ -318,7 +323,8 @@ async def fsm_title(
     i18n: I18nContext,
 ) -> None:
     text = (message.text or "").strip() or None
-    if text and len(text) > 255:
+    max_len = get_max_text_length(user, "title")
+    if text and len(text) > max_len:
         await message.answer(i18n.get("work-exp-title-invalid"))
         return
     await state.update_data(we_title=text)
@@ -677,9 +683,16 @@ async def fsm_edit_value(
 
     new_value = (message.text or "").strip() or None
 
-    if field == _FIELD_COMPANY_NAME and (not new_value or len(new_value) > 255):
-        await message.answer(i18n.get("work-exp-name-invalid"))
-        return
+    if field == _FIELD_COMPANY_NAME:
+        max_len = get_max_text_length(user, "company_name")
+        if not new_value or len(new_value) > max_len:
+            await message.answer(i18n.get("work-exp-name-invalid"))
+            return
+    if field == _FIELD_TITLE and new_value:
+        max_len = get_max_text_length(user, "title")
+        if len(new_value) > max_len:
+            await message.answer(i18n.get("work-exp-title-invalid"))
+            return
     if field == _FIELD_STACK and not new_value:
         await message.answer(i18n.get("work-exp-stack-invalid"))
         return

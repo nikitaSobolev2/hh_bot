@@ -114,9 +114,7 @@ class TestCollectVacancyUrls:
     """Tests for collect_vacancy_urls pagination and stop conditions."""
 
     @pytest.mark.asyncio
-    async def test_stops_after_three_pages_all_blacklisted(
-        self, sample_vacancy_html: str
-    ) -> None:
+    async def test_stops_after_three_pages_all_blacklisted(self, sample_vacancy_html: str) -> None:
         """Stops after 3 consecutive pages that add nothing (e.g. all blacklisted)."""
         scraper = HHScraper()
         soup = BeautifulSoup(sample_vacancy_html, "html.parser")

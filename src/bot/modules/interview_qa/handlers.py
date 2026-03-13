@@ -6,7 +6,8 @@ import contextlib
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.interview_qa.callbacks import InterviewQACallback
@@ -16,6 +17,7 @@ from src.bot.modules.interview_qa.keyboards import (
     question_detail_keyboard,
     why_new_job_reasons_keyboard,
 )
+from src.bot.modules.interview_qa.states import InterviewQAForm
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.interview_qa import StandardQuestionRepository
@@ -65,6 +67,7 @@ async def handle_list(
 async def handle_base_question(
     callback: CallbackQuery,
     callback_data: InterviewQACallback,
+    user: User,
     i18n: I18nContext,
 ) -> None:
     if callback_data.question_key == "why_new_job":
@@ -72,9 +75,51 @@ async def handle_base_question(
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 text,
-                reply_markup=why_new_job_reasons_keyboard(i18n),
+                reply_markup=why_new_job_reasons_keyboard(i18n, is_admin=user.is_admin),
             )
     await callback.answer()
+
+
+@router.callback_query(InterviewQACallback.filter(F.action == "why_reason_manual"))
+async def handle_why_reason_manual(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+    await state.set_state(InterviewQAForm.why_reason_manual)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("iqa-enter-reason-manual"),
+        )
+    await callback.answer()
+
+
+@router.message(InterviewQAForm.why_reason_manual)
+async def handle_why_reason_manual_text(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await state.clear()
+        return
+    reason_text = (message.text or "").strip()
+    if not reason_text:
+        await message.answer(i18n.get("iqa-enter-reason-manual"))
+        return
+    await state.clear()
+    text = (
+        f"<b>{i18n.get('iqa-why-new-job-title')}</b>\n\n"
+        f"<b>{i18n.get('iqa-reason-label')}:</b> {i18n.get('iqa-reason-other')}\n\n"
+        f"{reason_text}"
+    )
+    back_keyboard = _back_to_list_keyboard(i18n)
+    await message.answer(text, reply_markup=back_keyboard)
 
 
 @router.callback_query(InterviewQACallback.filter(F.action == "why_reason"))

@@ -99,6 +99,7 @@ class TestManualParseBlacklist:
 
         mock_checkpoint = AsyncMock()
         mock_checkpoint.load_parsing = AsyncMock(return_value=None)
+        mock_checkpoint.load_parsing_for_resume = AsyncMock(return_value=None)
         mock_checkpoint.save_parsing = AsyncMock()
         mock_checkpoint.clear = AsyncMock()
 
@@ -168,6 +169,125 @@ class TestManualParseBlacklist:
             f"Autoparse IDs {autoparse_ids} must NOT be in the blacklist passed to run_pipeline; "
             f"got {passed_blacklist}"
         )
+
+    @pytest.mark.asyncio
+    async def test_resumes_from_checkpoint_when_load_parsing_for_resume_returns_data(self):
+        """When load_parsing returns None (task_id mismatch) and load_parsing_for_resume
+        returns data, task resumes from checkpoint (restart-after-worker-death scenario).
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        urls = [
+            {"url": "https://hh.ru/vacancy/1", "title": "V1", "hh_vacancy_id": "1"},
+            {"url": "https://hh.ru/vacancy/2", "title": "V2", "hh_vacancy_id": "2"},
+        ]
+        checkpoint_data = (1, 2, urls)
+
+        company = MagicMock()
+        company.vacancy_title = "Backend"
+        company.search_url = "https://hh.ru/search/vacancy?text=backend"
+        company.keyword_filter = "backend"
+        company.target_count = 10
+        company.status = "processing"
+        company.use_compatibility_check = False
+        company.compatibility_threshold = None
+
+        settings_repo = AsyncMock()
+        settings_repo.get_value = AsyncMock(return_value=True)
+
+        bl_repo = AsyncMock()
+        bl_repo.get_active_ids = AsyncMock(return_value=set())
+
+        company_repo = AsyncMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+
+        task_repo = AsyncMock()
+        task_repo.get_by_idempotency_key = AsyncMock(return_value=None)
+
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        session.commit = AsyncMock()
+
+        session_factory = MagicMock(return_value=session)
+
+        mock_checkpoint = AsyncMock()
+        mock_checkpoint.load_parsing = AsyncMock(return_value=None)
+        mock_checkpoint.load_parsing_for_resume = AsyncMock(return_value=checkpoint_data)
+        mock_checkpoint.save_parsing = AsyncMock()
+        mock_checkpoint.clear = AsyncMock()
+
+        resume_from_captured: list = []
+
+        async def fake_run_pipeline(
+            _self,
+            search_url,
+            keyword_filter,
+            target_count,
+            *,
+            blacklisted_ids=None,
+            on_page_scraped=None,
+            on_vacancy_processed=None,
+            resume_from=None,
+            **_kwargs,
+        ):
+            from src.schemas.vacancy import PipelineResult
+
+            resume_from_captured.append(resume_from)
+            return PipelineResult(vacancies=[], keywords=[], skills=[])
+
+        from src.worker.tasks.parsing import _run_parsing_company_async
+
+        with (
+            patch(
+                "src.worker.tasks.parsing._init_bot_and_locale",
+                new=AsyncMock(return_value=(None, "ru")),
+            ),
+            patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
+            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock()),
+            patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.repositories.app_settings.AppSettingRepository",
+                return_value=settings_repo,
+            ),
+            patch("src.repositories.blacklist.BlacklistRepository", return_value=bl_repo),
+            patch(
+                "src.repositories.parsing.ParsingCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch("src.repositories.task.CeleryTaskRepository", return_value=task_repo),
+            patch(
+                "src.services.parser.extractor.ParsingExtractor.run_pipeline",
+                new=fake_run_pipeline,
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=mock_checkpoint,
+            ),
+            patch(
+                "src.services.task_checkpoint.create_checkpoint_redis",
+                return_value=MagicMock(),
+            ),
+        ):
+            fake_task = MagicMock()
+            fake_task.request.id = "new-task-id-after-restart"
+
+            await _run_parsing_company_async(
+                session_factory,
+                fake_task,
+                parsing_company_id=1,
+                user_id=42,
+                include_blacklisted=False,
+                telegram_chat_id=0,
+            )
+
+        assert len(resume_from_captured) == 1
+        assert resume_from_captured[0] == (urls, 1)
+        mock_checkpoint.load_parsing.assert_called_once()
+        mock_checkpoint.load_parsing_for_resume.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -144,6 +144,8 @@ async def _run_parsing_company_async(
         progress = await _start_progress(bot, telegram_chat_id, company, locale)
 
         restored = await checkpoint.load_parsing(checkpoint_key, task_id)
+        if not restored:
+            restored = await checkpoint.load_parsing_for_resume(checkpoint_key)
         if restored:
             skip_count, _, vacancies = restored[0], restored[1], restored[2]
             resume_from = (vacancies, skip_count)
@@ -417,9 +419,7 @@ async def _handle_parsing_soft_timeout(
 
         bot = create_task_bot()
         try:
-            progress = ProgressService(
-                bot, telegram_chat_id, create_progress_redis(), locale
-            )
+            progress = ProgressService(bot, telegram_chat_id, create_progress_redis(), locale)
             await progress.mark_retrying(f"parse:{parsing_company_id}")
         finally:
             await bot.session.close()

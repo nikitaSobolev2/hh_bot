@@ -28,6 +28,7 @@ from src.bot.modules.autoparse.keyboards import (
 )
 from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
+from src.bot.utils.limits import get_min_compat_range
 from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
 from src.models.user import User
@@ -49,8 +50,12 @@ async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
     return bool(experiences)
 
 
-async def _should_show_run_now(session: AsyncSession, company: AutoparseCompany) -> bool:
+async def _should_show_run_now(
+    session: AsyncSession, company: AutoparseCompany, user: User
+) -> bool:
     """Return True if the manual 'Run now' button should be shown for this company."""
+    if user.is_admin:
+        return company.is_enabled
     if not company.is_enabled:
         return False
     settings_repo = AppSettingRepository(session)
@@ -287,6 +292,7 @@ async def list_companies(
 async def company_detail(
     callback: CallbackQuery,
     callback_data: AutoparseCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -296,7 +302,7 @@ async def company_detail(
         return
 
     count = await ap_service.get_vacancy_count(session, company.id)
-    show_run_now = await _should_show_run_now(session, company)
+    show_run_now = await _should_show_run_now(session, company, user)
     text = ap_service.format_company_detail(company, count, i18n)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
@@ -315,6 +321,7 @@ async def company_detail(
 async def toggle_company(
     callback: CallbackQuery,
     callback_data: AutoparseCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -327,7 +334,7 @@ async def toggle_company(
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
     if company:
         count = await ap_service.get_vacancy_count(session, company.id)
-        show_run_now = await _should_show_run_now(session, company)
+        show_run_now = await _should_show_run_now(session, company, user)
         text = ap_service.format_company_detail(company, count, i18n)
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
@@ -357,7 +364,7 @@ async def run_now(
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    if not await _should_show_run_now(session, company):
+    if not await _should_show_run_now(session, company, user):
         count = await ap_service.get_vacancy_count(session, company.id)
         text = ap_service.format_company_detail(company, count, i18n)
         with contextlib.suppress(TelegramBadRequest):
@@ -633,16 +640,13 @@ async def settings_min_compat(
     await callback.answer()
 
 
-_MIN_COMPAT_MIN = 0
-_MIN_COMPAT_MAX = 100
-
-
 @router.message(AutoparseSettingsForm.min_compat_percent)
 async def receive_min_compat_percent(
     message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
 ) -> None:
     raw = message.text.strip()
-    if not raw.isdigit() or not (_MIN_COMPAT_MIN <= int(raw) <= _MIN_COMPAT_MAX):
+    compat_min, compat_max = get_min_compat_range(user)
+    if not raw.isdigit() or not (compat_min <= int(raw) <= compat_max):
         await message.answer(i18n.get("autoparse-min-compat-invalid"))
         return
     await ap_service.update_user_autoparse_settings(

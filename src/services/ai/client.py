@@ -123,6 +123,7 @@ async def _call_with_rate_limit_retry(
             await asyncio.sleep(wait)
     raise last_exc  # type: ignore[misc]
 
+
 _STACK_PATTERN = re.compile(r"\[Stack\]:\s*(.+)", re.IGNORECASE)
 _COMPAT_PATTERN = re.compile(r"\[Compatibility\]:\s*(\d+)", re.IGNORECASE)
 
