@@ -361,6 +361,8 @@ docker compose logs -f celery_worker   # look for "ready" message
 
 Send `/start` to your bot in Telegram to confirm it's responding.
 
+For low-RAM servers (2GB) and resource tuning, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ### 6. Auto-restart on reboot
 
 Services are configured with `restart: unless-stopped`. Enable Docker autostart:

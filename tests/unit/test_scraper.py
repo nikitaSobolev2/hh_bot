@@ -94,6 +94,46 @@ class TestCollectNewFromPage:
         assert new_count == 3
         assert len(collected) == 3
 
+    def test_zero_pages_increments_when_all_blacklisted(self):
+        """When all keyword matches are blacklisted, new_count=0 so zero_pages increments."""
+        collected: list = []
+        seen: set = set()
+        items = [self._make_item("1"), self._make_item("2")]
+
+        new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
+            items, seen, blacklisted={"1", "2"}, collected=collected, target_count=10
+        )
+
+        assert new_count == 0
+        assert had_unseen is True
+        assert blacklisted_skipped == 2
+        assert len(collected) == 0
+
+
+class TestCollectVacancyUrls:
+    """Tests for collect_vacancy_urls pagination and stop conditions."""
+
+    @pytest.mark.asyncio
+    async def test_stops_after_three_pages_all_blacklisted(
+        self, sample_vacancy_html: str
+    ) -> None:
+        """Stops after 3 consecutive pages that add nothing (e.g. all blacklisted)."""
+        scraper = HHScraper()
+        soup = BeautifulSoup(sample_vacancy_html, "html.parser")
+        blacklisted = {"12345", "67890"}  # all IDs from sample_vacancy_html
+        mock_fetch = AsyncMock(return_value=soup)
+
+        with patch.object(scraper, "_fetch_page", mock_fetch):
+            result = await scraper.collect_vacancy_urls(
+                "https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                target_count=10,
+                blacklisted_ids=blacklisted,
+            )
+
+        assert result == []
+        assert mock_fetch.call_count == 3
+
 
 class TestBuildPageUrl:
     def test_adds_page_param(self):

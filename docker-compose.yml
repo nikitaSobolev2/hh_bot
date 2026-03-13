@@ -41,6 +41,11 @@ services:
       redis:
         condition: service_healthy
     command: python -m src
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   celery_worker:
     build:
@@ -53,9 +58,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A src.worker.app worker --loglevel=info --concurrency=4
+    command: celery -A src.worker.app worker --loglevel=info --concurrency=2
     deploy:
-      replicas: 5
+      replicas: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pg_data:

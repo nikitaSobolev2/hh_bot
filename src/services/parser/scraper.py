@@ -33,6 +33,7 @@ _DETAIL_FIELD_PREFIXES: dict[str, str] = {
 }
 
 _MULTI_SPACE_RE = re.compile(r" {2,}")
+_MAX_PAGES = 100  # ~2000 vacancies max; HH typically 20 per page
 
 
 def _looks_like_salary(text: str) -> bool:
@@ -238,6 +239,9 @@ class HHScraper:
 
         async with httpx.AsyncClient() as client:
             while len(collected) < target_count:
+                if page >= _MAX_PAGES:
+                    logger.warning("Reached max page limit", limit=_MAX_PAGES)
+                    break
                 url = self._build_page_url(base_url, page)
                 logger.info("Fetching search page", url=url, page=page + 1)
                 soup = await self._fetch_page(client, url)
@@ -250,7 +254,7 @@ class HHScraper:
                     break
 
                 page_results = self._extract_vacancies_from_page(soup, keyword)
-                new_count, page_had_unseen, blacklisted_skipped = self._collect_new_from_page(
+                new_count, _, blacklisted_skipped = self._collect_new_from_page(
                     page_results,
                     seen_urls,
                     blacklisted,
@@ -258,7 +262,7 @@ class HHScraper:
                     target_count,
                 )
 
-                zero_pages = zero_pages + 1 if not page_had_unseen else 0
+                zero_pages = zero_pages + 1 if new_count == 0 else 0
                 logger.info(
                     "Search page scraped",
                     page=page + 1,
