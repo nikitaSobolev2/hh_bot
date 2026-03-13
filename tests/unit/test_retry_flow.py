@@ -32,9 +32,10 @@ def _make_company(
     return company
 
 
-def _make_user(user_id: int = 42) -> MagicMock:
+def _make_user(user_id: int = 42, is_admin: bool = False) -> MagicMock:
     user = MagicMock()
     user.id = user_id
+    user.is_admin = is_admin
     return user
 
 
@@ -199,11 +200,11 @@ class TestFsmRetryCount:
 
         state = _make_state(data={"retry_company_id": 1})
         message = AsyncMock()
-        message.text = "75"
+        message.text = "30"
 
         await fsm_retry_count(message, _make_user(), state, _make_i18n())
 
-        state.update_data.assert_awaited_once_with(retry_count=75)
+        state.update_data.assert_awaited_once_with(retry_count=30)
         state.set_state.assert_awaited_once_with(ParsingForm.retry_compat_check)
         message.answer.assert_awaited_once()
 

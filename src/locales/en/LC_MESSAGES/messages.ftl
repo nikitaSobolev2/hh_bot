@@ -112,6 +112,7 @@ parsing-step4 =
     (e.g. 30):
 parsing-positive-number = Please enter a positive number:
 parsing-max-200 = Maximum is 200 vacancies. Please enter a smaller number:
+parsing-max-50 = Maximum is 50 vacancies. Please enter a smaller number:
 parsing-enter-url = Enter HH.ru search page URL:
 parsing-enter-keyword = Enter keyword filter (or leave empty):
 parsing-enter-count = How many vacancies to process?

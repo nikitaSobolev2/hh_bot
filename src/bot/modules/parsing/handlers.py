@@ -141,8 +141,8 @@ async def fsm_target_count(
         return
 
     count = int(text)
-    if count > 200:
-        await message.answer(i18n.get("parsing-max-200"))
+    if not user.is_admin and count > 50:
+        await message.answer(i18n.get("parsing-max-50"))
         return
 
     await state.update_data(target_count=count)
@@ -381,8 +381,8 @@ async def fsm_retry_count(
         return
 
     count = int(text)
-    if count > 200:
-        await message.answer(i18n.get("parsing-max-200"))
+    if not user.is_admin and count > 50:
+        await message.answer(i18n.get("parsing-max-50"))
         return
 
     await state.update_data(retry_count=count)
@@ -496,6 +496,8 @@ async def _launch_retry(
     use_compatibility_check: bool = False,
     compatibility_threshold: int | None = None,
 ) -> None:
+    if not user.is_admin and target_count > 50:
+        target_count = 50
     new_company_id = await parsing_service.clone_and_dispatch(
         session,
         company.id,
