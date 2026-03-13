@@ -94,6 +94,109 @@ def build_compatibility_user_content(
     )
 
 
+@dataclass(frozen=True)
+class VacancyCompatInput:
+    """Input for batch compatibility scoring. Description is truncated to limit."""
+
+    hh_vacancy_id: str
+    title: str
+    skills: list[str]
+    description: str
+
+
+def build_batch_compatibility_system_prompt() -> str:
+    """Return the system prompt for batch candidate-vacancy compatibility scoring."""
+    return (
+        "Ты — Senior Technical Recruitment Analyst с 30-летним опытом оценки соответствия "
+        "инженерных кандидатов техническим вакансиям.\n"
+        "Твоя задача: вычислить процент совместимости кандидата с КАЖДОЙ из N вакансий.\n\n"
+        "Ты получаешь:\n"
+        "1. Список вакансий (каждая с ID, названием, навыками, описанием).\n"
+        "2. Кандидат: технический стек, краткое описание опыта работы.\n\n"
+        "[ПРАВИЛА ОЦЕНКИ]\n"
+        "- Каждая совпадающая или смежная технология увеличивает балл.\n"
+        "- Релевантность области и уровня опыта кандидата вакансии важна.\n"
+        "- Название вакансии задаёт вес каждого навыка.\n"
+        "- Частичные совпадения (близкие технологии, смежные домены)"
+        " учитываются пропорционально.\n\n"
+        "[ФОРМАТ ВЫВОДА — СТРОГО]\n"
+        "Для каждой вакансии выведи блок в точности в таком формате:\n"
+        "[Vacancy]:<hh_vacancy_id>\n"
+        "[Compatibility]:<число>\n"
+        "[VacancyEnd]:<hh_vacancy_id>\n\n"
+        "Порядок блоков — как в списке вакансий. hh_vacancy_id — идентификатор из запроса. "
+        "Число — целое от 0 до 100.\n\n"
+        "Шкала: 0-20 почти нет совпадений, 21-50 частичное, 51-75 хорошее, 76-100 сильное."
+    )
+
+
+def build_batch_compatibility_user_content(
+    vacancies: list[VacancyCompatInput],
+    user_tech_stack: list[str],
+    user_work_experience: str,
+) -> str:
+    """Return the user message for batch compatibility scoring."""
+    stack_str = ", ".join(user_tech_stack) if user_tech_stack else "не указан"
+    exp_str = user_work_experience if user_work_experience else "не указан"
+    parts = [
+        f"Стек кандидата: {stack_str}\n",
+        f"Опыт кандидата: {exp_str}\n\n",
+        "Оцени совместимость кандидата с каждой вакансией:\n\n",
+    ]
+    for v in vacancies:
+        desc = v.description[:_COMPAT_DESCRIPTION_LIMIT]
+        parts.append(
+            f"[Вакансия {v.hh_vacancy_id}]\n"
+            f"Название: {v.title}\n"
+            f"Навыки: {', '.join(v.skills)}\n"
+            f"Описание: {desc}\n\n"
+        )
+    return "".join(parts)
+
+
+def build_batch_vacancy_analysis_system_prompt(
+    user_tech_stack: list[str],
+    user_work_experience: str,
+) -> str:
+    """Return the system prompt for batch vacancy analysis (summary, stack, compatibility)."""
+    stack_str = ", ".join(user_tech_stack) if user_tech_stack else "не указан"
+    exp_str = user_work_experience if user_work_experience else "не указан"
+    return (
+        "Ты — Senior Technical Recruitment Analyst с 30-летним опытом.\n\n"
+        "[ПРОФИЛЬ КАНДИДАТА]\n"
+        f"Стек: {stack_str}\n"
+        f"Опыт работы: {exp_str}\n\n"
+        "Проанализируй КАЖДУЮ из N вакансий.\n\n"
+        "Для каждой вакансии выведи блок СТРОГО в следующем формате:\n\n"
+        "[VacancyStart]:<hh_vacancy_id>\n"
+        "<краткий анализ>\n"
+        "[Stack]:<технологии>\n"
+        "[Compatibility]:<число>\n"
+        "[VacancyEnd]:<hh_vacancy_id>\n\n"
+        "[ПРАВИЛА ДЛЯ КАЖДОГО БЛОКА]\n\n"
+        "Блок 1 — краткое описание вакансии (2–4 предложения). "
+        "Плюсы и минусы. Объём не более 1000 символов.\n\n"
+        "Блок 2 — [Stack]:<значения> — технологии через запятую.\n\n"
+        "Блок 3 — [Compatibility]:<число> — целое 0 до 100.\n\n"
+        "hh_vacancy_id — идентификатор из запроса. Порядок блоков — как в списке вакансий."
+    )
+
+
+def build_batch_vacancy_analysis_user_content(
+    vacancies: list[VacancyCompatInput],
+) -> str:
+    """Return the user message for batch vacancy analysis."""
+    parts = []
+    for v in vacancies:
+        parts.append(
+            f"[Вакансия {v.hh_vacancy_id}]\n"
+            f"Название: {v.title}\n"
+            f"Навыки: {', '.join(v.skills)}\n"
+            f"Описание:\n{v.description}\n\n"
+        )
+    return "".join(parts)
+
+
 def build_vacancy_analysis_system_prompt(
     user_tech_stack: list[str],
     user_work_experience: str,

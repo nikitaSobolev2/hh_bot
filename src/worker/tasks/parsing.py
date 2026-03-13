@@ -1,6 +1,5 @@
 """Celery task for the full parsing pipeline."""
 
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -57,7 +56,7 @@ def run_parsing_company(
                 telegram_chat_id,
             )
         )
-    except SoftTimeLimitExceeded:
+    except SoftTimeLimitExceeded as exc:
         logger.warning(
             "Parsing task soft time limit exceeded, will retry from checkpoint",
             company_id=parsing_company_id,
@@ -68,7 +67,7 @@ def run_parsing_company(
                 sf, parsing_company_id, user_id, telegram_chat_id
             )
         )
-        raise
+        raise self.retry(exc=exc)
 
 
 async def _run_parsing_company_async(
@@ -182,11 +181,15 @@ async def _run_parsing_company_async(
                     urls=vacancies,
                 )
 
-        compat_filter = None
+        compat_params = None
         if company.use_compatibility_check and company.compatibility_threshold is not None:
-            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
-            compat_filter = _build_compat_predicate(
-                tech_stack, work_exp_text, company.compatibility_threshold
+            tech_stack, work_exp_text = await _fetch_user_tech_profile(
+                session_factory, user_id
+            )
+            compat_params = (
+                tech_stack,
+                work_exp_text,
+                company.compatibility_threshold,
             )
 
         extractor = ParsingExtractor()
@@ -197,7 +200,7 @@ async def _run_parsing_company_async(
             blacklisted_ids=blacklisted_ids,
             on_page_scraped=_on_page_scraped,
             on_vacancy_processed=_on_vacancy_processed,
-            compat_filter=compat_filter,
+            compat_params=compat_params,
             resume_from=resume_from,
         )
 
@@ -486,34 +489,6 @@ async def _fetch_user_tech_profile(
 
     work_exp_text = format_work_experience_block(experiences)
     return tech_stack, work_exp_text
-
-
-def _build_compat_predicate(
-    tech_stack: list[str],
-    work_exp_text: str,
-    threshold: int,
-) -> Callable[["VacancyData"], Awaitable[bool]]:  # noqa: F821
-    """Return an async predicate that scores a vacancy and checks the threshold.
-
-    The predicate is intentionally free of its own semaphore — the extractor's
-    ai_sem controls concurrency so compat checks and keyword extractions share
-    the same limit.
-    """
-    from src.services.ai.client import AIClient
-
-    ai_client = AIClient()
-
-    async def predicate(vac) -> bool:
-        score = await ai_client.calculate_compatibility(
-            vacancy_title=vac.title,
-            vacancy_skills=vac.raw_skills or [],
-            vacancy_description=vac.description,
-            user_tech_stack=tech_stack,
-            user_work_experience=work_exp_text,
-        )
-        return score >= threshold
-
-    return predicate
 
 
 async def _notify_user(

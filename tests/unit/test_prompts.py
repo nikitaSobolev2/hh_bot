@@ -1,7 +1,9 @@
 """Unit tests for AI prompt builders."""
 
 from src.services.ai.prompts import (
+    VacancyCompatInput,
     WorkExperienceEntry,
+    build_batch_compatibility_user_content,
     build_key_phrases_prompt,
     build_per_company_key_phrases_prompt,
 )
@@ -173,3 +175,44 @@ class TestBuildPerCompanyKeyPhrasesPrompt:
         assert "PyTorch" in prompt
         assert "TensorFlow" in prompt
         assert "Docker" in prompt
+
+
+class TestBuildBatchCompatibilityUserContent:
+    def test_includes_all_vacancy_ids_and_titles(self):
+        vacancies = [
+            VacancyCompatInput("v1", "Python Dev", ["Python"], "desc1"),
+            VacancyCompatInput("v2", "Java Dev", ["Java"], "desc2"),
+        ]
+        content = build_batch_compatibility_user_content(
+            vacancies,
+            user_tech_stack=["Python"],
+            user_work_experience="3 years",
+        )
+        assert "v1" in content
+        assert "v2" in content
+        assert "Python Dev" in content
+        assert "Java Dev" in content
+
+    def test_includes_user_profile(self):
+        vacancies = [
+            VacancyCompatInput("v1", "Dev", [], "desc"),
+        ]
+        content = build_batch_compatibility_user_content(
+            vacancies,
+            user_tech_stack=["Python", "Django"],
+            user_work_experience="5 years backend",
+        )
+        assert "Python, Django" in content
+        assert "5 years backend" in content
+
+    def test_preserves_vacancy_order(self):
+        vacancies = [
+            VacancyCompatInput("a", "A", [], "d1"),
+            VacancyCompatInput("b", "B", [], "d2"),
+        ]
+        content = build_batch_compatibility_user_content(
+            vacancies, user_tech_stack=[], user_work_experience=""
+        )
+        pos_a = content.index("[Вакансия a]")
+        pos_b = content.index("[Вакансия b]")
+        assert pos_a < pos_b

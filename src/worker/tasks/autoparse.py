@@ -18,6 +18,7 @@ _DISPATCH_LOCK_KEY = "lock:autoparse:dispatch"
 _RUN_LOCK_PREFIX = "lock:autoparse:run:"
 # Safety-net TTL: released explicitly via finally; this guards against a crashed worker
 _CONCURRENT_RUN_LOCK_TTL = 2 * 3600
+_ANALYSIS_BATCH_SIZE = 5
 
 # Atomically acquire or re-acquire a task-owned lock.
 # Returns 1 when the lock is taken (new or re-delivery of same task).
@@ -279,7 +280,28 @@ async def _run_autoparse_company_async(
         if progress and analyzed_count > 0:
             await progress.update_bar(task_key, 1, analyzed_count, original_total)
 
-        new_count = 0
+        from src.services.ai.prompts import VacancyCompatInput
+
+        def _orm_to_vac_dict(orm) -> dict:
+            return {
+                "hh_vacancy_id": orm.hh_vacancy_id,
+                "url": orm.url,
+                "title": orm.title,
+                "description": orm.description or "",
+                "raw_skills": orm.raw_skills or [],
+                "company_name": orm.company_name,
+                "company_url": orm.company_url,
+                "salary": orm.salary,
+                "compensation_frequency": orm.compensation_frequency,
+                "work_experience": orm.work_experience,
+                "employment_type": orm.employment_type,
+                "work_schedule": orm.work_schedule,
+                "working_hours": orm.working_hours,
+                "work_formats": orm.work_formats,
+                "tags": orm.tags,
+            }
+
+        to_analyze: list[tuple[dict, VacancyCompatInput]] = []
         async with session_factory() as session:
             vacancy_repo = AutoparsedVacancyRepository(session)
             parsed_repo = ParsedVacancyRepository(session)
@@ -295,89 +317,67 @@ async def _run_autoparse_company_async(
                         hh_id, vac, vacancy_repo, parsed_repo
                     )
                     if existing is not None:
-                        cached_compat = None
-                        cached_summary = None
-                        cached_stack = None
-                        if ai_client:
-                            analysis = await ai_client.analyze_vacancy(
-                                vacancy_title=company.vacancy_title,
-                                vacancy_skills=existing.raw_skills or [],
-                                vacancy_description=existing.description or "",
-                                user_tech_stack=user_stack,
-                                user_work_experience=user_exp,
-                            )
-                            cached_compat = analysis.compatibility_score
-                            cached_summary = analysis.summary or None
-                            cached_stack = analysis.stack or None
-                        session.add(
-                            AutoparsedVacancy(
-                                autoparse_company_id=company_id,
-                                hh_vacancy_id=hh_id,
-                                url=existing.url,
-                                title=existing.title,
-                                description=existing.description,
-                                raw_skills=existing.raw_skills,
-                                company_name=existing.company_name,
-                                company_url=existing.company_url,
-                                salary=existing.salary,
-                                compensation_frequency=existing.compensation_frequency,
-                                work_experience=existing.work_experience,
-                                employment_type=existing.employment_type,
-                                work_schedule=existing.work_schedule,
-                                working_hours=existing.working_hours,
-                                work_formats=existing.work_formats,
-                                tags=existing.tags,
-                                compatibility_score=cached_compat,
-                                ai_summary=cached_summary,
-                                ai_stack=cached_stack,
-                            )
+                        vac_dict = _orm_to_vac_dict(existing)
+                        compat_input = VacancyCompatInput(
+                            hh_vacancy_id=existing.hh_vacancy_id,
+                            title=existing.title or "",
+                            skills=existing.raw_skills or [],
+                            description=existing.description or "",
                         )
-                        await session.commit()
-                        new_count += 1
-                        if ai_client:
-                            analyzed_count += 1
-                            await checkpoint.save(
-                                checkpoint_key,
-                                task_id,
-                                analyzed=analyzed_count,
-                                total=original_total,
-                            )
-                            if progress:
-                                await progress.update_bar(
-                                    task_key, 1, analyzed_count, original_total
-                                )
+                        to_analyze.append((vac_dict, compat_input))
                         continue
 
-                compat_score = None
-                ai_summary = None
-                ai_stack = None
-                if ai_client:
-                    analysis = await ai_client.analyze_vacancy(
-                        vacancy_title=company.vacancy_title,
-                        vacancy_skills=vac.get("raw_skills", []),
-                        vacancy_description=vac.get("description", ""),
-                        user_tech_stack=user_stack,
-                        user_work_experience=user_exp,
-                    )
-                    compat_score = analysis.compatibility_score
-                    ai_summary = analysis.summary or None
-                    ai_stack = analysis.stack or None
-
-                session.add(
-                    _build_autoparsed_vacancy(vac, company_id, compat_score, ai_summary, ai_stack)
+                compat_input = VacancyCompatInput(
+                    hh_vacancy_id=hh_id,
+                    title=vac.get("title", ""),
+                    skills=vac.get("raw_skills", []),
+                    description=vac.get("description", ""),
                 )
-                await session.commit()
-                new_count += 1
-                if ai_client:
-                    analyzed_count += 1
-                    await checkpoint.save(
-                        checkpoint_key,
-                        task_id,
-                        analyzed=analyzed_count,
-                        total=original_total,
+                to_analyze.append((vac, compat_input))
+
+        new_count = 0
+        for batch_start in range(0, len(to_analyze), _ANALYSIS_BATCH_SIZE):
+            batch = to_analyze[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
+            vac_dicts = [item[0] for item in batch]
+            compat_inputs = [item[1] for item in batch]
+
+            analyses: dict = {}
+            if ai_client:
+                analyses = await ai_client.analyze_vacancies_batch(
+                    compat_inputs,
+                    user_tech_stack=user_stack,
+                    user_work_experience=user_exp,
+                )
+
+            async with session_factory() as session:
+                for vac_dict, compat_input in zip(vac_dicts, compat_inputs):
+                    analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
+                    compat_score = (
+                        analysis.compatibility_score if analysis else None
                     )
-                    if progress:
-                        await progress.update_bar(task_key, 1, analyzed_count, original_total)
+                    ai_summary = (analysis.summary or None) if analysis else None
+                    ai_stack = (analysis.stack or None) if analysis else None
+
+                    session.add(
+                        _build_autoparsed_vacancy(
+                            vac_dict, company_id, compat_score, ai_summary, ai_stack
+                        )
+                    )
+                await session.commit()
+
+            new_count += len(batch)
+            if ai_client:
+                analyzed_count += len(batch)
+                await checkpoint.save(
+                    checkpoint_key,
+                    task_id,
+                    analyzed=analyzed_count,
+                    total=original_total,
+                )
+                if progress:
+                    await progress.update_bar(
+                        task_key, 1, analyzed_count, original_total
+                    )
 
         async with session_factory() as session:
             company_repo = AutoparseCompanyRepository(session)

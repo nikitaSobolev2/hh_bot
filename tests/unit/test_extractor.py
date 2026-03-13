@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -59,3 +59,74 @@ class TestExtractKeywords:
             user_content = call_args.kwargs["messages"][1]["content"]
             assert len(user_content) < len(long_desc)
             assert len(user_content) <= MAX_DESCRIPTION_LENGTH + 200
+
+
+class TestExtractorBatchCompat:
+    """Tests for batch compatibility scoring in the extractor."""
+
+    @pytest.mark.asyncio
+    async def test_calls_calculate_compatibility_batch_with_correct_batch_size(self):
+        from src.services.parser.extractor import ParsingExtractor
+
+        scraper = MagicMock()
+        scraper.collect_vacancy_urls = AsyncMock(
+            return_value=[
+                {"url": "https://hh.ru/1", "title": "V1", "hh_vacancy_id": "1"},
+                {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
+            ]
+        )
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value={"description": "desc", "skills": ["Python"]}
+        )
+
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(
+            return_value={"1": 80.0, "2": 60.0}
+        )
+        ai_client.extract_keywords = AsyncMock(return_value=["Python"])
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        await extractor.run_pipeline(
+            "https://hh.ru/search",
+            "",
+            2,
+            compat_params=(["Python"], "3 years", 50),
+        )
+
+        ai_client.calculate_compatibility_batch.assert_called_once()
+        call_args = ai_client.calculate_compatibility_batch.call_args
+        vacancies = call_args.args[0] if call_args.args else call_args.kwargs["vacancies"]
+        assert len(vacancies) == 2
+        assert vacancies[0].hh_vacancy_id == "1"
+        assert vacancies[1].hh_vacancy_id == "2"
+        assert call_args.kwargs.get("user_tech_stack") == ["Python"]
+        assert call_args.kwargs.get("user_work_experience") == "3 years"
+
+    @pytest.mark.asyncio
+    async def test_filters_by_threshold(self):
+        from src.services.parser.extractor import ParsingExtractor
+
+        scraper = MagicMock()
+        scraper.collect_vacancy_urls = AsyncMock(
+            return_value=[
+                {"url": "https://hh.ru/1", "title": "V1", "hh_vacancy_id": "1"},
+                {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
+            ]
+        )
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value={"description": "desc", "skills": []}
+        )
+
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(
+            return_value={"1": 70.0, "2": 30.0}
+        )
+        ai_client.extract_keywords = AsyncMock(return_value=["kw"])
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        result = await extractor.run_pipeline(
+            "https://hh.ru/search", "", 2, compat_params=(["Python"], "exp", 50)
+        )
+
+        assert len(result.vacancies) == 1
+        assert result.vacancies[0].hh_vacancy_id == "1"

@@ -31,6 +31,7 @@ class TestManualParseBlacklist:
             blacklisted_ids=None,
             on_page_scraped=None,
             on_vacancy_processed=None,
+            compat_params=None,
             **_kwargs,
         ):
             from src.schemas.vacancy import PipelineResult

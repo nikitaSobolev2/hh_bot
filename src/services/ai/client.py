@@ -16,6 +16,11 @@ from src.core.constants import AI_MAX_DESCRIPTION_LENGTH
 from src.core.logging import get_logger
 from src.schemas.ai import QAPair
 from src.services.ai.prompts import (
+    VacancyCompatInput,
+    build_batch_compatibility_system_prompt,
+    build_batch_compatibility_user_content,
+    build_batch_vacancy_analysis_system_prompt,
+    build_batch_vacancy_analysis_user_content,
     build_compatibility_system_prompt,
     build_compatibility_user_content,
     build_improvement_flow_system_prompt,
@@ -124,6 +129,14 @@ async def _call_with_rate_limit_retry[T](
 
 _STACK_PATTERN = re.compile(r"\[Stack\]:\s*(.+)", re.IGNORECASE)
 _COMPAT_PATTERN = re.compile(r"\[Compatibility\]:\s*(\d+)", re.IGNORECASE)
+_BATCH_VACANCY_COMPAT_PATTERN = re.compile(
+    r"\[Vacancy\]:(\w+)\s*\n\s*\[Compatibility\]:(\d+)",
+    re.IGNORECASE,
+)
+_BATCH_VACANCY_START_PATTERN = re.compile(
+    r"\[VacancyStart\]:(\w+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -149,6 +162,53 @@ def _parse_vacancy_analysis(text: str) -> VacancyAnalysis:
         summary = text.strip()
 
     return VacancyAnalysis(summary=summary, stack=stack, compatibility_score=compat)
+
+
+def _parse_batch_compat_response(raw: str) -> dict[str, float]:
+    """Parse batch compatibility response into {hh_vacancy_id: score}.
+
+    Expects blocks: [Vacancy]:hh_id\n[Compatibility]:72\n[VacancyEnd]:hh_id
+    Falls back to [Vacancy]:hh_id\n[Compatibility]:72 if VacancyEnd is missing.
+    Missing or malformed entries get score 0.0.
+    """
+    result: dict[str, float] = {}
+    for m in _BATCH_VACANCY_COMPAT_PATTERN.finditer(raw):
+        hh_id = m.group(1)
+        try:
+            score = min(float(m.group(2)), 100.0)
+        except (ValueError, IndexError):
+            score = 0.0
+        result[hh_id] = score
+    return result
+
+
+def _parse_batch_vacancy_analysis(raw: str) -> dict[str, VacancyAnalysis]:
+    """Parse batch vacancy analysis response into {hh_vacancy_id: VacancyAnalysis}.
+
+    Splits by [VacancyStart]:hh_id, parses each block with _parse_vacancy_analysis.
+    """
+    result: dict[str, VacancyAnalysis] = {}
+    parts = _BATCH_VACANCY_START_PATTERN.split(raw)
+    # parts[0] is text before first match; odd indices are hh_ids, even (after first) are block content
+    i = 1
+    while i + 1 < len(parts):
+        hh_id = parts[i]
+        block = parts[i + 1]
+        # Block ends at next [VacancyStart] or end; strip trailing [VacancyEnd]:hh_id if present
+        end_marker = f"[VacancyEnd]:{hh_id}"
+        if end_marker in block:
+            block = block.split(end_marker)[0]
+        try:
+            result[hh_id] = _parse_vacancy_analysis(block.strip())
+        except Exception as exc:
+            logger.warning(
+                "Batch vacancy analysis parse failed for hh_id",
+                hh_id=hh_id,
+                error=str(exc),
+            )
+            result[hh_id] = VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
+        i += 2
+    return result
 
 
 class AIClient:
@@ -294,6 +354,111 @@ class AIClient:
         except Exception as exc:
             logger.error("Compatibility scoring failed", error=str(exc))
             return 0.0
+
+    async def calculate_compatibility_batch(
+        self,
+        vacancies: list[VacancyCompatInput],
+        user_tech_stack: list[str],
+        user_work_experience: str,
+    ) -> dict[str, float]:
+        """Score N vacancies in one API call. Returns {hh_vacancy_id: score}."""
+        if not vacancies:
+            return {}
+
+        messages = [
+            {"role": "system", "content": build_batch_compatibility_system_prompt()},
+            {
+                "role": "user",
+                "content": build_batch_compatibility_user_content(
+                    vacancies=vacancies,
+                    user_tech_stack=user_tech_stack,
+                    user_work_experience=user_work_experience,
+                ),
+            },
+        ]
+        max_tokens = max(50 * len(vacancies), 100)
+
+        async def _call() -> dict[str, float]:
+            await self._acquire_rate_limit()
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=120,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.1,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            parsed = _parse_batch_compat_response(raw)
+            if len(parsed) != len(vacancies):
+                logger.warning(
+                    "Batch compat parse incomplete",
+                    expected=len(vacancies),
+                    got=len(parsed),
+                )
+            return {
+                v.hh_vacancy_id: parsed.get(v.hh_vacancy_id, 0.0)
+                for v in vacancies
+            }
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
+        except Exception as exc:
+            logger.error("Batch compatibility scoring failed", error=str(exc))
+            return {v.hh_vacancy_id: 0.0 for v in vacancies}
+
+    async def analyze_vacancies_batch(
+        self,
+        vacancies: list[VacancyCompatInput],
+        user_tech_stack: list[str],
+        user_work_experience: str,
+    ) -> dict[str, VacancyAnalysis]:
+        """Analyse N vacancies in one call. Returns {hh_vacancy_id: VacancyAnalysis}."""
+        if not vacancies:
+            return {}
+
+        messages = [
+            {
+                "role": "system",
+                "content": build_batch_vacancy_analysis_system_prompt(
+                    user_tech_stack=user_tech_stack,
+                    user_work_experience=user_work_experience,
+                ),
+            },
+            {
+                "role": "user",
+                "content": build_batch_vacancy_analysis_user_content(vacancies=vacancies),
+            },
+        ]
+        max_tokens = max(2000 * len(vacancies), 2000)
+
+        async def _call() -> dict[str, VacancyAnalysis]:
+            await self._acquire_rate_limit()
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=180,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            parsed = _parse_batch_vacancy_analysis(raw)
+            for v in vacancies:
+                if v.hh_vacancy_id not in parsed:
+                    parsed[v.hh_vacancy_id] = VacancyAnalysis(
+                        summary="", stack=[], compatibility_score=0.0
+                    )
+            return parsed
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
+        except Exception as exc:
+            logger.error("Batch vacancy analysis failed", error=str(exc))
+            return {
+                v.hh_vacancy_id: VacancyAnalysis(
+                    summary="", stack=[], compatibility_score=0.0
+                )
+                for v in vacancies
+            }
 
     async def generate_key_phrases(
         self,

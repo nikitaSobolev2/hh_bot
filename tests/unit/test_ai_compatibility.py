@@ -2,8 +2,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.ai.client import AIClient
+from src.services.ai.client import (
+    AIClient,
+    _parse_batch_compat_response,
+)
 from src.services.ai.prompts import (
+    VacancyCompatInput,
     build_compatibility_system_prompt,
     build_compatibility_user_content,
 )
@@ -171,3 +175,87 @@ class TestCompatibilityPrompt:
         )
         assert "x" * 4000 in content
         assert "x" * 4001 not in content
+
+
+class TestParseBatchCompatResponse:
+    def test_parses_valid_response(self):
+        raw = (
+            "[Vacancy]:v1\n[Compatibility]:72\n[VacancyEnd]:v1\n"
+            "[Vacancy]:v2\n[Compatibility]:45\n[VacancyEnd]:v2\n"
+        )
+        result = _parse_batch_compat_response(raw)
+        assert result == {"v1": 72.0, "v2": 45.0}
+
+    def test_parses_without_vacancy_end(self):
+        raw = "[Vacancy]:a1\n[Compatibility]:90\n[Vacancy]:b2\n[Compatibility]:33\n"
+        result = _parse_batch_compat_response(raw)
+        assert result == {"a1": 90.0, "b2": 33.0}
+
+    def test_caps_score_at_100(self):
+        raw = "[Vacancy]:x\n[Compatibility]:150\n"
+        result = _parse_batch_compat_response(raw)
+        assert result == {"x": 100.0}
+
+    def test_returns_empty_for_empty_input(self):
+        assert _parse_batch_compat_response("") == {}
+        assert _parse_batch_compat_response("no valid blocks") == {}
+
+    def test_handles_malformed_score(self):
+        raw = "[Vacancy]:y\n[Compatibility]:abc\n"
+        result = _parse_batch_compat_response(raw)
+        assert result == {}
+
+
+class TestCalculateCompatibilityBatch:
+    @pytest.mark.asyncio
+    async def test_returns_scores_for_batch(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            "[Vacancy]:v1\n[Compatibility]:80\n"
+            "[Vacancy]:v2\n[Compatibility]:55\n"
+        )
+
+        vacancies = [
+            VacancyCompatInput("v1", "Dev 1", ["Python"], "desc1"),
+            VacancyCompatInput("v2", "Dev 2", ["Java"], "desc2"),
+        ]
+
+        with patch.object(
+            client._client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = mock_response
+            scores = await client.calculate_compatibility_batch(
+                vacancies,
+                user_tech_stack=["Python"],
+                user_work_experience="3 years",
+            )
+
+        assert scores == {"v1": 80.0, "v2": 55.0}
+        mock_create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_empty_vacancies(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        scores = await client.calculate_compatibility_batch(
+            [], user_tech_stack=[], user_work_experience=""
+        )
+        assert scores == {}
+
+    @pytest.mark.asyncio
+    async def test_returns_zeros_on_error(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        vacancies = [VacancyCompatInput("v1", "Dev", [], "desc")]
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=Exception("API error"),
+        ):
+            scores = await client.calculate_compatibility_batch(
+                vacancies, user_tech_stack=[], user_work_experience=""
+            )
+
+        assert scores == {"v1": 0.0}
