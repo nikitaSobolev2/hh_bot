@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import httpx
-from openai import AsyncOpenAI, RateLimitError
+from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
 from src.config import settings
 from src.core.constants import AI_MAX_DESCRIPTION_LENGTH
@@ -35,13 +35,27 @@ MAX_DESCRIPTION_LENGTH = AI_MAX_DESCRIPTION_LENGTH
 # 429 rate limit retry: Cloudflare recommends 30s minimum, exponential backoff
 _RATE_LIMIT_MIN_WAIT = 30
 _RATE_LIMIT_MAX_RETRIES = 5
-_RETRY_AFTER_RE = re.compile(r"['\"]retry_after['\"]\s*:\s*(\d+)", re.IGNORECASE)
+# Matches retry_after in JSON-like strings: "retry_after": 30 or 'retry_after': 30
+_RETRY_AFTER_RE = re.compile(r"retry_after['\"]?\s*:\s*(\d+)", re.IGNORECASE)
 
 T = TypeVar("T")
 
 
-def _extract_retry_after(exc: RateLimitError) -> int:
-    """Extract retry_after in seconds from 429 error. Returns _RATE_LIMIT_MIN_WAIT if not found."""
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True if the exception indicates a 429 rate limit."""
+    if isinstance(exc, RateLimitError):
+        return True
+    if isinstance(exc, APIStatusError) and exc.status_code == 429:
+        return True
+    return getattr(exc, "status_code", None) == 429
+
+
+def _extract_retry_after(exc: Exception) -> int:
+    """Extract retry_after in seconds from 429 error. Returns _RATE_LIMIT_MIN_WAIT if not found.
+
+    Handles OpenAI RateLimitError, APIStatusError, and Cloudflare-style error bodies.
+    """
+    # Response headers (Retry-After)
     if hasattr(exc, "response") and exc.response is not None:
         ra = exc.response.headers.get("Retry-After")
         if ra:
@@ -49,20 +63,30 @@ def _extract_retry_after(exc: RateLimitError) -> int:
                 return max(int(ra), _RATE_LIMIT_MIN_WAIT)
             except ValueError:
                 pass
-    if hasattr(exc, "body") and isinstance(exc.body, dict):
-        for key in ("retry_after", "retry-after"):
-            ra = exc.body.get(key)
-            if ra is not None:
+
+    # Body as dict (OpenAI/Cloudflare JSON)
+    if hasattr(exc, "body") and exc.body is not None:
+        body = exc.body
+        if isinstance(body, dict):
+            for key in ("retry_after", "retry-after"):
+                ra = body.get(key)
+                if ra is not None:
+                    try:
+                        return max(int(ra), _RATE_LIMIT_MIN_WAIT)
+                    except (ValueError, TypeError):
+                        pass
+            err = body.get("error")
+            if isinstance(err, dict) and err.get("retry_after") is not None:
                 try:
-                    return max(int(ra), _RATE_LIMIT_MIN_WAIT)
-                except (ValueError, TypeError):
+                    return max(int(err["retry_after"]), _RATE_LIMIT_MIN_WAIT)
+                except (ValueError, TypeError, KeyError):
                     pass
-        err = exc.body.get("error")
-        if isinstance(err, dict) and err.get("retry_after") is not None:
-            try:
-                return max(int(err["retry_after"]), _RATE_LIMIT_MIN_WAIT)
-            except (ValueError, TypeError, KeyError):
-                pass
+        elif isinstance(body, str):
+            match = _RETRY_AFTER_RE.search(body)
+            if match:
+                return max(int(match.group(1)), _RATE_LIMIT_MIN_WAIT)
+
+    # Fallback: regex on string representation (Cloudflare embeds JSON in error string)
     match = _RETRY_AFTER_RE.search(str(exc))
     if match:
         return max(int(match.group(1)), _RATE_LIMIT_MIN_WAIT)
@@ -72,17 +96,23 @@ def _extract_retry_after(exc: RateLimitError) -> int:
 async def _call_with_rate_limit_retry(
     coro_fn: Callable[[], Coroutine[Any, Any, T]],
 ) -> T:
-    """Execute an AI API call, retrying on 429 with exponential backoff."""
+    """Execute an AI API call, retrying on 429 with exponential backoff.
+
+    Catches RateLimitError and APIStatusError (status 429) including Cloudflare-style
+    proxy errors. Uses retry_after from response when available; otherwise 30s minimum.
+    """
     last_exc: Exception | None = None
     for attempt in range(_RATE_LIMIT_MAX_RETRIES):
         try:
             return await coro_fn()
-        except RateLimitError as exc:
+        except (RateLimitError, APIStatusError) as exc:
+            if not _is_rate_limit_error(exc):
+                raise
             last_exc = exc
             if attempt >= _RATE_LIMIT_MAX_RETRIES - 1:
                 raise
             wait = _extract_retry_after(exc)
-            # Exponential backoff: 30, 60, 120, 240
+            # Exponential backoff: 30, 60, 120, 240 (cap 300s)
             wait = min(wait * (2**attempt), 300)
             logger.warning(
                 "AI rate limited, retrying after wait",

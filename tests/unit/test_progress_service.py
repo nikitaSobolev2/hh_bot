@@ -180,6 +180,40 @@ class TestStartTask:
 
 
 # ---------------------------------------------------------------------------
+# mark_retrying
+# ---------------------------------------------------------------------------
+
+
+class TestMarkRetrying:
+    @pytest.mark.asyncio
+    async def test_sets_status_to_retrying(self):
+        state = _task_state()
+        redis = _make_redis(
+            pin="42",
+            task=json.dumps(state),
+            task_keys=["progress:task:111:parse:1"],
+            task_values=[json.dumps(state)],
+        )
+        svc, bot, _ = _make_service(chat_id=111, redis=redis)
+
+        await svc.mark_retrying("parse:1")
+
+        redis.set.assert_called()
+        set_call = redis.set.call_args
+        saved_state = json.loads(set_call.args[1])
+        assert saved_state["status"] == "retrying"
+
+    @pytest.mark.asyncio
+    async def test_does_nothing_when_task_key_absent(self):
+        svc, bot, redis = _make_service(chat_id=111)
+        redis.get = AsyncMock(return_value=None)
+
+        await svc.mark_retrying("parse:99")
+
+        redis.set.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # update_bar
 # ---------------------------------------------------------------------------
 
@@ -421,6 +455,18 @@ class TestRenderProgressText:
         text = svc._render_progress_text(tasks)
         # Label should not appear because total=0.
         assert "🌐 Scraping" not in text
+
+    def test_retrying_task_shows_retry_message(self):
+        svc, _, _ = _make_service(locale="en")
+        tasks = {
+            "parse:1": _task_state(
+                title="Backend Dev",
+                status="retrying",
+                bars=[{"label": "🌐 Scraping", "current": 5, "total": 10}],
+            )
+        }
+        text = svc._render_progress_text(tasks)
+        assert "Something went wrong, retrying" in text
 
 
 # ---------------------------------------------------------------------------

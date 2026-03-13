@@ -770,6 +770,7 @@ iv-not-found = Record not found.
 # Progress bars
 progress-title = ⏳ Processing tasks
 progress-completed-title = ✅ All tasks completed!
+progress-retrying = ⚠️ Something went wrong, retrying...
 progress-bar-scraping = 🌐 Scraping
 progress-bar-keywords = 🧠 Keywords
 progress-bar-ai = 🧠 AI Analysis

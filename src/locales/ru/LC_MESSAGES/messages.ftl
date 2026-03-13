@@ -771,6 +771,7 @@ iv-not-found = Запись не найдена.
 # Progress bars
 progress-title = ⏳ Обработка задач
 progress-completed-title = ✅ Все задачи выполнены!
+progress-retrying = ⚠️ Что-то пошло не так, повторяем...
 progress-bar-scraping = 🌐 Парсинг
 progress-bar-keywords = 🧠 Ключевые слова
 progress-bar-ai = 🧠 AI-совместимость

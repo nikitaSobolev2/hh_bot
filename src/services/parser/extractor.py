@@ -43,26 +43,40 @@ class ParsingExtractor:
         compat_filter: CompatFilterFn | None = None,
         concurrency: int = _DEFAULT_CONCURRENCY,
         ai_concurrency: int = _AI_CONCURRENCY,
+        resume_from: tuple[list[dict], int] | None = None,
     ) -> PipelineResult:
-        vacancies = await self._scraper.collect_vacancy_urls(
-            search_url,
-            keyword_filter,
-            target_count,
-            blacklisted_ids=blacklisted_ids,
-        )
+        """Run the parsing pipeline.
+
+        When resume_from is provided as (urls, skip_count), use the given URLs
+        and skip the first skip_count (already processed). No scraping is done.
+        """
+        if resume_from is not None:
+            vacancies, skip_count = resume_from
+        else:
+            vacancies = await self._scraper.collect_vacancy_urls(
+                search_url,
+                keyword_filter,
+                target_count,
+                blacklisted_ids=blacklisted_ids,
+            )
+            skip_count = 0
 
         if not vacancies:
             logger.warning("No vacancies found")
             return PipelineResult(vacancies=[], keywords=[], skills=[])
 
         total = len(vacancies)
+        vacancies_to_process = vacancies[skip_count:]
         sem = asyncio.Semaphore(concurrency)
         ai_sem = asyncio.Semaphore(ai_concurrency)
 
         scrape_lock = asyncio.Lock()
-        scraped_count = [0]
+        scraped_count = [skip_count]
         kw_lock = asyncio.Lock()
-        kw_count = [0]
+        kw_count = [skip_count]
+
+        if skip_count > 0 and on_page_scraped:
+            await on_page_scraped(total, total)
 
         async def _process_vacancy(
             client: httpx.AsyncClient,
@@ -155,7 +169,7 @@ class ParsingExtractor:
 
         async with httpx.AsyncClient() as client:
             raw_results = await asyncio.gather(
-                *[_process_vacancy(client, vac) for vac in vacancies]
+                *[_process_vacancy(client, vac) for vac in vacancies_to_process]
             )
 
         keywords_counter: Counter[str] = Counter()

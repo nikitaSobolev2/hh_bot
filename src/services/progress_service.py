@@ -125,6 +125,19 @@ class ProgressService:
         )
         await self._refresh_message(force=False)
 
+    async def mark_retrying(self, task_key: str) -> None:
+        """Mark task as retrying after an error. Shows retry message in the UI."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if raw:
+            state = json.loads(raw)
+            state["status"] = "retrying"
+            await self._redis.set(
+                self._task_key(task_key),
+                json.dumps(state),
+                ex=_PROGRESS_TTL,
+            )
+            await self._refresh_message(force=True)
+
     async def finish_task(self, task_key: str) -> None:
         """Mark task complete; send summary and clean up when all tasks are done."""
         raw = await self._redis.get(self._task_key(task_key))
@@ -296,9 +309,13 @@ class ProgressService:
     def _render_task_section(self, state: dict) -> str:
         """Render a single task block: title, then each progress bar."""
         title = state["title"]
-        is_done = state["status"] == "completed"
+        status = state.get("status", "running")
+        is_done = status == "completed"
+        is_retrying = status == "retrying"
         done_mark = " ✅" if is_done else ""
         lines = [f"<b>📋</b> {title}{done_mark}"]
+        if is_retrying:
+            lines.append(get_text("progress-retrying", self._locale))
         for bar in state["bars"]:
             total = bar["total"]
             if total <= 0:

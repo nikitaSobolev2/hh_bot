@@ -97,6 +97,16 @@ class TestManualParseBlacklist:
 
         from src.worker.tasks.parsing import _run_parsing_company_async
 
+        mock_checkpoint = AsyncMock()
+        mock_checkpoint.load_parsing = AsyncMock(return_value=None)
+        mock_checkpoint.save_parsing = AsyncMock()
+        mock_checkpoint.clear = AsyncMock()
+
+        mock_scraper = AsyncMock()
+        mock_scraper.collect_vacancy_urls = AsyncMock(
+            return_value=[{"url": "https://hh.ru/vacancy/1", "title": "Test", "hh_vacancy_id": "1"}]
+        )
+
         with (
             patch(
                 "src.worker.tasks.parsing._init_bot_and_locale",
@@ -124,6 +134,18 @@ class TestManualParseBlacklist:
             patch(
                 "src.services.parser.extractor.ParsingExtractor.run_pipeline",
                 new=fake_run_pipeline,
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=mock_checkpoint,
+            ),
+            patch(
+                "src.services.task_checkpoint.create_checkpoint_redis",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.parser.scraper.HHScraper",
+                return_value=mock_scraper,
             ),
         ):
             fake_task = MagicMock()

@@ -65,6 +65,39 @@ class TaskCheckpointService:
             return None
         return data["analyzed"], data["total"]
 
+    async def save_parsing(
+        self,
+        key: str,
+        task_id: str,
+        *,
+        processed: int,
+        total: int,
+        urls: list[dict],
+    ) -> None:
+        """Persist parsing checkpoint with vacancy URL list for resume."""
+        payload = json.dumps(
+            {"task_id": task_id, "processed": processed, "total": total, "urls": urls}
+        )
+        await self._redis.set(self._redis_key(key), payload, ex=_TTL)
+
+    async def load_parsing(
+        self, key: str, task_id: str
+    ) -> tuple[int, int, list[dict]] | None:
+        """Return ``(processed, total, urls)`` if a matching parsing checkpoint exists.
+
+        Returns ``None`` when the key is absent or belongs to a different task.
+        """
+        raw = await self._redis.get(self._redis_key(key))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        if data.get("task_id") != task_id:
+            return None
+        urls = data.get("urls", [])
+        if not urls:
+            return None
+        return data["processed"], data["total"], urls
+
     async def clear(self, key: str) -> None:
         """Remove the checkpoint entry after successful task completion."""
         await self._redis.delete(self._redis_key(key))

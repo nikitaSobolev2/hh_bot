@@ -15,6 +15,21 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 
+def _is_transient_failure(exc: Exception) -> bool:
+    """Return True if the failure is transient and should not open the circuit breaker."""
+    if isinstance(exc, SoftTimeLimitExceeded):
+        return True
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    from openai import APIStatusError, RateLimitError
+
+    if isinstance(exc, RateLimitError):
+        return True
+    if isinstance(exc, APIStatusError):
+        return exc.status_code == 429
+    return False
+
+
 @celery_app.task(
     bind=True,
     base=HHBotTask,
@@ -44,7 +59,7 @@ def run_parsing_company(
         )
     except SoftTimeLimitExceeded:
         logger.warning(
-            "Parsing task soft time limit exceeded",
+            "Parsing task soft time limit exceeded, will retry from checkpoint",
             company_id=parsing_company_id,
             user_id=user_id,
         )
@@ -53,7 +68,6 @@ def run_parsing_company(
                 sf, parsing_company_id, user_id, telegram_chat_id
             )
         )
-        self.request.retries = self.max_retries
         raise
 
 
@@ -70,9 +84,14 @@ async def _run_parsing_company_async(
     from src.repositories.parsing import ParsingCompanyRepository
     from src.repositories.task import CeleryTaskRepository
     from src.services.parser.extractor import ParsingExtractor
+    from src.services.parser.scraper import HHScraper
+    from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
     from src.worker.circuit_breaker import CircuitBreaker
 
     cb = CircuitBreaker("parsing")
+    checkpoint = TaskCheckpointService(create_checkpoint_redis())
+    checkpoint_key = f"parse:{parsing_company_id}"
+    task_id = task.request.id or ""
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -124,6 +143,26 @@ async def _run_parsing_company_async(
         task_key = f"parse:{parsing_company_id}"
         progress = await _start_progress(bot, telegram_chat_id, company, locale)
 
+        restored = await checkpoint.load_parsing(checkpoint_key, task_id)
+        if restored:
+            skip_count, _, vacancies = restored[0], restored[1], restored[2]
+            resume_from = (vacancies, skip_count)
+            logger.info(
+                "Resuming parsing from checkpoint",
+                company_id=parsing_company_id,
+                skip_count=skip_count,
+                total=len(vacancies),
+            )
+        else:
+            scraper = HHScraper()
+            vacancies = await scraper.collect_vacancy_urls(
+                company.search_url,
+                company.keyword_filter,
+                company.target_count,
+                blacklisted_ids=blacklisted_ids,
+            )
+            resume_from = (vacancies, 0) if vacancies else None
+
         async def _on_page_scraped(current: int, total: int) -> None:
             if progress:
                 await progress.update_bar(task_key, 0, current, total)
@@ -132,6 +171,14 @@ async def _run_parsing_company_async(
             await _report_progress(session_factory, parsing_company_id, current, total)
             if progress:
                 await progress.update_bar(task_key, 1, current, total)
+            if vacancies and current > 0:
+                await checkpoint.save_parsing(
+                    checkpoint_key,
+                    task_id,
+                    processed=current,
+                    total=total,
+                    urls=vacancies,
+                )
 
         compat_filter = None
         if company.use_compatibility_check and company.compatibility_threshold is not None:
@@ -149,6 +196,7 @@ async def _run_parsing_company_async(
             on_page_scraped=_on_page_scraped,
             on_vacancy_processed=_on_vacancy_processed,
             compat_filter=compat_filter,
+            resume_from=resume_from,
         )
 
         await _save_parsing_results(
@@ -160,6 +208,7 @@ async def _run_parsing_company_async(
             idempotency_key,
         )
         cb.record_success()
+        await checkpoint.clear(checkpoint_key)
 
         if progress:
             await progress.finish_task(task_key)
@@ -182,7 +231,8 @@ async def _run_parsing_company_async(
         }
 
     except Exception as exc:
-        cb.record_failure()
+        if not _is_transient_failure(exc):
+            cb.record_failure()
         await _mark_parsing_failed(
             session_factory,
             parsing_company_id,
@@ -352,47 +402,27 @@ async def _handle_parsing_soft_timeout(
     user_id: int,
     telegram_chat_id: int,
 ) -> None:
-    """Mark parsing as failed and notify user when soft time limit is exceeded."""
-    from src.models.task import BaseCeleryTask
-    from src.repositories.parsing import ParsingCompanyRepository
-    from src.repositories.user import UserRepository
+    """Mark progress as retrying when soft time limit exceeded. Task will retry from checkpoint.
 
-    async with session_factory() as session:
-        company_repo = ParsingCompanyRepository(session)
-        company = await company_repo.get_by_id(parsing_company_id)
-        if company:
-            await company_repo.update(company, status="failed")
-            await session.commit()
+    Does NOT mark company as failed — checkpoint is already saved by on_vacancy_processed.
+    """
+    if telegram_chat_id:
+        from src.repositories.user import UserRepository
+        from src.services.progress_service import ProgressService, create_progress_redis
+        from src.services.telegram.bot_factory import create_task_bot
 
-        idempotency_key = f"parse_company:{parsing_company_id}"
-        session.add(
-            BaseCeleryTask(
-                celery_task_id=None,
-                task_type="parse_company",
-                user_id=user_id,
-                status="failed",
-                idempotency_key=idempotency_key,
-                error_message="soft_time_limit_exceeded",
+        async with session_factory() as session:
+            user = await UserRepository(session).get_by_id(user_id)
+            locale = (user.language_code or "ru") if user else "ru"
+
+        bot = create_task_bot()
+        try:
+            progress = ProgressService(
+                bot, telegram_chat_id, create_progress_redis(), locale
             )
-        )
-        await session.commit()
-
-    async with session_factory() as session:
-        user = await UserRepository(session).get_by_id(user_id)
-        if user and user.telegram_id:
-            locale = user.language_code or "ru"
-            from src.core.i18n import get_text
-            from src.services.ai.streaming import _send_with_retry
-            from src.services.telegram.bot_factory import create_task_bot
-
-            bot = create_task_bot()
-            try:
-                text = get_text("task-soft-timeout", locale)
-                await _send_with_retry(
-                    bot, user.telegram_id, text=text, parse_mode="HTML"
-                )
-            finally:
-                await bot.session.close()
+            await progress.mark_retrying(f"parse:{parsing_company_id}")
+        finally:
+            await bot.session.close()
 
 
 async def _mark_parsing_failed(
