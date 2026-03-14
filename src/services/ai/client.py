@@ -15,6 +15,7 @@ from src.config import settings
 from src.core.constants import AI_MAX_DESCRIPTION_LENGTH
 from src.core.logging import get_logger
 from src.schemas.ai import QAPair
+from src.schemas.vacancy import VacancyApiContext
 from src.services.ai.prompts import (
     VacancyCompatInput,
     build_batch_compatibility_system_prompt,
@@ -240,13 +241,14 @@ class AIClient:
     async def extract_keywords(
         self,
         description: str,
-        raw_api_data: dict | None = None,
+        vacancy_api_context: VacancyApiContext | None = None,
     ) -> list[str]:
         has_content = description.strip() or (
-            raw_api_data
+            vacancy_api_context
             and (
-                raw_api_data.get("snippet")
-                or raw_api_data.get("key_skills")
+                vacancy_api_context.snippet_requirement
+                or vacancy_api_context.snippet_responsibility
+                or vacancy_api_context.key_skills
             )
         )
         if not has_content:
@@ -258,7 +260,7 @@ class AIClient:
             {
                 "role": "user",
                 "content": build_keyword_extraction_user_content(
-                    truncated, raw_api_data=raw_api_data
+                    truncated, vacancy_api_context=vacancy_api_context
                 ),
             },
         ]

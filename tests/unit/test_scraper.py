@@ -311,7 +311,8 @@ def sample_vacancy_detail_api_response() -> dict:
             {"name": "Django"},
             {"name": "PostgreSQL"},
         ],
-        "employer": {"name": "Acme Corp"},
+        "employer": {"id": "123", "name": "Acme Corp"},
+        "area": {"id": "1", "name": "Москва", "url": "https://api.hh.ru/areas/1"},
         "experience": {"id": "between1And3", "name": "1–3 года"},
         "schedule": {"id": "fullDay", "name": "Полный день"},
         "employment": {"id": "full", "name": "Полная занятость"},
@@ -337,7 +338,15 @@ class TestParseVacancyPage:
         assert "Python" in result["skills"]
         assert "Django" in result["skills"]
         assert "PostgreSQL" in result["skills"]
-        assert result["raw_api_data"] == sample_vacancy_detail_api_response
+        assert "employer_data" in result
+        assert "area_data" in result
+        assert "orm_fields" in result
+        assert result["employer_data"].get("id") == str(
+            sample_vacancy_detail_api_response["employer"]["id"]
+        )
+        assert result["area_data"].get("id") == str(
+            sample_vacancy_detail_api_response["area"]["id"]
+        )
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_failed_fetch(self):

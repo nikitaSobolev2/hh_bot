@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from src.core.logging import get_logger
-from src.schemas.vacancy import PipelineResult, VacancyData
+from src.schemas.vacancy import PipelineResult, VacancyData, build_vacancy_api_context
 from src.services.ai.client import AIClient
 from src.services.ai.prompts import VacancyCompatInput
 from src.services.parser.scraper import HHScraper, _map_api_vacancy_to_page_data
@@ -292,11 +292,16 @@ class ParsingExtractor:
                 scrape_current = scraped_count[0]
             if on_page_scraped:
                 await on_page_scraped(scrape_current, total)
+            orm_fields = page_data.get("orm_fields", {})
+            employer_data = page_data.get("employer_data", {})
+            area_data = page_data.get("area_data", {})
+            skills = page_data.get("skills", [])
+            api_ctx = build_vacancy_api_context(orm_fields, employer_data, skills)
             return VacancyData(
                 hh_vacancy_id=vac["hh_vacancy_id"],
                 url=vac["url"],
                 title=page_data.get("title", vac["title"]),
-                raw_skills=page_data.get("skills", []),
+                raw_skills=skills,
                 description=page_data.get("description", ""),
                 salary=page_data.get("salary", vac.get("salary", "")),
                 company_name=page_data.get("company_name", vac.get("company_name", "")),
@@ -306,7 +311,10 @@ class ParsingExtractor:
                 work_formats=page_data.get("work_formats", ""),
                 compensation_frequency=page_data.get("compensation_frequency", ""),
                 working_hours=page_data.get("working_hours", ""),
-                raw_api_data=page_data.get("raw_api_data", {}),
+                vacancy_api_context=api_ctx,
+                employer_data=employer_data,
+                area_data=area_data,
+                orm_fields=orm_fields,
             )
 
         async with httpx.AsyncClient() as client:
@@ -322,7 +330,7 @@ class ParsingExtractor:
                             title=p.title,
                             skills=p.raw_skills,
                             description=p.description,
-                            raw_api_data=p.raw_api_data,
+                            vacancy_api_context=p.vacancy_api_context,
                         )
                         for p in partials
                     ]
@@ -352,11 +360,11 @@ class ParsingExtractor:
 
                 for partial in passing:
                     ai_keywords: list[str] = []
-                    if partial.description or partial.raw_api_data:
+                    if partial.description or partial.vacancy_api_context:
                         async with ai_sem:
                             ai_keywords = await self._ai.extract_keywords(
                                 partial.description,
-                                raw_api_data=partial.raw_api_data or None,
+                                vacancy_api_context=partial.vacancy_api_context,
                             )
 
                     async with kw_lock:
@@ -389,7 +397,10 @@ class ParsingExtractor:
                         work_formats=partial.work_formats,
                         compensation_frequency=partial.compensation_frequency,
                         working_hours=partial.working_hours,
-                        raw_api_data=partial.raw_api_data,
+                        vacancy_api_context=partial.vacancy_api_context,
+                        employer_data=partial.employer_data,
+                        area_data=partial.area_data,
+                        orm_fields=partial.orm_fields,
                     )
                     processed_vacancies.append(vacancy_data)
                     for skill in partial.raw_skills:

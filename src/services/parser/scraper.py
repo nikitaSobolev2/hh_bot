@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
 from src.core.logging import get_logger
+from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 from src.services.parser.keyword_match import matches_keyword_expression
 
 logger = get_logger(__name__)
@@ -98,12 +99,14 @@ def _vacancy_api_url(vacancy_id: str) -> str:
 
 
 def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = None) -> dict:
-    """Map HH API vacancy detail response to page_data shape used by extractor.
+    """Map HH API vacancy (list or detail) to page_data shape used by extractor.
 
-    list_item: optional dict from search list (url, title, company_name, salary, etc.)
-    for fields not in detail response.
+    Uses unified mapper for both /vacancies/ (list) and /vacancies/{id} (detail) shapes.
+    list_item: optional dict from search list for fields not in detail response.
     """
     list_item = list_item or {}
+    mapped = map_api_vacancy_to_orm_fields(api_response)
+
     description = _html_to_plain_text(api_response.get("description", "") or "")
     key_skills = api_response.get("key_skills") or []
     skills = [s["name"] for s in key_skills if isinstance(s, dict) and s.get("name")]
@@ -111,7 +114,8 @@ def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = N
     employer = api_response.get("employer") or {}
     company_name = employer.get("name") or list_item.get("company_name", "")
 
-    salary_str = _format_api_salary(api_response.get("salary")) or list_item.get("salary", "")
+    salary = api_response.get("salary") or api_response.get("salary_range")
+    salary_str = _format_api_salary(salary) or list_item.get("salary", "")
 
     experience = api_response.get("experience")
     work_experience = experience.get("name", "") if isinstance(experience, dict) else ""
@@ -143,7 +147,9 @@ def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = N
         "work_schedule": work_schedule,
         "work_formats": work_formats_str,
         "working_hours": working_hours_str,
-        "raw_api_data": api_response,
+        "employer_data": mapped["employer_data"],
+        "area_data": mapped["area_data"],
+        "orm_fields": mapped["orm_fields"],
     }
     return result
 
@@ -579,9 +585,10 @@ class HHScraper:
         client: httpx.AsyncClient,
         url: str,
     ) -> dict:
-        """Parse a single vacancy page via HH API. Returns page_data shape with raw_api_data.
+        """Parse a single vacancy page via HH API. Returns page_data shape with structured fields.
 
-        For HH.ru URLs, fetches from API and maps to page_data. Returns empty dict on failure.
+        For HH.ru URLs, fetches from API and maps to page_data (employer_data, area_data, orm_fields).
+        Returns empty dict on failure.
         """
         vacancy_id = self._extract_vacancy_id(url)
         if not vacancy_id:

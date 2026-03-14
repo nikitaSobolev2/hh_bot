@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from src.core.logging import get_logger
+from src.schemas.vacancy import build_vacancy_api_context
 from src.services.parser.scraper import HHScraper
 
 logger = get_logger(__name__)
@@ -60,7 +61,16 @@ class HHParserService:
                 if not page_data:
                     continue
 
-                merged = {**vac, **page_data, "raw_skills": page_data.get("skills", [])}
+                skills = page_data.get("skills", [])
+                orm_fields = page_data.get("orm_fields", {})
+                employer_data = page_data.get("employer_data", {})
+                api_ctx = build_vacancy_api_context(orm_fields, employer_data, skills)
+                merged = {
+                    **vac,
+                    **page_data,
+                    "raw_skills": skills,
+                    "vacancy_api_context": api_ctx,
+                }
                 merged.pop("skills", None)
                 results.append(merged)
                 new_count += 1

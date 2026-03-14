@@ -414,8 +414,21 @@ async def _save_single_vacancy(
     """Persist a single processed vacancy and its blacklist entry. Used for incremental save."""
     from src.models.blacklist import VacancyBlacklist
     from src.models.parsing import ParsedVacancy
+    from src.repositories.hh import HHEmployerRepository, HHAreaRepository
 
     async with session_factory() as session:
+        employer_id = None
+        area_id = None
+        if vac_data.employer_data and vac_data.employer_data.get("id"):
+            employer_repo = HHEmployerRepository(session)
+            employer = await employer_repo.get_or_create_by_hh_id(vac_data.employer_data)
+            employer_id = employer.id
+        if vac_data.area_data and vac_data.area_data.get("id"):
+            area_repo = HHAreaRepository(session)
+            area = await area_repo.get_or_create_by_hh_id(vac_data.area_data)
+            area_id = area.id
+
+        of = vac_data.orm_fields or {}
         session.add(
             ParsedVacancy(
                 parsing_company_id=parsing_company_id,
@@ -425,7 +438,33 @@ async def _save_single_vacancy(
                 description=vac_data.description,
                 raw_skills=vac_data.raw_skills,
                 ai_keywords=vac_data.ai_keywords,
-                raw_api_data=vac_data.raw_api_data if vac_data.raw_api_data else None,
+                employer_id=employer_id,
+                area_id=area_id,
+                snippet_requirement=of.get("snippet_requirement"),
+                snippet_responsibility=of.get("snippet_responsibility"),
+                experience_id=of.get("experience_id"),
+                experience_name=of.get("experience_name"),
+                schedule_id=of.get("schedule_id"),
+                schedule_name=of.get("schedule_name"),
+                employment_id=of.get("employment_id"),
+                employment_name=of.get("employment_name"),
+                employment_form_id=of.get("employment_form_id"),
+                employment_form_name=of.get("employment_form_name"),
+                salary_from=of.get("salary_from"),
+                salary_to=of.get("salary_to"),
+                salary_currency=of.get("salary_currency"),
+                salary_gross=of.get("salary_gross"),
+                address_raw=of.get("address_raw"),
+                address_city=of.get("address_city"),
+                address_street=of.get("address_street"),
+                address_building=of.get("address_building"),
+                address_lat=of.get("address_lat"),
+                address_lng=of.get("address_lng"),
+                metro_stations=of.get("metro_stations"),
+                vacancy_type_id=of.get("vacancy_type_id"),
+                published_at=of.get("published_at"),
+                work_format=of.get("work_format"),
+                professional_roles=of.get("professional_roles"),
             )
         )
         stmt = (

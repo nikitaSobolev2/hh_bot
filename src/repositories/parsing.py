@@ -104,6 +104,15 @@ class ParsedVacancyRepository(BaseRepository[ParsedVacancy]):
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def get_by_hh_id_with_employer(self, hh_vacancy_id: str) -> ParsedVacancy | None:
+        stmt = (
+            select(ParsedVacancy)
+            .options(selectinload(ParsedVacancy.employer))
+            .where(ParsedVacancy.hh_vacancy_id == hh_vacancy_id)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def get_all_hh_ids(self) -> set[str]:
         stmt = select(ParsedVacancy.hh_vacancy_id).distinct()
         result = await self._session.execute(stmt)

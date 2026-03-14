@@ -12,6 +12,7 @@ from src.models.interview import (
     InterviewQuestion,
 )
 from src.models.interview_qa import StandardQuestion
+from src.models.hh import HHArea, HHEmployer
 from src.models.parsing import AggregatedResult, ParsedVacancy, ParsingCompany
 from src.models.recommendation_letter import RecommendationLetter
 from src.models.referral import ReferralEvent
@@ -63,4 +64,6 @@ __all__ = [
     "VacancySummary",
     "Resume",
     "RecommendationLetter",
+    "HHEmployer",
+    "HHArea",
 ]

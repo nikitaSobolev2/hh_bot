@@ -1,0 +1,219 @@
+{
+    "id": "130993879",
+    "premium": false,
+    "billing_type": {
+      "id": "standard",
+      "name": "Стандарт"
+    },
+    "relations": [],
+    "name": "Senior PHP разработчик",
+    "insider_interview": null,
+    "response_letter_required": false,
+    "area": {
+      "id": "2",
+      "name": "Санкт-Петербург",
+      "url": "https://api.hh.ru/areas/2"
+    },
+    "salary": null,
+    "salary_range": null,
+    "type": {
+      "id": "open",
+      "name": "Открытая"
+    },
+    "address": {
+      "city": "Санкт-Петербург",
+      "street": "Гражданский проспект",
+      "building": "100",
+      "lat": 60.024482,
+      "lng": 30.406391,
+      "description": null,
+      "raw": "Санкт-Петербург, Гражданский проспект, 100",
+      "metro": {
+        "station_name": "Академическая",
+        "line_name": "Кировско-Выборгская",
+        "station_id": "14.192",
+        "line_id": "14",
+        "lat": 60.012806,
+        "lng": 30.396044
+      },
+      "metro_stations": [
+        {
+          "station_name": "Академическая",
+          "line_name": "Кировско-Выборгская",
+          "station_id": "14.192",
+          "line_id": "14",
+          "lat": 60.012806,
+          "lng": 30.396044
+        },
+        {
+          "station_name": "Гражданский проспект",
+          "line_name": "Кировско-Выборгская",
+          "station_id": "14.191",
+          "line_id": "14",
+          "lat": 60.034969,
+          "lng": 30.418224
+        },
+        {
+          "station_name": "Девяткино",
+          "line_name": "Кировско-Выборгская",
+          "station_id": "14.190",
+          "line_id": "14",
+          "lat": 60.050182,
+          "lng": 30.443045
+        },
+        {
+          "station_name": "Политехническая",
+          "line_name": "Кировско-Выборгская",
+          "station_id": "14.193",
+          "line_id": "14",
+          "lat": 60.008942,
+          "lng": 30.370907
+        }
+      ],
+      "can_edit": false
+    },
+    "allow_messages": true,
+    "experience": {
+      "id": "moreThan6",
+      "name": "Более 6 лет"
+    },
+    "schedule": {
+      "id": "remote",
+      "name": "Удаленная работа"
+    },
+    "employment": {
+      "id": "full",
+      "name": "Полная занятость"
+    },
+    "department": null,
+    "show_contacts": false,
+    "contacts": null,
+    "description": "\u003Cp\u003EПривет! Мы команда \u003Cstrong\u003EMPSTATS \u003C/strong\u003Eсоздаем лидирующий сервис аналитики маркетплейсов (Wildberries, Ozon, Яндекс Маркет).\u003C/p\u003E \u003Cp\u003EЗа 5 лет наша платформа выросла в экосистему сервисов и инструментов для селлеров на маркетплейсах (тех, кто продает товары на Wildberries, Ozon и других крупных площадках) и вошла в топ10 российских SaaS.\u003C/p\u003E \u003Cp\u003EМы собираем данные из открытых источников, храним и обрабатываем, чтобы генерировать до 3 500 000 отчетов в сутки. Для этого мы используем почти сотню серверов в двух дата центрах, храним данные в Clickhouse, MySQL, MongoDB, кэшируем в Redis, memcached, пишем на PHP, NodeJS и немного на Python, на фронте TypeScript и VueJS.\u003C/p\u003E \u003Cp\u003E\u003Cstrong\u003EМы ищем \u003C/strong\u003E\u003Cstrong\u003ESenior\u003C/strong\u003E\u003Cstrong\u003E \u003C/strong\u003E\u003Cstrong\u003EBackend-разработчика в продуктовое направление «Продвижение»\u003C/strong\u003E\u003C/p\u003E \u003Cp\u003E\u003Cstrong\u003EСтек проекта:\u003C/strong\u003E\u003C/p\u003E \u003Cp\u003E«Микро»-монолит на Laravel 8 и PHP 7.4\u003C/p\u003E \u003Cp\u003EМикросервисы на PHP и NodeJS\u003C/p\u003E \u003Cp\u003EФронт на VueJS 3+\u003C/p\u003E \u003Cp\u003EMySQL / Clickhouse / MongoDB в качестве хранилищ бизнес-данных;\u003C/p\u003E \u003Cp\u003ERedPanda/Redis\u003C/p\u003E \u003Cp\u003EDocker Swarm в качестве решения для развертывания части сервисов + стандартные VM\u003C/p\u003E \u003Cp\u003E\u003Cstrong\u003EЗадачи\u003C/strong\u003E\u003Cstrong\u003E:\u003C/strong\u003E\u003C/p\u003E \u003Cul\u003E \u003Cli\u003Eразработка решений в рамках продукта по аналитике и управлению рекламными кампаниями Wildberries, а также в рамках других смежных продуктов\u003C/li\u003E \u003Cli\u003Eразработка дополнительных внутренних инструментов, связанных с аналитикой и автоматизациями работы селлеров на маркетплейсах\u003C/li\u003E \u003Cli\u003Eучастие в проектировании сервисной архитектуры в рамках направления\u003C/li\u003E \u003Cli\u003Eучастие в code-review коллег внутри направления\u003C/li\u003E \u003C/ul\u003E \u003Cp\u003E\u003Cstrong\u003EТребования\u003C/strong\u003E\u003Cstrong\u003E:\u003C/strong\u003E\u003C/p\u003E \u003Cul\u003E \u003Cli\u003Eуверенное владение PHP 7.4+\u003C/li\u003E \u003Cli\u003Eумение писать чистый и тестируемый код\u003C/li\u003E \u003Cli\u003Eзнание основных паттернов проектирования\u003C/li\u003E \u003Cli\u003Eуверенное владение SQL\u003C/li\u003E \u003Cli\u003Eпонимание принципов оптимизации запросов к MySQL, опыт работы с индексами и различными типами\u003C/li\u003E \u003Cli\u003Eопыт работы с Clickhouse, MongoDB\u003C/li\u003E \u003Cli\u003Eопыт работы с Kafka/Redis/RedPanda\u003C/li\u003E \u003Cli\u003Eзнание основных принципов работы с очередями\u003C/li\u003E \u003Cli\u003Eоткрытость к коммуникациям\u003C/li\u003E \u003Cli\u003Eумение работать в условиях быстро меняющихся вводных\u003C/li\u003E \u003C/ul\u003E \u003Cp\u003E\u003Cstrong\u003EБудет плюсом\u003C/strong\u003E\u003Cstrong\u003E: \u003C/strong\u003E\u003C/p\u003E \u003Cul\u003E \u003Cli\u003Eопыт разработки высоконагруженных и отказоустойчивых систем\u003C/li\u003E \u003Cli\u003Eумение читать код на VueJS и NodeJS\u003C/li\u003E \u003Cli\u003Eопыт работы с метриками в Prometheus-форматах и их визуализацией в Grafana\u003C/li\u003E \u003C/ul\u003E \u003Cp\u003E\u003Cstrong\u003EМы предлагаем:\u003C/strong\u003E\u003C/p\u003E \u003Cul\u003E \u003Cli\u003Eофициальное оформление по ТК РФ\u003C/li\u003E \u003Cli\u003Eграфик работы 5/2 по 8 часов в день\u003C/li\u003E \u003Cli\u003Eкомфортный формат работы: дистанционный или в офисе в Санкт-Петербурге\u003C/li\u003E \u003Cli\u003Eзабота о здоровье: ДМС\u003C/li\u003E \u003Cli\u003Eподдержка профессионального и личностного развития: корпоративная библиотека, тренинги, доступ к вебинарам и обучающим материалам\u003C/li\u003E \u003Cli\u003Eоткрытая корпоративная культура: поддержка инициатив, возможность создавать крутые проекты и развиваться вместе с командой\u003C/li\u003E \u003Cli\u003Eвозможность участвовать в создании и развитии классного и востребованного продукта, ведь мы один из лидирующих и первых сервисов в нише аналитики маркетплейсов.\u003C/li\u003E \u003C/ul\u003E \u003Cp\u003E\u003Cstrong\u003EМы ищем в нашу команду людей, близких нам по духу. Тех, кто будет разделять наши ценности и принципы, кому интересно заниматься любимым делом и развиваться в кругу единомышленников!\u003C/strong\u003E\u003C/p\u003E",
+    "branded_description": null,
+    "vacancy_constructor_template": {
+      "id": 37001,
+      "name": "Брендированный шаблон 2",
+      "top_picture": {
+        "height": 465,
+        "width": 1280,
+        "path": "https://img.hhcdn.ru/branding-pictures/3679378.png",
+        "blurred_path": null
+      },
+      "bottom_picture": {
+        "height": 704,
+        "width": 1540,
+        "path": "https://img.hhcdn.ru/branding-pictures/2221402.png",
+        "blurred_path": null
+      }
+    },
+    "key_skills": [
+      {
+        "name": "PHP"
+      },
+      {
+        "name": "MySQL"
+      },
+      {
+        "name": "Laravel"
+      },
+      {
+        "name": "Node.js"
+      },
+      {
+        "name": "Clickhouse"
+      },
+      {
+        "name": "SQL"
+      },
+      {
+        "name": "MongoDB"
+      },
+      {
+        "name": "Git"
+      }
+    ],
+    "auto_response": {
+      "accept_auto_response": false
+    },
+    "accept_handicapped": true,
+    "accept_kids": false,
+    "age_restriction": null,
+    "archived": false,
+    "response_url": null,
+    "specializations": [],
+    "professional_roles": [
+      {
+        "id": "96",
+        "name": "Программист, разработчик"
+      }
+    ],
+    "code": null,
+    "hidden": false,
+    "quick_responses_allowed": false,
+    "driver_license_types": [],
+    "accept_incomplete_resumes": false,
+    "employer": {
+      "id": "4759975",
+      "name": "MPSTATS",
+      "url": "https://api.hh.ru/employers/4759975",
+      "alternate_url": "https://hh.ru/employer/4759975",
+      "logo_urls": {
+        "original": "https://img.hhcdn.ru/employer-logo-original/1386280.png",
+        "90": "https://img.hhcdn.ru/employer-logo/7164907.png",
+        "240": "https://img.hhcdn.ru/employer-logo/7164908.png"
+      },
+      "vacancies_url": "https://api.hh.ru/vacancies?employer_id=4759975",
+      "country_id": 1,
+      "accredited_it_employer": true,
+      "trusted": true,
+      "is_identified_by_esia": false
+    },
+    "published_at": "2026-03-05T11:01:25+0300",
+    "created_at": "2026-03-05T11:01:25+0300",
+    "initial_created_at": "2026-03-05T11:01:25+0300",
+    "negotiations_url": null,
+    "suitable_resumes_url": null,
+    "apply_alternate_url": "https://hh.ru/applicant/vacancy_response?vacancyId=130993879",
+    "has_test": false,
+    "test": null,
+    "alternate_url": "https://hh.ru/vacancy/130993879",
+    "working_days": [],
+    "working_time_intervals": [],
+    "working_time_modes": [],
+    "accept_temporary": false,
+    "languages": [],
+    "approved": true,
+    "employment_form": {
+      "id": "FULL",
+      "name": "Полная"
+    },
+    "fly_in_fly_out_duration": [],
+    "accept_labor_contract": true,
+    "civil_law_contracts": [],
+    "internship": false,
+    "night_shifts": false,
+    "work_format": [
+      {
+        "id": "REMOTE",
+        "name": "Удалённо"
+      },
+      {
+        "id": "HYBRID",
+        "name": "Гибрид"
+      }
+    ],
+    "work_schedule_by_days": [
+      {
+        "id": "FIVE_ON_TWO_OFF",
+        "name": "5/2"
+      }
+    ],
+    "working_hours": [
+      {
+        "id": "HOURS_8",
+        "name": "8 часов"
+      }
+    ],
+    "show_logo_in_search": true,
+    "closed_for_applicants": false
+  }

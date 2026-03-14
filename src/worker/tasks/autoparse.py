@@ -117,10 +117,13 @@ def _build_autoparsed_vacancy(
     compat_score: float | None,
     ai_summary: str | None = None,
     ai_stack: list[str] | None = None,
+    employer_id: int | None = None,
+    area_id: int | None = None,
 ):
     """Construct an AutoparsedVacancy ORM instance from a vacancy result dict."""
     from src.models.autoparse import AutoparsedVacancy
 
+    of = vac.get("orm_fields") or {}
     return AutoparsedVacancy(
         autoparse_company_id=company_id,
         hh_vacancy_id=vac["hh_vacancy_id"],
@@ -141,7 +144,33 @@ def _build_autoparsed_vacancy(
         compatibility_score=compat_score,
         ai_summary=ai_summary or None,
         ai_stack=ai_stack or None,
-        raw_api_data=vac.get("raw_api_data"),
+        employer_id=employer_id,
+        area_id=area_id,
+        snippet_requirement=of.get("snippet_requirement"),
+        snippet_responsibility=of.get("snippet_responsibility"),
+        experience_id=of.get("experience_id"),
+        experience_name=of.get("experience_name"),
+        schedule_id=of.get("schedule_id"),
+        schedule_name=of.get("schedule_name"),
+        employment_id=of.get("employment_id"),
+        employment_name=of.get("employment_name"),
+        employment_form_id=of.get("employment_form_id"),
+        employment_form_name=of.get("employment_form_name"),
+        salary_from=of.get("salary_from"),
+        salary_to=of.get("salary_to"),
+        salary_currency=of.get("salary_currency"),
+        salary_gross=of.get("salary_gross"),
+        address_raw=of.get("address_raw"),
+        address_city=of.get("address_city"),
+        address_street=of.get("address_street"),
+        address_building=of.get("address_building"),
+        address_lat=of.get("address_lat"),
+        address_lng=of.get("address_lng"),
+        metro_stations=of.get("metro_stations"),
+        vacancy_type_id=of.get("vacancy_type_id"),
+        published_at=of.get("published_at"),
+        work_format=of.get("work_format"),
+        professional_roles=of.get("professional_roles"),
     )
 
 
@@ -158,17 +187,19 @@ async def _resolve_cached_vacancy(
     AI compatibility scoring can still run even when the vacancy was only
     previously seen via the manual parsing feature.
     """
-    existing = await vacancy_repo.get_by_hh_id(hh_id)
+    existing = await vacancy_repo.get_by_hh_id_with_employer(hh_id)
     if existing is not None:
         return vac, existing
 
-    existing_parsed = await parsed_vacancy_repo.get_by_hh_id(hh_id)
+    existing_parsed = await parsed_vacancy_repo.get_by_hh_id_with_employer(hh_id)
     if existing_parsed is not None:
+        from src.schemas.vacancy import build_vacancy_api_context_from_orm
+
         vac = {
             **vac,
             "description": existing_parsed.description or "",
             "raw_skills": existing_parsed.raw_skills or [],
-            "raw_api_data": existing_parsed.raw_api_data,
+            "vacancy_api_context": build_vacancy_api_context_from_orm(existing_parsed),
         }
     return vac, None
 
@@ -286,13 +317,44 @@ async def _run_autoparse_company_async(
         from src.services.ai.prompts import VacancyCompatInput
 
         def _orm_to_vac_dict(orm) -> dict:
+            from src.schemas.vacancy import build_vacancy_api_context_from_orm
+
+            of = {}
+            if hasattr(orm, "snippet_requirement"):
+                of = {
+                    "snippet_requirement": orm.snippet_requirement,
+                    "snippet_responsibility": orm.snippet_responsibility,
+                    "experience_id": orm.experience_id,
+                    "experience_name": orm.experience_name,
+                    "schedule_id": orm.schedule_id,
+                    "schedule_name": orm.schedule_name,
+                    "employment_id": orm.employment_id,
+                    "employment_name": orm.employment_name,
+                    "employment_form_id": orm.employment_form_id,
+                    "employment_form_name": orm.employment_form_name,
+                    "salary_from": orm.salary_from,
+                    "salary_to": orm.salary_to,
+                    "salary_currency": orm.salary_currency,
+                    "salary_gross": orm.salary_gross,
+                    "address_raw": orm.address_raw,
+                    "address_city": orm.address_city,
+                    "address_street": orm.address_street,
+                    "address_building": orm.address_building,
+                    "address_lat": orm.address_lat,
+                    "address_lng": orm.address_lng,
+                    "metro_stations": orm.metro_stations,
+                    "vacancy_type_id": orm.vacancy_type_id,
+                    "published_at": orm.published_at,
+                    "work_format": orm.work_format,
+                    "professional_roles": orm.professional_roles,
+                }
             return {
                 "hh_vacancy_id": orm.hh_vacancy_id,
                 "url": orm.url,
                 "title": orm.title,
                 "description": orm.description or "",
                 "raw_skills": orm.raw_skills or [],
-                "raw_api_data": orm.raw_api_data,
+                "vacancy_api_context": build_vacancy_api_context_from_orm(orm),
                 "company_name": orm.company_name,
                 "company_url": orm.company_url,
                 "salary": orm.salary,
@@ -303,6 +365,11 @@ async def _run_autoparse_company_async(
                 "working_hours": orm.working_hours,
                 "work_formats": orm.work_formats,
                 "tags": orm.tags,
+                "employer_data": {},
+                "area_data": {},
+                "orm_fields": of,
+                "_employer_id": orm.employer_id if hasattr(orm, "employer_id") else None,
+                "_area_id": orm.area_id if hasattr(orm, "area_id") else None,
             }
 
         to_analyze: list[tuple[dict, VacancyCompatInput]] = []
@@ -327,7 +394,7 @@ async def _run_autoparse_company_async(
                             title=existing.title or "",
                             skills=existing.raw_skills or [],
                             description=existing.description or "",
-                            raw_api_data=existing.raw_api_data,
+                            vacancy_api_context=vac_dict.get("vacancy_api_context"),
                         )
                         to_analyze.append((vac_dict, compat_input))
                         continue
@@ -337,7 +404,7 @@ async def _run_autoparse_company_async(
                     title=vac.get("title", ""),
                     skills=vac.get("raw_skills", []),
                     description=vac.get("description", ""),
-                    raw_api_data=vac.get("raw_api_data"),
+                    vacancy_api_context=vac.get("vacancy_api_context"),
                 )
                 to_analyze.append((vac, compat_input))
 
@@ -356,15 +423,37 @@ async def _run_autoparse_company_async(
                 )
 
             async with session_factory() as session:
+                from src.repositories.hh import HHEmployerRepository, HHAreaRepository
+
+                employer_repo = HHEmployerRepository(session)
+                area_repo = HHAreaRepository(session)
                 for vac_dict, compat_input in zip(vac_dicts, compat_inputs):
                     analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
                     compat_score = analysis.compatibility_score if analysis else None
                     ai_summary = (analysis.summary or None) if analysis else None
                     ai_stack = (analysis.stack or None) if analysis else None
 
+                    employer_id = vac_dict.get("_employer_id")
+                    area_id = vac_dict.get("_area_id")
+                    if employer_id is None or area_id is None:
+                        employer_data = vac_dict.get("employer_data") or {}
+                        area_data = vac_dict.get("area_data") or {}
+                        if employer_id is None and employer_data.get("id"):
+                            employer = await employer_repo.get_or_create_by_hh_id(employer_data)
+                            employer_id = employer.id
+                        if area_id is None and area_data.get("id"):
+                            area = await area_repo.get_or_create_by_hh_id(area_data)
+                            area_id = area.id
+
                     session.add(
                         _build_autoparsed_vacancy(
-                            vac_dict, company_id, compat_score, ai_summary, ai_stack
+                            vac_dict,
+                            company_id,
+                            compat_score,
+                            ai_summary,
+                            ai_stack,
+                            employer_id=employer_id,
+                            area_id=area_id,
                         )
                     )
                 await session.commit()

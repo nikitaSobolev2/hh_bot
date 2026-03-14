@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.repositories.base import BaseRepository
@@ -127,6 +128,15 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
 
     async def get_by_hh_id(self, hh_vacancy_id: str) -> AutoparsedVacancy | None:
         stmt = select(AutoparsedVacancy).where(AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id)
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
+    async def get_by_hh_id_with_employer(self, hh_vacancy_id: str) -> AutoparsedVacancy | None:
+        stmt = (
+            select(AutoparsedVacancy)
+            .options(selectinload(AutoparsedVacancy.employer))
+            .where(AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id)
+        )
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
