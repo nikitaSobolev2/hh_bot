@@ -38,6 +38,7 @@ logger = get_logger(__name__)
 
 _BAR_WIDTH = 20
 _PROGRESS_CANCEL_PREFIX = "prog:cancel:"
+_MAX_TITLE_IN_BUTTON = 40
 _THROTTLE_MS = 500
 _PROGRESS_TTL = 4 * 3600  # seconds
 _MSGLOCK_TTL = 10  # seconds
@@ -347,16 +348,27 @@ class ProgressService:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
-        for task_key, state in tasks.items():
+        for idx, (task_key, state) in enumerate(
+            sorted(tasks.items()), start=1
+        ):
             if state.get("status") == "completed":
                 continue
             if not state.get("celery_task_id"):
                 continue
+            title = state.get("title", "")
+            if len(title) > _MAX_TITLE_IN_BUTTON:
+                title = title[: _MAX_TITLE_IN_BUTTON - 1] + "…"
             encoded_key = task_key.replace(":", "_")
+            btn_text = get_text(
+                "progress-btn-cancel-task",
+                self._locale,
+                n=idx,
+                title=title,
+            )
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        text=get_text("progress-btn-cancel", self._locale),
+                        text=btn_text,
                         callback_data=f"{_PROGRESS_CANCEL_PREFIX}{encoded_key}",
                     )
                 ]
@@ -368,17 +380,21 @@ class ProgressService:
     def _render_progress_text(self, tasks: dict[str, dict]) -> str:
         """Render the full combined progress message for all active tasks."""
         header = f"<b>{get_text('progress-title', self._locale)}</b>"
-        sections = [self._render_task_section(state) for state in tasks.values()]
+        sorted_items = sorted(tasks.items())
+        sections = [
+            self._render_task_section(state, task_number=idx)
+            for idx, (_, state) in enumerate(sorted_items, start=1)
+        ]
         return header + "\n\n" + "\n\n———\n\n".join(sections)
 
-    def _render_task_section(self, state: dict) -> str:
-        """Render a single task block: title, then each progress bar."""
+    def _render_task_section(self, state: dict, task_number: int = 1) -> str:
+        """Render a single task block: number and title, then each progress bar."""
         title = state["title"]
         status = state.get("status", "running")
         is_done = status == "completed"
         is_retrying = status == "retrying"
         done_mark = " ✅" if is_done else ""
-        lines = [f"<b>📋</b> {title}{done_mark}"]
+        lines = [f"<b>📋</b> {task_number}. {title}{done_mark}"]
         if is_retrying:
             lines.append(get_text("progress-retrying", self._locale))
         for bar in state["bars"]:

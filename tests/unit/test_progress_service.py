@@ -266,25 +266,44 @@ class TestBuildCancelKeyboard:
 
     def test_returns_keyboard_with_button_for_running_task_with_celery_id(self):
         svc, _, _ = _make_service(locale="en")
-        state = _task_state(status="running")
+        state = _task_state(status="running", title="Backend Dev")
         state["celery_task_id"] = "celery-123"
         tasks = {"parse:1": state}
         result = svc._build_cancel_keyboard(tasks)
         assert result is not None
         assert len(result.inline_keyboard) == 1
         assert result.inline_keyboard[0][0].callback_data == "prog:cancel:parse_1"
-        assert "Cancel" in result.inline_keyboard[0][0].text
+        btn_text = result.inline_keyboard[0][0].text
+        assert "Cancel" in btn_text
+        assert "1" in btn_text
+        assert "Backend Dev" in btn_text
 
     def test_includes_only_running_tasks_with_celery_id(self):
         svc, _, _ = _make_service()
-        running = _task_state(status="running")
+        running = _task_state(status="running", title="Task A")
         running["celery_task_id"] = "celery-1"
-        completed = _task_state(status="completed")
+        completed = _task_state(status="completed", title="Task B")
         completed["celery_task_id"] = "celery-2"
         tasks = {"parse:1": running, "parse:2": completed}
         result = svc._build_cancel_keyboard(tasks)
         assert result is not None
         assert len(result.inline_keyboard) == 1
+        assert "1" in result.inline_keyboard[0][0].text
+        assert "Task A" in result.inline_keyboard[0][0].text
+
+    def test_truncates_long_title_in_cancel_button(self):
+        from src.services.progress_service import _MAX_TITLE_IN_BUTTON
+
+        svc, _, _ = _make_service(locale="en")
+        long_title = "A" * (_MAX_TITLE_IN_BUTTON + 10)
+        state = _task_state(status="running", title=long_title)
+        state["celery_task_id"] = "celery-1"
+        tasks = {"parse:1": state}
+        result = svc._build_cancel_keyboard(tasks)
+        assert result is not None
+        btn_text = result.inline_keyboard[0][0].text
+        assert "…" in btn_text
+        assert len(btn_text) < len(long_title) + 20
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +538,18 @@ class TestRenderProgressText:
         svc, _, _ = _make_service()
         tasks = {"parse:1": _task_state(title="Python Dev")}
         text = svc._render_progress_text(tasks)
+        assert "Python Dev" in text
+
+    def test_includes_task_number_in_message(self):
+        svc, _, _ = _make_service()
+        tasks = {
+            "parse:1": _task_state(title="Backend Dev"),
+            "parse:2": _task_state(title="Python Dev"),
+        }
+        text = svc._render_progress_text(tasks)
+        assert "1." in text
+        assert "2." in text
+        assert "Backend Dev" in text
         assert "Python Dev" in text
 
     def test_includes_bar_labels(self):

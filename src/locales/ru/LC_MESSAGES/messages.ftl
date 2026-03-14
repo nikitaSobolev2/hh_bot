@@ -784,6 +784,7 @@ progress-bar-scraping = 🌐 Парсинг
 progress-bar-keywords = 🧠 Ключевые слова
 progress-bar-ai = 🧠 AI-совместимость
 progress-btn-cancel = ❌ Отмена
+progress-btn-cancel-task = ❌ Отмена: { $n } - { $title }
 progress-task-cancelled = Задача отменена.
 progress-task-already-finished = Задача уже завершена.
 

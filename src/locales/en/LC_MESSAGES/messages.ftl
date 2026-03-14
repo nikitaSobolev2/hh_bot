@@ -783,6 +783,7 @@ progress-bar-scraping = 🌐 Scraping
 progress-bar-keywords = 🧠 Keywords
 progress-bar-ai = 🧠 AI Analysis
 progress-btn-cancel = ❌ Cancel
+progress-btn-cancel-task = ❌ Cancel: { $n } - { $title }
 progress-task-cancelled = Task cancelled.
 progress-task-already-finished = Task already finished.
 
