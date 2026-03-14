@@ -123,6 +123,25 @@ async def get_company_by_id(session: AsyncSession, company_id: int) -> ParsingCo
     return await repo.get_by_id(company_id)
 
 
+async def get_company_for_user(
+    session: AsyncSession, company_id: int, user_id: int
+) -> ParsingCompany | None:
+    """Return company if it belongs to user and is not soft-deleted."""
+    repo = ParsingCompanyRepository(session)
+    return await repo.get_by_id_for_user(company_id, user_id)
+
+
+async def soft_delete_parsing(session: AsyncSession, company_id: int, user_id: int) -> bool:
+    """Soft-delete a parsing. Returns True if deleted, False if not found or not owned."""
+    repo = ParsingCompanyRepository(session)
+    company = await repo.get_by_id_for_user(company_id, user_id)
+    if not company:
+        return False
+    await repo.soft_delete(company_id)
+    await session.commit()
+    return True
+
+
 def format_company_detail(company: ParsingCompany, i18n: I18nContext) -> str:
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
     processed = str(company.vacancies_processed)

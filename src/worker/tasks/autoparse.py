@@ -352,9 +352,7 @@ async def _run_autoparse_company_async(
             async with session_factory() as session:
                 for vac_dict, compat_input in zip(vac_dicts, compat_inputs):
                     analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
-                    compat_score = (
-                        analysis.compatibility_score if analysis else None
-                    )
+                    compat_score = analysis.compatibility_score if analysis else None
                     ai_summary = (analysis.summary or None) if analysis else None
                     ai_stack = (analysis.stack or None) if analysis else None
 
@@ -375,9 +373,7 @@ async def _run_autoparse_company_async(
                     total=original_total,
                 )
                 if progress:
-                    await progress.update_bar(
-                        task_key, 1, analyzed_count, original_total
-                    )
+                    await progress.update_bar(task_key, 1, analyzed_count, original_total)
 
         async with session_factory() as session:
             company_repo = AutoparseCompanyRepository(session)

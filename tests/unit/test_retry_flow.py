@@ -63,7 +63,7 @@ class TestParsingRetryEntersFSM:
         state = _make_state()
 
         with patch(
-            "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+            "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
             new_callable=AsyncMock,
             return_value=company,
         ):
@@ -91,7 +91,7 @@ class TestParsingRetryEntersFSM:
         state = _make_state()
 
         with patch(
-            "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+            "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -111,18 +111,17 @@ class TestParsingRetryEntersFSM:
     async def test_shows_alert_when_company_belongs_to_another_user(self):
         from src.bot.modules.parsing.handlers import parsing_retry
 
-        company = _make_company(user_id=999)
         callback = _make_callback()
         state = _make_state()
 
         with patch(
-            "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+            "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
             new_callable=AsyncMock,
-            return_value=company,
+            return_value=None,
         ):
             await parsing_retry(
                 callback,
-                MagicMock(company_id=company.id),
+                MagicMock(company_id=1),
                 _make_user(user_id=42),
                 MagicMock(),
                 state,
@@ -143,7 +142,7 @@ class TestParsingRetryUseDefault:
         callback = _make_callback()
 
         with patch(
-            "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+            "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
             new_callable=AsyncMock,
             return_value=company,
         ):
@@ -170,7 +169,7 @@ class TestParsingRetryUseDefault:
 
         with (
             patch(
-                "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
                 new_callable=AsyncMock,
                 return_value=company,
             ),
@@ -277,7 +276,7 @@ class TestRetryCompatFlow:
 
         with (
             patch(
-                "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
                 new_callable=AsyncMock,
                 return_value=company,
             ),
@@ -320,7 +319,7 @@ class TestRetryCompatFlow:
 
         with (
             patch(
-                "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
                 new_callable=AsyncMock,
                 return_value=company,
             ),
@@ -370,7 +369,7 @@ class TestRetryCompatFlow:
 
         with (
             patch(
-                "src.bot.modules.parsing.handlers.parsing_service.get_company_by_id",
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
                 new_callable=AsyncMock,
                 return_value=None,
             ),

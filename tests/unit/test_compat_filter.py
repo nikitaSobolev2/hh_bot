@@ -33,9 +33,7 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 80.0, "2": 30.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
 
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
@@ -53,9 +51,7 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 80.0, "2": 30.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
 
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
@@ -71,9 +67,7 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 80.0, "2": 75.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 75.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python", "Docker"])
 
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
@@ -90,9 +84,7 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 20.0, "2": 10.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 20.0, "2": 10.0})
         ai_client.extract_keywords = AsyncMock(return_value=[])
 
         processed_calls: list[tuple[int, int, object]] = []
@@ -133,9 +125,7 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 80.0, "2": 30.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["SharedKw"])
 
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
@@ -206,7 +196,10 @@ class TestParsingTaskCompatIntegration:
                 new=AsyncMock(return_value=(None, "ru")),
             ),
             patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
-            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock(return_value=(0, 0, 0))),
+            patch(
+                "src.worker.tasks.parsing._save_parsing_results",
+                new=AsyncMock(return_value=(0, 0, 0)),
+            ),
             patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
@@ -306,7 +299,10 @@ class TestParsingTaskCompatIntegration:
                 new=AsyncMock(return_value=(None, "ru")),
             ),
             patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
-            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock(return_value=(0, 0, 0))),
+            patch(
+                "src.worker.tasks.parsing._save_parsing_results",
+                new=AsyncMock(return_value=(0, 0, 0)),
+            ),
             patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),

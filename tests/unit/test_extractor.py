@@ -80,9 +80,7 @@ class TestExtractorBatchCompat:
         )
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 80.0, "2": 60.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 60.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
 
         extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
@@ -113,14 +111,10 @@ class TestExtractorBatchCompat:
                 {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
             ]
         )
-        scraper.parse_vacancy_page = AsyncMock(
-            return_value={"description": "desc", "skills": []}
-        )
+        scraper.parse_vacancy_page = AsyncMock(return_value={"description": "desc", "skills": []})
 
         ai_client = MagicMock()
-        ai_client.calculate_compatibility_batch = AsyncMock(
-            return_value={"1": 70.0, "2": 30.0}
-        )
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 70.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["kw"])
 
         extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)

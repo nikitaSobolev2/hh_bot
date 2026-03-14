@@ -114,6 +114,12 @@ def format_choice_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=_t("parsing-btn-delete", i18n, locale),
+                    callback_data=ParsingCallback(action="delete", company_id=company_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t("btn-back", i18n, locale),
                     callback_data=MenuCallback(action="my_parsings").pack(),
                 )
@@ -238,6 +244,26 @@ def blacklist_choice_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     )
 
 
+def parsing_pending_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    """Keyboard for pending/processing parsing (allows delete)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("parsing-btn-delete"),
+                    callback_data=ParsingCallback(action="delete", company_id=company_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=MenuCallback(action="my_parsings").pack(),
+                )
+            ],
+        ]
+    )
+
+
 def retry_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -245,6 +271,12 @@ def retry_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=i18n.get("btn-try-again"),
                     callback_data=ParsingCallback(action="retry", company_id=company_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("parsing-btn-delete"),
+                    callback_data=ParsingCallback(action="delete", company_id=company_id).pack(),
                 )
             ],
             [

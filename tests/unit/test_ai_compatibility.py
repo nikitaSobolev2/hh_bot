@@ -213,8 +213,7 @@ class TestCalculateCompatibilityBatch:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = (
-            "[Vacancy]:v1\n[Compatibility]:80\n"
-            "[Vacancy]:v2\n[Compatibility]:55\n"
+            "[Vacancy]:v1\n[Compatibility]:80\n[Vacancy]:v2\n[Compatibility]:55\n"
         )
 
         vacancies = [

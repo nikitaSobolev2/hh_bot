@@ -22,6 +22,7 @@ from src.bot.modules.parsing.keyboards import (
     format_choice_keyboard,
     language_selection_keyboard,
     parsing_list_keyboard,
+    parsing_pending_keyboard,
     per_company_count_keyboard,
     retry_compat_keyboard,
     retry_count_keyboard,
@@ -306,7 +307,7 @@ async def parsing_detail(
     elif company.status == "failed":
         kb = retry_keyboard(company.id, i18n)
     else:
-        kb = back_to_menu_keyboard(i18n)
+        kb = parsing_pending_keyboard(company.id, i18n)
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
@@ -320,9 +321,9 @@ async def parsing_retry(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
-    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
+    company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
 
-    if not company or company.user_id != user.id:
+    if not company:
         await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
@@ -362,8 +363,8 @@ async def parsing_retry_use_default(
 ) -> None:
     data = await state.get_data()
 
-    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
@@ -489,10 +490,7 @@ async def _fetch_retry_company(
     company_id = state_data.get("retry_company_id")
     if not company_id:
         return None
-    company = await parsing_service.get_company_by_id(session, company_id)
-    if not company or company.user_id != user.id:
-        return None
-    return company
+    return await parsing_service.get_company_for_user(session, company_id, user.id)
 
 
 async def _launch_retry(
@@ -529,6 +527,22 @@ async def _launch_retry(
     await message.answer(text, reply_markup=back_to_menu_keyboard(i18n))
 
 
+@router.callback_query(ParsingCallback.filter(F.action == "delete"))
+async def parsing_delete(
+    callback: CallbackQuery,
+    callback_data: ParsingCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    deleted = await parsing_service.soft_delete_parsing(session, callback_data.company_id, user.id)
+    if not deleted:
+        await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
+        return
+    await callback.answer(i18n.get("parsing-deleted"))
+    await show_parsing_list(callback, user, i18n, session)
+
+
 @router.callback_query(FormatCallback.filter())
 async def format_selection(
     callback: CallbackQuery,
@@ -537,8 +551,8 @@ async def format_selection(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
@@ -942,7 +956,7 @@ async def fsm_style_manual(
         return
     data = await state.get_data()
     await state.clear()
-    company = await parsing_service.get_company_by_id(session, data["kp_company_id"])
+    company = await parsing_service.get_company_for_user(session, data["kp_company_id"], user.id)
     agg = await parsing_service.get_aggregated_result(session, data["kp_company_id"])
     if not company or not agg or not agg.top_keywords:
         await message.answer(
@@ -970,7 +984,7 @@ async def key_phrases_select_style(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await parsing_service.get_company_by_id(session, callback_data.company_id)
+    company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
     agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
 
     if not company or not agg or not agg.top_keywords:

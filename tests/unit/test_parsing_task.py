@@ -47,6 +47,7 @@ class TestManualParseBlacklist:
         company.status = "pending"
         company.use_compatibility_check = False
         company.compatibility_threshold = None
+        company.is_deleted = False
 
         settings_repo = AsyncMock()
         settings_repo.get_value = AsyncMock(return_value=True)
@@ -88,7 +89,10 @@ class TestManualParseBlacklist:
                 new=AsyncMock(return_value=(None, "ru")),
             ),
             patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
-            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock(return_value=(0, 0, 0))),
+            patch(
+                "src.worker.tasks.parsing._save_parsing_results",
+                new=AsyncMock(return_value=(0, 0, 0)),
+            ),
             patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
@@ -195,6 +199,7 @@ class TestManualParseBlacklist:
         company.status = "processing"
         company.use_compatibility_check = False
         company.compatibility_threshold = None
+        company.is_deleted = False
 
         settings_repo = AsyncMock()
         settings_repo.get_value = AsyncMock(return_value=True)
@@ -249,7 +254,10 @@ class TestManualParseBlacklist:
                 new=AsyncMock(return_value=(None, "ru")),
             ),
             patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
-            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock(return_value=(0, 0, 0))),
+            patch(
+                "src.worker.tasks.parsing._save_parsing_results",
+                new=AsyncMock(return_value=(0, 0, 0)),
+            ),
             patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),

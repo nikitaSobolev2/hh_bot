@@ -127,6 +127,9 @@ async def _run_parsing_company_async(
             company = await company_repo.get_by_id(parsing_company_id)
             if not company:
                 return {"status": "error", "message": "Company not found"}
+            if company.is_deleted:
+                logger.info("Parsing company soft-deleted, skipping", company_id=parsing_company_id)
+                return {"status": "deleted"}
 
             await company_repo.update(company, status="processing")
             await session.commit()
@@ -141,9 +144,7 @@ async def _run_parsing_company_async(
 
             settings_repo = AppSettingRepository(session)
             bl_days = await settings_repo.get_value("blacklist_days", default=30)
-            bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(
-                tzinfo=None
-            )
+            bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
 
         task_key = f"parse:{parsing_company_id}"
         progress = await _start_progress(bot, telegram_chat_id, company, locale)
@@ -200,9 +201,7 @@ async def _run_parsing_company_async(
 
         compat_params = None
         if company.use_compatibility_check and company.compatibility_threshold is not None:
-            tech_stack, work_exp_text = await _fetch_user_tech_profile(
-                session_factory, user_id
-            )
+            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
             compat_params = (
                 tech_stack,
                 work_exp_text,
@@ -405,9 +404,7 @@ async def _save_parsing_results(
         company = await company_repo.get_by_id(parsing_company_id)
 
         # Recompute AggregatedResult from all ParsedVacancy for this company
-        stmt = select(ParsedVacancy).where(
-            ParsedVacancy.parsing_company_id == parsing_company_id
-        )
+        stmt = select(ParsedVacancy).where(ParsedVacancy.parsing_company_id == parsing_company_id)
         rows = (await session.execute(stmt)).scalars().all()
         keywords_counter: Counter[str] = Counter()
         skills_counter: Counter[str] = Counter()
@@ -563,9 +560,19 @@ async def _notify_user(
     bot: "Bot | None" = None,  # noqa: F821
 ) -> None:
     from src.core.i18n import get_text
+    from src.repositories.parsing import ParsingCompanyRepository
     from src.repositories.user import UserRepository
 
     async with session_factory() as session:
+        company_repo = ParsingCompanyRepository(session)
+        company = await company_repo.get_by_id(parsing_company_id)
+        if company and company.is_deleted:
+            logger.info(
+                "Skipping notification for soft-deleted parsing",
+                company_id=parsing_company_id,
+            )
+            return
+
         repo = UserRepository(session)
         user = await repo.get_by_id(user_id)
         if not user:

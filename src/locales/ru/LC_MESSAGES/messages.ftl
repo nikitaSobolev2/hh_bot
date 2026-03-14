@@ -206,6 +206,8 @@ parsing-completed =
     Выберите способ просмотра результатов:
 
 # ── Parsing buttons ──────────────────────────────────────
+parsing-btn-delete = 🗑 Удалить
+parsing-deleted = Парсинг удалён из вашего списка.
 btn-view-message = 💬 Показать сообщением
 btn-download-md = 📄 Скачать .md
 btn-download-txt = 📝 Скачать .txt

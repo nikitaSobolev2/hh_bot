@@ -26,6 +26,7 @@ class ParsingCompany(Base):
     completed_at: Mapped[datetime | None] = mapped_column(default=None)
     use_compatibility_check: Mapped[bool] = mapped_column(Boolean, default=False)
     compatibility_threshold: Mapped[int | None] = mapped_column(Integer, default=None)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped[User] = relationship(back_populates="parsing_companies")
     vacancies: Mapped[list[ParsedVacancy]] = relationship(

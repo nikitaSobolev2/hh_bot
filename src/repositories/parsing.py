@@ -10,6 +10,10 @@ class ParsingCompanyRepository(BaseRepository[ParsingCompany]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, ParsingCompany)
 
+    def _visible_filter(self):
+        """Filter for non-deleted records (user-facing queries)."""
+        return ParsingCompany.is_deleted.is_(False)
+
     async def get_by_user(
         self,
         user_id: int,
@@ -19,7 +23,10 @@ class ParsingCompanyRepository(BaseRepository[ParsingCompany]):
     ) -> list[ParsingCompany]:
         stmt = (
             select(ParsingCompany)
-            .where(ParsingCompany.user_id == user_id)
+            .where(
+                ParsingCompany.user_id == user_id,
+                self._visible_filter(),
+            )
             .order_by(ParsingCompany.created_at.desc())
             .offset(offset)
             .limit(limit)
@@ -32,7 +39,20 @@ class ParsingCompanyRepository(BaseRepository[ParsingCompany]):
             select(ParsingCompany)
             .options(selectinload(ParsingCompany.vacancies))
             .options(selectinload(ParsingCompany.aggregated_result))
-            .where(ParsingCompany.id == company_id)
+            .where(
+                ParsingCompany.id == company_id,
+                self._visible_filter(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_id_for_user(self, company_id: int, user_id: int) -> ParsingCompany | None:
+        """Return company if it exists, belongs to user, and is not soft-deleted."""
+        stmt = select(ParsingCompany).where(
+            ParsingCompany.id == company_id,
+            ParsingCompany.user_id == user_id,
+            self._visible_filter(),
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
@@ -41,7 +61,10 @@ class ParsingCompanyRepository(BaseRepository[ParsingCompany]):
         stmt = (
             select(func.count())
             .select_from(ParsingCompany)
-            .where(ParsingCompany.user_id == user_id)
+            .where(
+                ParsingCompany.user_id == user_id,
+                self._visible_filter(),
+            )
         )
         result = await self._session.execute(stmt)
         return result.scalar_one()
@@ -50,11 +73,19 @@ class ParsingCompanyRepository(BaseRepository[ParsingCompany]):
         """Return all ParsingCompany with status pending or processing, with user loaded."""
         stmt = (
             select(ParsingCompany)
-            .where(ParsingCompany.status.in_(["pending", "processing"]))
+            .where(
+                ParsingCompany.status.in_(["pending", "processing"]),
+                self._visible_filter(),
+            )
             .options(selectinload(ParsingCompany.user))
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().unique().all())
+
+    async def soft_delete(self, company_id: int) -> None:
+        company = await self.get_by_id(company_id)
+        if company:
+            await self.update(company, is_deleted=True)
 
 
 class ParsedVacancyRepository(BaseRepository[ParsedVacancy]):

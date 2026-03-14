@@ -120,12 +120,8 @@ class ParsingExtractor:
 
         async with httpx.AsyncClient() as client:
             for batch_start in range(0, len(vacancies_to_process), _COMPAT_BATCH_SIZE):
-                batch = vacancies_to_process[
-                    batch_start : batch_start + _COMPAT_BATCH_SIZE
-                ]
-                partials = await asyncio.gather(
-                    *[_scrape_one(client, vac) for vac in batch]
-                )
+                batch = vacancies_to_process[batch_start : batch_start + _COMPAT_BATCH_SIZE]
+                partials = await asyncio.gather(*[_scrape_one(client, vac) for vac in batch])
 
                 if compat_params is not None:
                     tech_stack, work_exp, threshold = compat_params
@@ -144,11 +140,7 @@ class ParsingExtractor:
                             user_tech_stack=tech_stack,
                             user_work_experience=work_exp,
                         )
-                    passing = [
-                        p
-                        for p in partials
-                        if scores.get(p.hh_vacancy_id, 0) >= threshold
-                    ]
+                    passing = [p for p in partials if scores.get(p.hh_vacancy_id, 0) >= threshold]
                     for p in partials:
                         if p not in passing:
                             async with kw_lock:
@@ -169,9 +161,7 @@ class ParsingExtractor:
                     ai_keywords: list[str] = []
                     if partial.description:
                         async with ai_sem:
-                            ai_keywords = await self._ai.extract_keywords(
-                                partial.description
-                            )
+                            ai_keywords = await self._ai.extract_keywords(partial.description)
 
                     async with kw_lock:
                         kw_count[0] += 1
@@ -180,6 +170,7 @@ class ParsingExtractor:
                     logger.info(
                         "Vacancy processed",
                         index=current,
+                        score=scores.get(partial.hh_vacancy_id, 0),
                         total=total,
                         title=partial.title[:60],
                         keywords_found=len(ai_keywords),

@@ -396,10 +396,7 @@ class AIClient:
                     expected=len(vacancies),
                     got=len(parsed),
                 )
-            return {
-                v.hh_vacancy_id: parsed.get(v.hh_vacancy_id, 0.0)
-                for v in vacancies
-            }
+            return {v.hh_vacancy_id: parsed.get(v.hh_vacancy_id, 0.0) for v in vacancies}
 
         try:
             return await _call_with_rate_limit_retry(_call)
@@ -455,9 +452,7 @@ class AIClient:
         except Exception as exc:
             logger.error("Batch vacancy analysis failed", error=str(exc))
             return {
-                v.hh_vacancy_id: VacancyAnalysis(
-                    summary="", stack=[], compatibility_score=0.0
-                )
+                v.hh_vacancy_id: VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
                 for v in vacancies
             }
 
