@@ -91,14 +91,43 @@ class TestExtractCardMetadata:
         assert salary == "от 4 000 $ за месяц"
 
 
+def _api_response_detail(
+    description: str = "Python developer needed. Django experience required.",
+    skills: list | None = None,
+    work_experience: str = "3-6 years",
+    work_schedule: str = "5/2",
+    working_hours: str = "8 hours",
+    work_formats: str = "Remote",
+    compensation_frequency: str = "Monthly",
+) -> dict:
+    """HH API vacancy detail response for parse_vacancy_page tests."""
+    skills = skills or ["Python", "Django", "PostgreSQL"]
+    return {
+        "name": "Python Developer",
+        "description": f"<p>{description}</p>",
+        "key_skills": [{"name": s} for s in skills],
+        "employer": {"id": "123", "name": "Acme Corp"},
+        "area": {"id": "1", "name": "Москва"},
+        "experience": {"id": "between3And6", "name": work_experience},
+        "schedule": {"id": "fullDay", "name": "Полный день"},
+        "employment": {"id": "full", "name": "Full-time"},
+        "work_schedule_by_days": [{"id": "FIVE_ON_TWO_OFF", "name": work_schedule}],
+        "working_hours": [{"id": "HOURS_8", "name": working_hours}],
+        "work_format": [{"id": "REMOTE", "name": work_formats}],
+        "salary": {"from": 100000, "to": 200000, "currency": "RUR", "period": compensation_frequency},
+    }
+
+
 class TestParseVacancyPageEnhanced:
     @pytest.mark.asyncio
-    async def test_extracts_detail_fields(self, sample_vacancy_page_html: str):
+    async def test_extracts_detail_fields(self):
+        """parse_vacancy_page uses fetch_vacancy_by_id (API), not HTML parsing."""
         scraper = HHScraper()
         mock_client = AsyncMock()
+        api_response = _api_response_detail()
 
-        with patch.object(scraper, "_fetch_page") as mock_fetch:
-            mock_fetch.return_value = BeautifulSoup(sample_vacancy_page_html, "html.parser")
+        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = api_response
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert isinstance(result, dict)
@@ -116,52 +145,46 @@ class TestParseVacancyPageEnhanced:
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(scraper, "_fetch_page", return_value=None):
+        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None):
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_strips_work_formats_label_prefix(
-        self, vacancy_page_html_with_work_format_prefix: str
-    ):
+    async def test_strips_work_formats_label_prefix(self):
+        """work_formats from API work_format array (no HTML prefix stripping)."""
         scraper = HHScraper()
         mock_client = AsyncMock()
+        api_response = _api_response_detail(work_formats="удалённо")
 
-        with patch.object(scraper, "_fetch_page") as mock_fetch:
-            mock_fetch.return_value = BeautifulSoup(
-                vacancy_page_html_with_work_format_prefix, "html.parser"
-            )
+        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = api_response
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["work_formats"] == "удалённо"
 
     @pytest.mark.asyncio
-    async def test_strips_work_experience_label_prefix(
-        self, vacancy_page_html_with_work_format_prefix: str
-    ):
+    async def test_strips_work_experience_label_prefix(self):
+        """work_experience from API experience.name (no HTML prefix stripping)."""
         scraper = HHScraper()
         mock_client = AsyncMock()
+        api_response = _api_response_detail(work_experience="1–3 года")
 
-        with patch.object(scraper, "_fetch_page") as mock_fetch:
-            mock_fetch.return_value = BeautifulSoup(
-                vacancy_page_html_with_work_format_prefix, "html.parser"
-            )
+        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = api_response
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["work_experience"] == "1–3 года"
 
     @pytest.mark.asyncio
-    async def test_strips_compensation_frequency_label_prefix(
-        self, vacancy_page_html_with_compensation_frequency_prefix: str
-    ):
+    async def test_strips_compensation_frequency_label_prefix(self):
+        """compensation_frequency from API salary.period (no HTML prefix stripping)."""
         scraper = HHScraper()
         mock_client = AsyncMock()
+        api_response = _api_response_detail(compensation_frequency="ежемесячно")
 
-        with patch.object(scraper, "_fetch_page") as mock_fetch:
-            mock_fetch.return_value = BeautifulSoup(
-                vacancy_page_html_with_compensation_frequency_prefix, "html.parser"
-            )
+        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = api_response
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["compensation_frequency"] == "ежемесячно"

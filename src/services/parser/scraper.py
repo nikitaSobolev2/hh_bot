@@ -116,12 +116,22 @@ def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = N
 
     salary = api_response.get("salary") or api_response.get("salary_range")
     salary_str = _format_api_salary(salary) or list_item.get("salary", "")
+    compensation_frequency = ""
+    if isinstance(salary, dict) and salary.get("period"):
+        compensation_frequency = str(salary["period"])
 
     experience = api_response.get("experience")
     work_experience = experience.get("name", "") if isinstance(experience, dict) else ""
 
     schedule = api_response.get("schedule")
-    work_schedule = schedule.get("name", "") if isinstance(schedule, dict) else ""
+    work_schedule_by_days = api_response.get("work_schedule_by_days") or []
+    if work_schedule_by_days and isinstance(work_schedule_by_days, list):
+        first = work_schedule_by_days[0] if work_schedule_by_days else None
+        work_schedule = first.get("name", "") if isinstance(first, dict) else ""
+    else:
+        work_schedule = ""
+    if not work_schedule and isinstance(schedule, dict):
+        work_schedule = schedule.get("name", "")
 
     employment = api_response.get("employment")
     employment_type = employment.get("name", "") if isinstance(employment, dict) else ""
@@ -147,6 +157,7 @@ def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = N
         "work_schedule": work_schedule,
         "work_formats": work_formats_str,
         "working_hours": working_hours_str,
+        "compensation_frequency": compensation_frequency,
         "employer_data": mapped["employer_data"],
         "area_data": mapped["area_data"],
         "orm_fields": mapped["orm_fields"],
