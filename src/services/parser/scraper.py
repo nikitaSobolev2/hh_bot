@@ -160,8 +160,8 @@ class HHScraper:
         *,
         timeout: int = 15,
         retries: int = 3,
-        page_delay: tuple[float, float] = (1.0, 2.0),
-        vacancy_delay: tuple[float, float] = (1.0, 2.5),
+        page_delay: tuple[float, float] = (0.0, 0.0),
+        vacancy_delay: tuple[float, float] = (0.0, 0.0),
         rate_limiter=None,
     ) -> None:
         self._ua = UserAgent()
@@ -496,7 +496,6 @@ class HHScraper:
                     break
 
                 page += 1
-                await asyncio.sleep(random.uniform(*self._page_delay))
 
         return collected[:target_count]
 
@@ -575,7 +574,6 @@ class HHScraper:
                     return collected[:batch_size], page + 1, False
 
                 page += 1
-                await asyncio.sleep(random.uniform(*self._page_delay))
 
         has_more = page < _MAX_PAGES and zero_pages < 3
         return collected[:batch_size], page, has_more

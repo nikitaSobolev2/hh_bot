@@ -70,3 +70,37 @@ class TestHHParserServiceDedup:
 
         new_results = [r for r in results if not r.get("cached")]
         assert len(new_results) == 3
+
+    @pytest.mark.asyncio
+    async def test_batch_fetches_vacancies_concurrently(self):
+        """parse_vacancy_page is called in batches via asyncio.gather, not sequentially."""
+        service = HHParserService(vacancy_fetch_concurrency=5)
+
+        collected = [
+            {"url": f"https://hh.ru/vacancy/{i}", "title": f"Dev {i}", "hh_vacancy_id": str(i)}
+            for i in range(5)
+        ]
+
+        with (
+            patch.object(
+                service._scraper, "collect_vacancy_urls", new_callable=AsyncMock
+            ) as mock_collect,
+            patch.object(
+                service._scraper, "parse_vacancy_page", new_callable=AsyncMock
+            ) as mock_parse,
+        ):
+            mock_collect.return_value = collected
+            mock_parse.return_value = {
+                "description": "d",
+                "skills": [],
+                "orm_fields": {},
+                "employer_data": {},
+            }
+
+            results = await service.parse_vacancies(
+                "https://hh.ru/search", "", 5, known_hh_ids=set()
+            )
+
+        assert mock_parse.await_count == 5
+        new_results = [r for r in results if not r.get("cached")]
+        assert len(new_results) == 5

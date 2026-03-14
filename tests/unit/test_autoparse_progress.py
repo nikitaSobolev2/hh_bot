@@ -215,7 +215,6 @@ class TestOnVacancyScrapedCallback:
                 {"hh_vacancy_id": "2", "url": "https://hh.ru/vacancy/2"},
             ]
         )
-        scraper._vacancy_delay = (0, 0)
         scraper.parse_vacancy_page = AsyncMock(
             return_value={"title": "Dev", "description": "...", "skills": []}
         )
@@ -245,7 +244,6 @@ class TestOnVacancyScrapedCallback:
                 {"hh_vacancy_id": "already_known", "url": "https://hh.ru/vacancy/99"},
             ]
         )
-        scraper._vacancy_delay = (0, 0)
         scraper.parse_vacancy_page = AsyncMock(return_value=None)
 
         calls: list = []
@@ -273,7 +271,6 @@ class TestOnVacancyScrapedCallback:
         scraper.collect_vacancy_urls = AsyncMock(
             return_value=[{"hh_vacancy_id": "1", "url": "https://hh.ru/vacancy/1"}]
         )
-        scraper._vacancy_delay = (0, 0)
         scraper.parse_vacancy_page = AsyncMock(
             return_value={"title": "Dev", "description": "...", "skills": []}
         )
