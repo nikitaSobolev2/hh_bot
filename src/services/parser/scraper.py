@@ -284,6 +284,82 @@ class HHScraper:
 
         return collected[:target_count]
 
+    async def collect_vacancy_urls_batch(
+        self,
+        base_url: str,
+        keyword: str,
+        batch_size: int,
+        *,
+        start_page: int = 0,
+        blacklisted_ids: set[str] | None = None,
+        exclude_ids: set[str] | None = None,
+    ) -> tuple[list[dict[str, str]], int, bool]:
+        """Collect a batch of vacancy URLs for incremental fetching.
+
+        Used when compatibility filter may reject many; caller fetches more batches
+        until target count of passing vacancies is reached.
+
+        Returns:
+            (urls, next_page, has_more) where:
+            - urls: up to batch_size new URLs (excluding blacklisted and exclude_ids)
+            - next_page: page index to use for the next call
+            - has_more: False when no more pages (exhausted, max pages, or 3 empty)
+        """
+        skip_ids = (blacklisted_ids or set()) | (exclude_ids or set())
+        collected: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+        page = start_page
+        zero_pages = 0
+
+        async with httpx.AsyncClient() as client:
+            while len(collected) < batch_size:
+                if page >= _MAX_PAGES:
+                    logger.warning("Reached max page limit", limit=_MAX_PAGES)
+                    return collected[:batch_size], page, False
+
+                url = self._build_page_url(base_url, page)
+                logger.info("Fetching search page", url=url, page=page + 1)
+                soup = await self._fetch_page(client, url)
+                if soup is None:
+                    return collected[:batch_size], page, False
+
+                raw_blocks = soup.select('[data-qa="vacancy-serp__vacancy"]')
+                if not raw_blocks:
+                    logger.info("No vacancy blocks on page", page=page + 1, url=url)
+                    return collected[:batch_size], page, False
+
+                page_results = self._extract_vacancies_from_page(soup, keyword)
+                new_count, _, blacklisted_skipped = self._collect_new_from_page(
+                    page_results,
+                    seen_urls,
+                    skip_ids,
+                    collected,
+                    batch_size,
+                )
+
+                zero_pages = zero_pages + 1 if new_count == 0 else 0
+                logger.info(
+                    "Search page scraped",
+                    page=page + 1,
+                    url=url,
+                    raw_blocks=len(raw_blocks),
+                    keyword_matched=len(page_results),
+                    blacklisted_skipped=blacklisted_skipped,
+                    new=new_count,
+                    total=len(collected),
+                    target=batch_size,
+                )
+
+                if zero_pages >= 3:
+                    logger.warning("3 pages with no new vacancies — stopping")
+                    return collected[:batch_size], page + 1, False
+
+                page += 1
+                await asyncio.sleep(random.uniform(*self._page_delay))
+
+        has_more = page < _MAX_PAGES and zero_pages < 3
+        return collected[:batch_size], page, has_more
+
     _VACANCY_DETAIL_SELECTORS: dict[str, str] = {
         "compensation_frequency": "compensation-frequency-text",
         "work_experience": "work-experience-text",

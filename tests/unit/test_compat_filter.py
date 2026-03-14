@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # ParsingExtractor.run_pipeline with compat_params (batch compat)
 # ---------------------------------------------------------------------------
@@ -15,6 +14,7 @@ def _make_page_data(description: str = "desc", skills: list | None = None) -> di
 
 
 def _make_scraper(page_data: dict | None = None):
+    """Scraper for one-shot flow (no compat)."""
     scraper = MagicMock()
     scraper.collect_vacancy_urls = AsyncMock(
         return_value=[
@@ -24,6 +24,24 @@ def _make_scraper(page_data: dict | None = None):
     )
     scraper.parse_vacancy_page = AsyncMock(return_value=page_data or _make_page_data())
     return scraper
+
+
+def _make_compat_scraper(urls: list[dict], page_data: dict | None = None):
+    """Scraper for compat flow: collect_vacancy_urls_batch returns (urls, next_page, has_more).
+
+    First call returns the urls; second call returns empty so the fetch-more loop stops
+    (avoids duplicate processing in tests).
+    """
+    scraper = MagicMock()
+    scraper.collect_vacancy_urls_batch = AsyncMock(side_effect=[(urls, 1, False), ([], 1, False)])
+    scraper.parse_vacancy_page = AsyncMock(return_value=page_data or _make_page_data())
+    return scraper
+
+
+_COMPAT_URLS = [
+    {"title": "Backend Dev", "url": "https://hh.ru/1", "hh_vacancy_id": "1"},
+    {"title": "Java Dev", "url": "https://hh.ru/2", "hh_vacancy_id": "2"},
+]
 
 
 class TestExtractorCompatFilter:
@@ -36,7 +54,8 @@ class TestExtractorCompatFilter:
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
 
-        extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
+        scraper = _make_compat_scraper(_COMPAT_URLS)
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
         result = await extractor.run_pipeline(
             "https://hh.ru/search", "", 2, compat_params=(["Python"], "exp", 50)
         )
@@ -54,7 +73,8 @@ class TestExtractorCompatFilter:
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
 
-        extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
+        scraper = _make_compat_scraper(_COMPAT_URLS)
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
         await extractor.run_pipeline(
             "https://hh.ru/search", "", 2, compat_params=(["Python"], "exp", 50)
         )
@@ -70,7 +90,8 @@ class TestExtractorCompatFilter:
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 75.0})
         ai_client.extract_keywords = AsyncMock(return_value=["Python", "Docker"])
 
-        extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
+        scraper = _make_compat_scraper(_COMPAT_URLS)
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
         result = await extractor.run_pipeline(
             "https://hh.ru/search", "", 2, compat_params=(["Python"], "exp", 50)
         )
@@ -92,7 +113,8 @@ class TestExtractorCompatFilter:
         async def on_processed(current: int, total: int, vacancy_data: object = None) -> None:
             processed_calls.append((current, total, vacancy_data))
 
-        extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
+        scraper = _make_compat_scraper(_COMPAT_URLS)
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
         await extractor.run_pipeline(
             "https://hh.ru/search",
             "",
@@ -128,12 +150,99 @@ class TestExtractorCompatFilter:
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 30.0})
         ai_client.extract_keywords = AsyncMock(return_value=["SharedKw"])
 
-        extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
+        scraper = _make_compat_scraper(_COMPAT_URLS)
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
         result = await extractor.run_pipeline(
             "https://hh.ru/search", "", 2, compat_params=(["Python"], "exp", 50)
         )
 
         assert dict(result.keywords).get("SharedKw", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Fetch-more loop: extractor fetches replacement batches until target_count
+# ---------------------------------------------------------------------------
+
+
+class TestCompatFetchMoreLoop:
+    """Tests for the compat fetch-more loop (replacement parsing)."""
+
+    @pytest.mark.asyncio
+    async def test_fetches_more_batches_until_target_count_reached(self):
+        """When first batch has few passing, extractor fetches more until target_count."""
+        from src.services.parser.extractor import ParsingExtractor
+
+        batch1 = [
+            {"title": "V1", "url": "https://hh.ru/1", "hh_vacancy_id": "1"},
+            {"title": "V2", "url": "https://hh.ru/2", "hh_vacancy_id": "2"},
+        ]
+        batch2 = [
+            {"title": "V3", "url": "https://hh.ru/3", "hh_vacancy_id": "3"},
+            {"title": "V4", "url": "https://hh.ru/4", "hh_vacancy_id": "4"},
+        ]
+        scraper = MagicMock()
+        scraper.collect_vacancy_urls_batch = AsyncMock(
+            side_effect=[
+                (batch1, 1, True),
+                (batch2, 2, False),
+            ]
+        )
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value={"description": "desc", "skills": ["Python"]}
+        )
+
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(
+            side_effect=[
+                {"1": 80.0, "2": 30.0},
+                {"3": 75.0, "4": 20.0},
+            ]
+        )
+        ai_client.extract_keywords = AsyncMock(return_value=["kw"])
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        result = await extractor.run_pipeline(
+            "https://hh.ru/search",
+            "",
+            target_count=2,
+            compat_params=(["Python"], "exp", 50),
+        )
+
+        assert len(result.vacancies) == 2
+        assert scraper.collect_vacancy_urls_batch.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_returns_what_we_have_when_no_more_vacancies(self):
+        """When no more pages, returns passing count even if below target."""
+        from src.services.parser.extractor import ParsingExtractor
+
+        batch1 = [
+            {"title": "V1", "url": "https://hh.ru/1", "hh_vacancy_id": "1"},
+            {"title": "V2", "url": "https://hh.ru/2", "hh_vacancy_id": "2"},
+        ]
+        scraper = MagicMock()
+        scraper.collect_vacancy_urls_batch = AsyncMock(
+            side_effect=[
+                (batch1, 1, False),
+                ([], 1, False),
+            ]
+        )
+        scraper.parse_vacancy_page = AsyncMock(return_value={"description": "desc", "skills": []})
+
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 70.0, "2": 30.0})
+        ai_client.extract_keywords = AsyncMock(return_value=["kw"])
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        result = await extractor.run_pipeline(
+            "https://hh.ru/search",
+            "",
+            target_count=5,
+            compat_params=(["Python"], "exp", 50),
+        )
+
+        assert len(result.vacancies) == 1
+        assert result.vacancies[0].hh_vacancy_id == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +262,7 @@ class TestParsingTaskCompatIntegration:
         company.keyword_filter = ""
         company.target_count = 5
         company.status = "pending"
+        company.is_deleted = False
         company.use_compatibility_check = True
         company.compatibility_threshold = 70
 
@@ -256,6 +366,7 @@ class TestParsingTaskCompatIntegration:
         company.keyword_filter = ""
         company.target_count = 5
         company.status = "pending"
+        company.is_deleted = False
         company.use_compatibility_check = False
         company.compatibility_threshold = None
 

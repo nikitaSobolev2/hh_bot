@@ -133,6 +133,71 @@ class TestCollectVacancyUrls:
         assert mock_fetch.call_count == 3
 
 
+class TestCollectVacancyUrlsBatch:
+    """Tests for collect_vacancy_urls_batch (incremental fetching for compat flow)."""
+
+    @pytest.mark.asyncio
+    async def test_returns_urls_next_page_and_has_more(self, sample_vacancy_html: str) -> None:
+        """Returns (urls, next_page, has_more) tuple."""
+        scraper = HHScraper()
+        soup = BeautifulSoup(sample_vacancy_html, "html.parser")
+        mock_fetch = AsyncMock(return_value=soup)
+
+        with patch.object(scraper, "_fetch_page", mock_fetch):
+            urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
+                base_url="https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                batch_size=10,
+                start_page=0,
+                blacklisted_ids=None,
+                exclude_ids=None,
+            )
+
+        assert isinstance(urls, list)
+        assert isinstance(next_page, int)
+        assert isinstance(has_more, bool)
+        assert next_page >= 0
+
+    @pytest.mark.asyncio
+    async def test_exclude_ids_skips_those_vacancies(self, sample_vacancy_html: str) -> None:
+        """Vacancies in exclude_ids are not included in the result."""
+        scraper = HHScraper()
+        soup = BeautifulSoup(sample_vacancy_html, "html.parser")
+        mock_fetch = AsyncMock(return_value=soup)
+
+        with patch.object(scraper, "_fetch_page", mock_fetch):
+            urls, _, _ = await scraper.collect_vacancy_urls_batch(
+                base_url="https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                batch_size=10,
+                start_page=0,
+                blacklisted_ids=None,
+                exclude_ids={"12345", "67890"},
+            )
+
+        returned_ids = {u["hh_vacancy_id"] for u in urls}
+        assert "12345" not in returned_ids
+        assert "67890" not in returned_ids
+
+    @pytest.mark.asyncio
+    async def test_has_more_false_when_no_pages(self) -> None:
+        """has_more is False when no vacancy blocks on page."""
+        scraper = HHScraper()
+        soup = BeautifulSoup("<html><body></body></html>", "html.parser")
+        mock_fetch = AsyncMock(return_value=soup)
+
+        with patch.object(scraper, "_fetch_page", mock_fetch):
+            urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
+                base_url="https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                batch_size=10,
+                start_page=0,
+            )
+
+        assert urls == []
+        assert has_more is False
+
+
 class TestBuildPageUrl:
     def test_adds_page_param(self):
         url = HHScraper._build_page_url("https://hh.ru/search/vacancy?text=Python", 3)

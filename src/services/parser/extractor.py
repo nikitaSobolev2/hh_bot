@@ -15,6 +15,7 @@ from src.services.parser.scraper import HHScraper
 logger = get_logger(__name__)
 
 OnProgressCallback = Callable[[int, int, VacancyData | None], Awaitable[None]]
+OnUrlsFetchedCallback = Callable[[list[dict]], Awaitable[None]]
 
 # (tech_stack, work_exp_text, threshold) — when set, use batch compat instead of per-vacancy
 CompatParams = tuple[list[str], str, int]
@@ -22,6 +23,7 @@ CompatParams = tuple[list[str], str, int]
 _DEFAULT_CONCURRENCY = 15
 _AI_CONCURRENCY = 3
 _COMPAT_BATCH_SIZE = 8
+_COMPAT_FETCH_BATCH_SIZE = 50
 
 
 class ParsingExtractor:
@@ -44,6 +46,7 @@ class ParsingExtractor:
         blacklisted_ids: set[str] | None = None,
         on_page_scraped: OnProgressCallback | None = None,
         on_vacancy_processed: OnProgressCallback | None = None,
+        on_urls_fetched: OnUrlsFetchedCallback | None = None,
         compat_params: CompatParams | None = None,
         concurrency: int = _DEFAULT_CONCURRENCY,
         ai_concurrency: int = _AI_CONCURRENCY,
@@ -55,8 +58,49 @@ class ParsingExtractor:
         and skip the first skip_count (already processed). No scraping is done.
 
         When compat_params (tech_stack, work_exp, threshold) is set, uses batch
-        compatibility scoring instead of per-vacancy filtering.
+        compatibility scoring and fetches replacement batches until target_count
+        passing vacancies or no more pages.
         """
+        if compat_params is not None:
+            return await self._run_pipeline_with_compat(
+                search_url=search_url,
+                keyword_filter=keyword_filter,
+                target_count=target_count,
+                blacklisted_ids=blacklisted_ids,
+                on_page_scraped=on_page_scraped,
+                on_vacancy_processed=on_vacancy_processed,
+                on_urls_fetched=on_urls_fetched,
+                compat_params=compat_params,
+                concurrency=concurrency,
+                ai_concurrency=ai_concurrency,
+                resume_from=resume_from,
+            )
+        return await self._run_pipeline_one_shot(
+            search_url=search_url,
+            keyword_filter=keyword_filter,
+            target_count=target_count,
+            blacklisted_ids=blacklisted_ids,
+            on_page_scraped=on_page_scraped,
+            on_vacancy_processed=on_vacancy_processed,
+            concurrency=concurrency,
+            ai_concurrency=ai_concurrency,
+            resume_from=resume_from,
+        )
+
+    async def _run_pipeline_one_shot(
+        self,
+        search_url: str,
+        keyword_filter: str,
+        target_count: int,
+        *,
+        blacklisted_ids: set[str] | None = None,
+        on_page_scraped: OnProgressCallback | None = None,
+        on_vacancy_processed: OnProgressCallback | None = None,
+        concurrency: int = _DEFAULT_CONCURRENCY,
+        ai_concurrency: int = _AI_CONCURRENCY,
+        resume_from: tuple[list[dict], int] | None = None,
+    ) -> PipelineResult:
+        """One-shot pipeline: no compat filter, no fetch-more loop."""
         if resume_from is not None:
             vacancies, skip_count = resume_from
         else:
@@ -72,6 +116,137 @@ class ParsingExtractor:
             logger.warning("No vacancies found")
             return PipelineResult(vacancies=[], keywords=[], skills=[])
 
+        return await self._process_vacancy_batch(
+            vacancies=vacancies,
+            skip_count=skip_count,
+            on_page_scraped=on_page_scraped,
+            on_vacancy_processed=on_vacancy_processed,
+            compat_params=None,
+            concurrency=concurrency,
+            ai_concurrency=ai_concurrency,
+        )
+
+    async def _run_pipeline_with_compat(
+        self,
+        search_url: str,
+        keyword_filter: str,
+        target_count: int,
+        *,
+        blacklisted_ids: set[str] | None = None,
+        on_page_scraped: OnProgressCallback | None = None,
+        on_vacancy_processed: OnProgressCallback | None = None,
+        on_urls_fetched: OnUrlsFetchedCallback | None = None,
+        compat_params: CompatParams,
+        concurrency: int = _DEFAULT_CONCURRENCY,
+        ai_concurrency: int = _AI_CONCURRENCY,
+        resume_from: tuple[list[dict], int] | None = None,
+    ) -> PipelineResult:
+        """Pipeline with compat: fetch replacement batches until target_count or exhausted."""
+        blacklisted = blacklisted_ids or set()
+        vacancies: list[dict] = []
+        skip_count = 0
+        start_page = 0
+
+        if resume_from is not None:
+            vacancies, skip_count = resume_from
+            seen_ids = {v["hh_vacancy_id"] for v in vacancies}
+            start_page = 0
+
+        if not vacancies:
+            batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
+                base_url=search_url,
+                keyword=keyword_filter,
+                batch_size=min(_COMPAT_FETCH_BATCH_SIZE, target_count * 2),
+                start_page=0,
+                blacklisted_ids=blacklisted,
+                exclude_ids=None,
+            )
+            if not batch:
+                logger.warning("No vacancies found")
+                return PipelineResult(vacancies=[], keywords=[], skills=[])
+            vacancies.extend(batch)
+            seen_ids = {v["hh_vacancy_id"] for v in vacancies}
+            start_page = next_page
+            if on_urls_fetched:
+                await on_urls_fetched(batch)
+
+        else:
+            seen_ids = {v["hh_vacancy_id"] for v in vacancies}
+
+        keywords_counter: Counter[str] = Counter()
+        skills_counter: Counter[str] = Counter()
+        processed_vacancies: list[VacancyData] = []
+
+        while True:
+            await self._process_vacancy_batch(
+                vacancies=vacancies,
+                skip_count=skip_count,
+                on_page_scraped=on_page_scraped,
+                on_vacancy_processed=on_vacancy_processed,
+                compat_params=compat_params,
+                concurrency=concurrency,
+                ai_concurrency=ai_concurrency,
+                keywords_counter=keywords_counter,
+                skills_counter=skills_counter,
+                processed_vacancies=processed_vacancies,
+            )
+            skip_count = len(vacancies)
+
+            if len(processed_vacancies) >= target_count:
+                break
+
+            batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
+                base_url=search_url,
+                keyword=keyword_filter,
+                batch_size=_COMPAT_FETCH_BATCH_SIZE,
+                start_page=start_page,
+                blacklisted_ids=blacklisted,
+                exclude_ids=seen_ids,
+            )
+            if not batch:
+                break
+            vacancies.extend(batch)
+            seen_ids.update(v["hh_vacancy_id"] for v in batch)
+            start_page = next_page
+            if on_urls_fetched:
+                await on_urls_fetched(batch)
+
+            if not has_more:
+                await self._process_vacancy_batch(
+                    vacancies=vacancies,
+                    skip_count=skip_count,
+                    on_page_scraped=on_page_scraped,
+                    on_vacancy_processed=on_vacancy_processed,
+                    compat_params=compat_params,
+                    concurrency=concurrency,
+                    ai_concurrency=ai_concurrency,
+                    keywords_counter=keywords_counter,
+                    skills_counter=skills_counter,
+                    processed_vacancies=processed_vacancies,
+                )
+                break
+
+        return PipelineResult(
+            vacancies=processed_vacancies,
+            keywords=keywords_counter.most_common(),
+            skills=skills_counter.most_common(),
+        )
+
+    async def _process_vacancy_batch(
+        self,
+        *,
+        vacancies: list[dict],
+        skip_count: int,
+        on_page_scraped: OnProgressCallback | None,
+        on_vacancy_processed: OnProgressCallback | None,
+        compat_params: CompatParams | None,
+        concurrency: int,
+        ai_concurrency: int,
+        keywords_counter: Counter[str] | None = None,
+        skills_counter: Counter[str] | None = None,
+        processed_vacancies: list[VacancyData] | None = None,
+    ) -> PipelineResult:
+        """Process a batch of vacancies: scrape, compat filter, keyword extract."""
         total = len(vacancies)
         vacancies_to_process = vacancies[skip_count:]
         sem = asyncio.Semaphore(concurrency)
@@ -82,12 +257,15 @@ class ParsingExtractor:
         kw_lock = asyncio.Lock()
         kw_count = [skip_count]
 
+        if keywords_counter is None:
+            keywords_counter = Counter()
+        if skills_counter is None:
+            skills_counter = Counter()
+        if processed_vacancies is None:
+            processed_vacancies = []
+
         if skip_count > 0 and on_page_scraped:
             await on_page_scraped(total, total)
-
-        keywords_counter: Counter[str] = Counter()
-        skills_counter: Counter[str] = Counter()
-        processed_vacancies: list[VacancyData] = []
 
         async def _scrape_one(
             client: httpx.AsyncClient,
@@ -156,6 +334,7 @@ class ParsingExtractor:
                                 await on_vacancy_processed(current, total, None)
                 else:
                     passing = list(partials)
+                    scores = {}
 
                 for partial in passing:
                     ai_keywords: list[str] = []
@@ -167,10 +346,11 @@ class ParsingExtractor:
                         kw_count[0] += 1
                         current = kw_count[0]
 
+                    score = scores.get(partial.hh_vacancy_id, 0) if compat_params else 0
                     logger.info(
                         "Vacancy processed",
                         index=current,
-                        score=scores.get(partial.hh_vacancy_id, 0),
+                        score=score,
                         total=total,
                         title=partial.title[:60],
                         keywords_found=len(ai_keywords),

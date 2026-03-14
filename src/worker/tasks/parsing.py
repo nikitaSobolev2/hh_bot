@@ -151,11 +151,25 @@ async def _run_parsing_company_async(
             bot, telegram_chat_id, company, locale, celery_task_id=task.request.id
         )
 
+        compat_params = None
+        if company.use_compatibility_check and company.compatibility_threshold is not None:
+            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
+            compat_params = (
+                tech_stack,
+                work_exp_text,
+                company.compatibility_threshold,
+            )
+
+        use_compat = compat_params is not None
+        vacancies: list[dict] = []
+        resume_from: tuple[list[dict], int] | None = None
+
         restored = await checkpoint.load_parsing(checkpoint_key, task_id)
         if not restored:
             restored = await checkpoint.load_parsing_for_resume(checkpoint_key)
         if restored:
-            skip_count, _, vacancies = restored[0], restored[1], restored[2]
+            skip_count, _, urls = restored[0], restored[1], restored[2]
+            vacancies = list(urls)
             resume_from = (vacancies, skip_count)
             logger.info(
                 "Resuming parsing from checkpoint",
@@ -163,7 +177,7 @@ async def _run_parsing_company_async(
                 skip_count=skip_count,
                 total=len(vacancies),
             )
-        else:
+        elif not use_compat:
             scraper = HHScraper()
             vacancies = await scraper.collect_vacancy_urls(
                 company.search_url,
@@ -177,8 +191,20 @@ async def _run_parsing_company_async(
             if progress:
                 await progress.update_bar(task_key, 0, current, total)
 
+        async def _on_urls_fetched(new_urls: list[dict]) -> None:
+            # Do NOT extend vacancies here: extractor already did vacancies.extend(batch)
+            # before calling this callback. Extending again would duplicate URLs.
+            if new_urls:
+                await checkpoint.save_parsing(
+                    checkpoint_key,
+                    task_id,
+                    processed=len(vacancies) - len(new_urls),
+                    total=len(vacancies),
+                    urls=vacancies,
+                )
+
         async def _on_vacancy_processed(
-            current: int, total: int, vacancy_data: "VacancyData | None" = None
+            current: int, total: int, vacancy_data: "VacancyData | None" = None  # noqa: F821
         ) -> None:
             await _report_progress(session_factory, parsing_company_id, current, total)
             if progress:
@@ -201,15 +227,6 @@ async def _run_parsing_company_async(
                     bl_until,
                 )
 
-        compat_params = None
-        if company.use_compatibility_check and company.compatibility_threshold is not None:
-            tech_stack, work_exp_text = await _fetch_user_tech_profile(session_factory, user_id)
-            compat_params = (
-                tech_stack,
-                work_exp_text,
-                company.compatibility_threshold,
-            )
-
         extractor = ParsingExtractor()
         result = await extractor.run_pipeline(
             search_url=company.search_url,
@@ -218,6 +235,7 @@ async def _run_parsing_company_async(
             blacklisted_ids=blacklisted_ids,
             on_page_scraped=_on_page_scraped,
             on_vacancy_processed=_on_vacancy_processed,
+            on_urls_fetched=_on_urls_fetched if use_compat else None,
             compat_params=compat_params,
             resume_from=resume_from,
         )
