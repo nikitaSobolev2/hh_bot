@@ -997,6 +997,7 @@ prep-test-results = Score
 
 # == Task UX ==
 task-soft-timeout = ⏱ The task exceeded the time limit. Please try again.
+parsing-staleness-error = ⏱ No progress was made in the last { $minutes } minutes. The task was stopped. Please try again.
 task-progress-started = ⏳ { $title }...
 btn-edit-field = ✏️ Edit { $field }
 btn-review = 👁 Review

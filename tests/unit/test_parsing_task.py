@@ -50,7 +50,18 @@ class TestManualParseBlacklist:
         company.is_deleted = False
 
         settings_repo = AsyncMock()
-        settings_repo.get_value = AsyncMock(return_value=True)
+
+        async def get_value(key, default=True):
+            vals = {
+                "task_parsing_enabled": True,
+                "cb_parsing_failure_threshold": 5,
+                "cb_parsing_recovery_timeout": 60,
+                "blacklist_days": 30,
+                "parsing_staleness_window_seconds": 180,
+            }
+            return vals.get(key, default)
+
+        settings_repo.get_value = get_value
 
         bl_repo = AsyncMock()
         bl_repo.get_active_ids = AsyncMock(return_value=user_blacklist_ids)
@@ -121,6 +132,10 @@ class TestManualParseBlacklist:
             patch(
                 "src.services.task_checkpoint.create_checkpoint_redis",
                 return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.staleness_progress.create_staleness_redis",
+                return_value=MagicMock(set=AsyncMock(), get=AsyncMock(return_value=None)),
             ),
             patch(
                 "src.services.parser.scraper.HHScraper",
@@ -202,7 +217,18 @@ class TestManualParseBlacklist:
         company.is_deleted = False
 
         settings_repo = AsyncMock()
-        settings_repo.get_value = AsyncMock(return_value=True)
+
+        async def get_value_resume(key, default=True):
+            vals = {
+                "task_parsing_enabled": True,
+                "cb_parsing_failure_threshold": 5,
+                "cb_parsing_recovery_timeout": 60,
+                "blacklist_days": 30,
+                "parsing_staleness_window_seconds": 180,
+            }
+            return vals.get(key, default)
+
+        settings_repo.get_value = get_value_resume
 
         bl_repo = AsyncMock()
         bl_repo.get_active_ids = AsyncMock(return_value=set())
@@ -282,6 +308,10 @@ class TestManualParseBlacklist:
             patch(
                 "src.services.task_checkpoint.create_checkpoint_redis",
                 return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.staleness_progress.create_staleness_redis",
+                return_value=MagicMock(set=AsyncMock(), get=AsyncMock(return_value=None)),
             ),
         ):
             fake_task = MagicMock()
@@ -363,6 +393,9 @@ class TestStartProgressFactory:
         company = MagicMock()
         company.id = 7
         company.vacancy_title = "Backend Dev"
+        company.target_count = 10
+        company.use_compatibility_check = False
+        company.compatibility_threshold = None
 
         task_json = '{"title":"Backend Dev","status":"running","bars":[]}'
 
@@ -393,3 +426,154 @@ class TestStartProgressFactory:
             result = await _start_progress(bot, 100, company, "ru")
 
         assert isinstance(result, ProgressService)
+
+
+# ---------------------------------------------------------------------------
+# Staleness check
+# ---------------------------------------------------------------------------
+
+
+class TestParsingStalenessCheck:
+    """Staleness checker: kill task when no progress in N window."""
+
+    @pytest.mark.asyncio
+    async def test_raises_parsing_staleness_exceeded_when_no_progress_in_window(self):
+        """When is_stale returns True, task raises ParsingStalenessError."""
+        import time
+        from unittest.mock import patch
+
+        from src.worker.tasks.parsing import ParsingStalenessError, _run_parsing_company_async
+
+        company = MagicMock()
+        company.id = 1
+        company.vacancy_title = "Backend"
+        company.search_url = "https://hh.ru/search/vacancy?text=backend"
+        company.keyword_filter = "backend"
+        company.target_count = 10
+        company.status = "pending"
+        company.use_compatibility_check = False
+        company.compatibility_threshold = None
+        company.is_deleted = False
+
+        settings_repo = AsyncMock()
+
+        async def get_value(key, default=True):
+            vals = {
+                "task_parsing_enabled": True,
+                "cb_parsing_failure_threshold": 5,
+                "cb_parsing_recovery_timeout": 60,
+                "blacklist_days": 30,
+                "parsing_staleness_window_seconds": 5,
+            }
+            return vals.get(key, default)
+
+        settings_repo.get_value = get_value
+
+        bl_repo = AsyncMock()
+        bl_repo.get_active_ids = AsyncMock(return_value=set())
+
+        company_repo = AsyncMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+
+        task_repo = AsyncMock()
+        task_repo.get_by_idempotency_key = AsyncMock(return_value=None)
+
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        session.commit = AsyncMock()
+
+        session_factory = MagicMock(return_value=session)
+
+        mock_checkpoint = AsyncMock()
+        mock_checkpoint.load_parsing = AsyncMock(return_value=None)
+        mock_checkpoint.load_parsing_for_resume = AsyncMock(return_value=None)
+        mock_checkpoint.save_parsing = AsyncMock()
+        mock_checkpoint.clear = AsyncMock()
+
+        mock_scraper = AsyncMock()
+        mock_scraper.collect_vacancy_urls = AsyncMock(
+            return_value=[{"url": "https://hh.ru/vacancy/1", "title": "Test", "hh_vacancy_id": "1"}]
+        )
+
+        async def slow_run_pipeline(self, *args, **kwargs):
+            """Pipeline that sleeps so checker wins (checker runs every 0.1s in test)."""
+            import asyncio
+
+            await asyncio.sleep(5)
+            from src.schemas.vacancy import PipelineResult
+
+            return PipelineResult(vacancies=[], keywords=[], skills=[])
+
+        mock_staleness_redis = MagicMock()
+        mock_staleness_redis.set = AsyncMock()
+        mock_staleness_redis.get = AsyncMock(
+            return_value=str(time.time() - 10)
+        )
+
+        with (
+            patch(
+                "src.worker.tasks.parsing._init_bot_and_locale",
+                new=AsyncMock(return_value=(None, "ru")),
+            ),
+            patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
+            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock()),
+            patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
+            patch("src.worker.tasks.parsing._mark_parsing_failed", new=AsyncMock()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_failure"),
+            patch(
+                "src.repositories.app_settings.AppSettingRepository",
+                return_value=settings_repo,
+            ),
+            patch("src.repositories.blacklist.BlacklistRepository", return_value=bl_repo),
+            patch(
+                "src.repositories.parsing.ParsingCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch("src.repositories.task.CeleryTaskRepository", return_value=task_repo),
+            patch(
+                "src.services.parser.extractor.ParsingExtractor.run_pipeline",
+                new=slow_run_pipeline,
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=mock_checkpoint,
+            ),
+            patch(
+                "src.services.task_checkpoint.create_checkpoint_redis",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.staleness_progress.create_staleness_redis",
+                return_value=mock_staleness_redis,
+            ),
+            patch(
+                "src.services.parser.scraper.HHScraper",
+                return_value=mock_scraper,
+            ),
+            patch(
+                "src.worker.tasks.parsing._STALENESS_CHECK_INTERVAL",
+                0.1,
+            ),
+        ):
+            fake_task = MagicMock()
+            fake_task.request.id = "test-id"
+
+            with pytest.raises(ParsingStalenessError):
+                await _run_parsing_company_async(
+                    session_factory,
+                    fake_task,
+                    parsing_company_id=1,
+                    user_id=42,
+                    include_blacklisted=False,
+                    telegram_chat_id=0,
+                )
+
+    @pytest.mark.asyncio
+    async def test_staleness_does_not_open_circuit_breaker(self):
+        """ParsingStalenessError is not transient; circuit breaker records failure."""
+        from src.worker.tasks.parsing import ParsingStalenessError, _is_transient_failure
+
+        assert _is_transient_failure(ParsingStalenessError("test")) is False

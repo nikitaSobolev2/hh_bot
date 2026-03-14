@@ -1,8 +1,9 @@
 """Celery task for the full parsing pipeline."""
 
+import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 
-from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -13,11 +14,16 @@ from src.worker.utils import run_async
 
 logger = get_logger(__name__)
 
+_STALENESS_CHECK_INTERVAL = 30
+
+
+class ParsingStalenessError(Exception):
+    """Raised when no parsing progress has occurred within the staleness window."""
+
+
 
 def _is_transient_failure(exc: Exception) -> bool:
     """Return True if the failure is transient and should not open the circuit breaker."""
-    if isinstance(exc, SoftTimeLimitExceeded):
-        return True
     if getattr(exc, "status_code", None) == 429:
         return True
     from openai import APIStatusError, RateLimitError
@@ -35,8 +41,8 @@ def _is_transient_failure(exc: Exception) -> bool:
     name="parsing.run_company",
     max_retries=2,
     default_retry_delay=30,
-    soft_time_limit=600,
-    time_limit=660,
+    soft_time_limit=7200,
+    time_limit=7260,
 )
 def run_parsing_company(
     self,
@@ -56,18 +62,18 @@ def run_parsing_company(
                 telegram_chat_id,
             )
         )
-    except SoftTimeLimitExceeded as exc:
+    except ParsingStalenessError as err:
         logger.warning(
-            "Parsing task soft time limit exceeded, will retry from checkpoint",
+            "Parsing task stalled: no progress in staleness window",
             company_id=parsing_company_id,
             user_id=user_id,
         )
         run_async(
-            lambda sf: _handle_parsing_soft_timeout(
-                sf, parsing_company_id, user_id, telegram_chat_id
+            lambda sf, _err=err: _handle_parsing_staleness(
+                sf, parsing_company_id, user_id, telegram_chat_id, _err
             )
         )
-        raise self.retry(exc=exc)
+        raise
 
 
 async def _run_parsing_company_async(
@@ -84,6 +90,13 @@ async def _run_parsing_company_async(
     from src.repositories.task import CeleryTaskRepository
     from src.services.parser.extractor import ParsingExtractor
     from src.services.parser.scraper import HHScraper
+    from src.services.staleness_progress import (
+        create_staleness_redis,
+        is_stale,
+    )
+    from src.services.staleness_progress import (
+        record_progress as record_staleness_progress,
+    )
     from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
     from src.worker.circuit_breaker import CircuitBreaker
 
@@ -102,6 +115,9 @@ async def _run_parsing_company_async(
 
         cb_threshold = await settings_repo.get_value("cb_parsing_failure_threshold", default=5)
         cb_timeout = await settings_repo.get_value("cb_parsing_recovery_timeout", default=60)
+        staleness_window = int(
+            await settings_repo.get_value("parsing_staleness_window_seconds", default=180)
+        )
         cb.update_config(failure_threshold=int(cb_threshold), recovery_timeout=int(cb_timeout))
 
     if not cb.is_call_allowed():
@@ -147,6 +163,9 @@ async def _run_parsing_company_async(
             bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
 
         task_key = f"parse:{parsing_company_id}"
+        staleness_redis = create_staleness_redis()
+        await record_staleness_progress(staleness_redis, task_key)
+
         progress = await _start_progress(
             bot, telegram_chat_id, company, locale, celery_task_id=task.request.id
         )
@@ -188,6 +207,7 @@ async def _run_parsing_company_async(
             resume_from = (vacancies, 0) if vacancies else None
 
         async def _on_page_scraped(current: int, total: int) -> None:
+            await record_staleness_progress(staleness_redis, task_key)
             if progress:
                 display_total = company.target_count if use_compat else total
                 await progress.update_bar(task_key, 0, current, display_total)
@@ -207,6 +227,7 @@ async def _run_parsing_company_async(
         async def _on_vacancy_processed(
             current: int, total: int, vacancy_data: "VacancyData | None" = None  # noqa: F821
         ) -> None:
+            await record_staleness_progress(staleness_redis, task_key)
             await _report_progress(session_factory, parsing_company_id, current, total)
             if progress:
                 display_total = company.target_count if use_compat else total
@@ -229,8 +250,14 @@ async def _run_parsing_company_async(
                     bl_until,
                 )
 
+        async def _staleness_checker() -> None:
+            while True:
+                await asyncio.sleep(_STALENESS_CHECK_INTERVAL)
+                if await is_stale(staleness_redis, task_key, float(staleness_window)):
+                    return
+
         extractor = ParsingExtractor()
-        result = await extractor.run_pipeline(
+        pipeline_coro = extractor.run_pipeline(
             search_url=company.search_url,
             keyword_filter=company.keyword_filter,
             target_count=company.target_count,
@@ -241,6 +268,24 @@ async def _run_parsing_company_async(
             compat_params=compat_params,
             resume_from=resume_from,
         )
+        pipeline_task = asyncio.create_task(pipeline_coro)
+        checker_task = asyncio.create_task(_staleness_checker())
+
+        done, pending = await asyncio.wait(
+            [pipeline_task, checker_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if checker_task in done:
+            pipeline_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pipeline_task
+            raise ParsingStalenessError(
+                f"No progress in the last {staleness_window} seconds"
+            )
+        checker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await checker_task
+        result = pipeline_task.result()
 
         vacancies_count, keywords_count, skills_count = await _save_parsing_results(
             session_factory,
@@ -429,8 +474,9 @@ async def _save_parsing_results(
     result: "PipelineResult",  # noqa: F821
     idempotency_key: str,
 ) -> tuple[int, int, int]:
-    """Save final parsing results. ParsedVacancy and VacancyBlacklist are already saved incrementally.
+    """Save final parsing results.
 
+    ParsedVacancy and VacancyBlacklist are already saved incrementally.
     Returns (vacancies_count, keywords_count, skills_count) for the task response.
     """
     from collections import Counter
@@ -504,31 +550,41 @@ async def _save_parsing_results(
         return vacancies_count, len(top_keywords), len(top_skills)
 
 
-async def _handle_parsing_soft_timeout(
+async def _handle_parsing_staleness(
     session_factory: async_sessionmaker[AsyncSession],
     parsing_company_id: int,
     user_id: int,
     telegram_chat_id: int,
+    err: ParsingStalenessError,
 ) -> None:
-    """Mark progress as retrying when soft time limit exceeded. Task will retry from checkpoint.
+    """Notify user when parsing stalled (no progress in staleness window)."""
+    if not telegram_chat_id:
+        return
+    import re
 
-    Does NOT mark company as failed — checkpoint is already saved by on_vacancy_processed.
-    """
-    if telegram_chat_id:
-        from src.repositories.user import UserRepository
-        from src.services.progress_service import ProgressService, create_progress_redis
-        from src.services.telegram.bot_factory import create_task_bot
+    from src.core.i18n import get_text
+    from src.repositories.user import UserRepository
+    from src.services.telegram.bot_factory import create_task_bot
 
-        async with session_factory() as session:
-            user = await UserRepository(session).get_by_id(user_id)
-            locale = (user.language_code or "ru") if user else "ru"
+    async with session_factory() as session:
+        user = await UserRepository(session).get_by_id(user_id)
+        locale = (user.language_code or "ru") if user else "ru"
 
-        bot = create_task_bot()
-        try:
-            progress = ProgressService(bot, telegram_chat_id, create_progress_redis(), locale)
-            await progress.mark_retrying(f"parse:{parsing_company_id}")
-        finally:
-            await bot.session.close()
+    minutes = 3
+    match = re.search(r"last (\d+) seconds", str(err))
+    if match:
+        minutes = max(1, int(match.group(1)) // 60)
+
+    bot = create_task_bot()
+    try:
+        text = get_text("parsing-staleness-error", locale, minutes=minutes)
+        await bot.send_message(
+            chat_id=telegram_chat_id,
+            text=text,
+            parse_mode="HTML",
+        )
+    finally:
+        await bot.session.close()
 
 
 async def _mark_parsing_failed(

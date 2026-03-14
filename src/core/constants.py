@@ -135,6 +135,7 @@ class AppSettingKey(StrEnum):
 
     AUTOPARSE_INTERVAL_HOURS = "autoparse_interval_hours"
     BLACKLIST_DAYS = "blacklist_days"
+    PARSING_STALENESS_WINDOW_SECONDS = "parsing_staleness_window_seconds"
 
     CB_PARSING_FAILURE_THRESHOLD = "cb_parsing_failure_threshold"
     CB_PARSING_RECOVERY_TIMEOUT = "cb_parsing_recovery_timeout"

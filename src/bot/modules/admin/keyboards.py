@@ -18,6 +18,7 @@ MANAGED_SETTINGS = [
     # ("task_parsing_timeout_seconds", "Parsing Task Timeout (s)", "text"),
     ("task_keyphrase_enabled", "Key Phrases Task Enabled", "toggle"),
     # ("task_keyphrase_timeout_seconds", "Key Phrases Task Timeout (s)", "text"),
+    ("parsing_staleness_window_seconds", "Parsing Staleness Window (s)", "text"),
     ("cb_parsing_failure_threshold", "CB Parsing Failure Threshold", "text"),
     ("cb_parsing_recovery_timeout", "CB Parsing Recovery Timeout (s)", "text"),
     ("cb_keyphrase_failure_threshold", "CB Key Phrases Failure Threshold", "text"),
