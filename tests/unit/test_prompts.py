@@ -4,6 +4,8 @@ from src.services.ai.prompts import (
     VacancyCompatInput,
     WorkExperienceEntry,
     build_batch_compatibility_user_content,
+    build_batch_keyword_extraction_system_prompt,
+    build_batch_keyword_extraction_user_content,
     build_key_phrases_prompt,
     build_per_company_key_phrases_prompt,
 )
@@ -216,3 +218,42 @@ class TestBuildBatchCompatibilityUserContent:
         pos_a = content.index("[Вакансия a]")
         pos_b = content.index("[Вакансия b]")
         assert pos_a < pos_b
+
+
+class TestBuildBatchKeywordExtractionPrompt:
+    def test_batch_keyword_system_prompt_contains_format_markers(self):
+        prompt = build_batch_keyword_extraction_system_prompt()
+        assert "[Vacancy]:" in prompt
+        assert "[Keywords]:" in prompt
+        assert "[VacancyEnd]:" in prompt
+
+    def test_batch_keyword_system_prompt_contains_good_example(self):
+        prompt = build_batch_keyword_extraction_system_prompt()
+        assert "12345" in prompt
+        assert "Python, FastAPI, PostgreSQL" in prompt or "FastAPI" in prompt
+
+    def test_batch_keyword_system_prompt_contains_bad_examples(self):
+        prompt = build_batch_keyword_extraction_system_prompt()
+        assert "знание Python" in prompt or "не каноничная" in prompt
+        assert "коммуникабельность" in prompt or "soft" in prompt.lower()
+
+    def test_batch_keyword_user_content_includes_all_vacancies(self):
+        vacancies = [
+            VacancyCompatInput("a1", "Python Dev", ["Python"], "desc1"),
+            VacancyCompatInput("b2", "Java Dev", ["Java"], "desc2"),
+        ]
+        content = build_batch_keyword_extraction_user_content(vacancies)
+        assert "a1" in content
+        assert "b2" in content
+        assert "Python Dev" in content
+        assert "Java Dev" in content
+
+    def test_batch_keyword_user_content_truncates_description(self):
+        long_desc = "x" * 5000
+        vacancies = [
+            VacancyCompatInput("v1", "Dev", [], long_desc),
+        ]
+        content = build_batch_keyword_extraction_user_content(vacancies)
+        assert len(content) < len(long_desc) + 500
+        assert "x" * 3000 in content
+        assert "x" * 3001 not in content

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -11,13 +11,13 @@ def _safe_str(val: Any, default: str = "") -> str:
 
 
 def _parse_published_at(val: str | None) -> datetime | None:
-    """Parse ISO datetime from HH API. Returns naive UTC for DB storage (TIMESTAMP WITHOUT TIME ZONE)."""
+    """Parse ISO datetime from HH API. Returns naive UTC for DB (TIMESTAMP WITHOUT TIME ZONE)."""
     if not val:
         return None
     try:
         dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
         if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            dt = dt.astimezone(UTC).replace(tzinfo=None)
         return dt
     except (ValueError, TypeError):
         return None
@@ -92,8 +92,12 @@ def map_api_vacancy_to_orm_fields(api_response: dict) -> dict[str, Any]:
         "schedule_name": schedule.get("name") if isinstance(schedule, dict) else None,
         "employment_id": employment.get("id") if isinstance(employment, dict) else None,
         "employment_name": employment.get("name") if isinstance(employment, dict) else None,
-        "employment_form_id": employment_form.get("id") if isinstance(employment_form, dict) else None,
-        "employment_form_name": employment_form.get("name") if isinstance(employment_form, dict) else None,
+        "employment_form_id": (
+            employment_form.get("id") if isinstance(employment_form, dict) else None
+        ),
+        "employment_form_name": (
+            employment_form.get("name") if isinstance(employment_form, dict) else None
+        ),
         "salary_from": int(salary_from) if salary_from is not None else None,
         "salary_to": int(salary_to) if salary_to is not None else None,
         "salary_currency": str(salary_currency) if salary_currency is not None else None,
@@ -102,8 +106,16 @@ def map_api_vacancy_to_orm_fields(api_response: dict) -> dict[str, Any]:
         "address_city": address.get("city") if isinstance(address, dict) else None,
         "address_street": address.get("street") if isinstance(address, dict) else None,
         "address_building": address.get("building") if isinstance(address, dict) else None,
-        "address_lat": float(address["lat"]) if isinstance(address, dict) and address.get("lat") is not None else None,
-        "address_lng": float(address["lng"]) if isinstance(address, dict) and address.get("lng") is not None else None,
+        "address_lat": (
+            float(address["lat"])
+            if isinstance(address, dict) and address.get("lat") is not None
+            else None
+        ),
+        "address_lng": (
+            float(address["lng"])
+            if isinstance(address, dict) and address.get("lng") is not None
+            else None
+        ),
         "metro_stations": address.get("metro_stations") if isinstance(address, dict) else None,
         "vacancy_type_id": vacancy_type.get("id") if isinstance(vacancy_type, dict) else None,
         "published_at": _parse_published_at(api_response.get("published_at")),

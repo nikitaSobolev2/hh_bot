@@ -108,6 +108,9 @@ class TestExtractorBatchCompat:
 
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 60.0})
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={"1": ["Python"], "2": ["Django"]}
+        )
         ai_client.extract_keywords = AsyncMock(return_value=["Python"])
 
         extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
@@ -148,3 +151,79 @@ class TestExtractorBatchCompat:
 
         assert len(result.vacancies) == 1
         assert result.vacancies[0].hh_vacancy_id == "1"
+
+
+class TestExtractorBatchKeywords:
+    """Tests for batch keyword extraction in the extractor."""
+
+    @pytest.mark.asyncio
+    async def test_uses_batch_keywords_when_multiple_passing(self):
+        """When 2+ vacancies pass compat, extract_keywords_batch is called for the chunk."""
+        from src.services.parser.extractor import ParsingExtractor
+
+        urls = [
+            {"url": "https://hh.ru/1", "title": "V1", "hh_vacancy_id": "1"},
+            {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
+        ]
+        scraper = _make_compat_scraper(urls)
+
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(
+            return_value={"1": 80.0, "2": 60.0}
+        )
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={"1": ["Python", "Django"], "2": ["Java", "Spring"]}
+        )
+        ai_client.extract_keywords = AsyncMock(return_value=["fallback"])
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        await extractor.run_pipeline(
+            "https://hh.ru/search",
+            "",
+            2,
+            compat_params=(["Python"], "3 years", 50),
+        )
+
+        ai_client.extract_keywords_batch.assert_called_once()
+        call_args = ai_client.extract_keywords_batch.call_args
+        vacancies = call_args.args[0]
+        assert len(vacancies) == 2
+        assert vacancies[0].hh_vacancy_id == "1"
+        assert vacancies[1].hh_vacancy_id == "2"
+        ai_client.extract_keywords.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_single_on_parse_failure(self):
+        """When batch returns incomplete, extract_keywords is called for fallback."""
+        from src.services.parser.extractor import ParsingExtractor
+
+        urls = [
+            {"url": "https://hh.ru/1", "title": "V1", "hh_vacancy_id": "1"},
+            {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
+        ]
+        scraper = _make_compat_scraper(urls)
+
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(
+            return_value={"1": 80.0, "2": 60.0}
+        )
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={"1": ["Python"]}
+        )
+        ai_client.extract_keywords = AsyncMock(
+            side_effect=[["Python", "Django"], ["Java", "Spring"]]
+        )
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        result = await extractor.run_pipeline(
+            "https://hh.ru/search",
+            "",
+            2,
+            compat_params=(["Python"], "3 years", 50),
+        )
+
+        ai_client.extract_keywords_batch.assert_called_once()
+        assert ai_client.extract_keywords.call_count == 2
+        assert len(result.vacancies) == 2
+        assert result.vacancies[0].ai_keywords == ["Python", "Django"]
+        assert result.vacancies[1].ai_keywords == ["Java", "Spring"]

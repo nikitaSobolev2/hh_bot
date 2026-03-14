@@ -20,6 +20,8 @@ from src.services.ai.prompts import (
     VacancyCompatInput,
     build_batch_compatibility_system_prompt,
     build_batch_compatibility_user_content,
+    build_batch_keyword_extraction_system_prompt,
+    build_batch_keyword_extraction_user_content,
     build_batch_vacancy_analysis_system_prompt,
     build_batch_vacancy_analysis_user_content,
     build_compatibility_system_prompt,
@@ -138,6 +140,10 @@ _BATCH_VACANCY_START_PATTERN = re.compile(
     r"\[VacancyStart\]:(\w+)",
     re.IGNORECASE,
 )
+_BATCH_KEYWORDS_PATTERN = re.compile(
+    r"\[Vacancy\]:(\w+)\s*\n\s*\[Keywords\]:(.*?)(?=\[Vacancy\]:|\[VacancyEnd\]:|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -183,6 +189,21 @@ def _parse_batch_compat_response(raw: str) -> dict[str, float]:
     return result
 
 
+def _parse_batch_keywords_response(raw: str) -> dict[str, list[str]]:
+    """Parse batch keyword response into {hh_vacancy_id: [keyword, ...]}.
+
+    Expects blocks: [Vacancy]:hh_id\n[Keywords]:kw1, kw2\n[VacancyEnd]:hh_id
+    Malformed or missing blocks get [] for that hh_id.
+    """
+    result: dict[str, list[str]] = {}
+    for m in _BATCH_KEYWORDS_PATTERN.finditer(raw):
+        hh_id = m.group(1)
+        keywords_str = m.group(2).strip()
+        keywords = [kw.strip() for kw in keywords_str.split(",") if kw.strip()]
+        result[hh_id] = keywords
+    return result
+
+
 def _parse_batch_vacancy_analysis(raw: str) -> dict[str, VacancyAnalysis]:
     """Parse batch vacancy analysis response into {hh_vacancy_id: VacancyAnalysis}.
 
@@ -190,7 +211,7 @@ def _parse_batch_vacancy_analysis(raw: str) -> dict[str, VacancyAnalysis]:
     """
     result: dict[str, VacancyAnalysis] = {}
     parts = _BATCH_VACANCY_START_PATTERN.split(raw)
-    # parts[0] is text before first match; odd indices are hh_ids, even (after first) are block content
+    # parts[0] = text before first match; odd indices = hh_ids, even = block content
     i = 1
     while i + 1 < len(parts):
         hh_id = parts[i]
@@ -282,6 +303,51 @@ class AIClient:
         except Exception as exc:
             logger.error("OpenAI keyword extraction failed", error=str(exc))
             return []
+
+    async def extract_keywords_batch(
+        self, vacancies: list[VacancyCompatInput]
+    ) -> dict[str, list[str]]:
+        """Extract keywords for multiple vacancies in one API call.
+
+        Returns {hh_vacancy_id: [keyword, ...]}. On exception or empty input,
+        returns empty lists for all vacancies.
+        """
+        if not vacancies:
+            return {}
+
+        messages = [
+            {"role": "system", "content": build_batch_keyword_extraction_system_prompt()},
+            {
+                "role": "user",
+                "content": build_batch_keyword_extraction_user_content(vacancies),
+            },
+        ]
+        max_tokens = max(500 * len(vacancies), 500)
+
+        async def _call() -> dict[str, list[str]]:
+            await self._acquire_rate_limit()
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                timeout=120,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            raw = response.choices[0].message.content or ""
+            parsed = _parse_batch_keywords_response(raw)
+            if len(parsed) != len(vacancies):
+                logger.warning(
+                    "Batch keyword parse incomplete",
+                    expected=len(vacancies),
+                    parsed=len(parsed),
+                )
+            return parsed
+
+        try:
+            return await _call_with_rate_limit_retry(_call)
+        except Exception as exc:
+            logger.error("OpenAI batch keyword extraction failed", error=str(exc))
+            return {v.hh_vacancy_id: [] for v in vacancies}
 
     async def analyze_vacancy(
         self,

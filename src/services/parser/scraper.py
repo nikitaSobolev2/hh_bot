@@ -5,7 +5,6 @@ with httpx async client, configurable delays, and blacklist support.
 """
 
 import asyncio
-import random
 import re
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -596,7 +595,8 @@ class HHScraper:
     ) -> dict:
         """Parse a single vacancy page via HH API. Returns page_data shape with structured fields.
 
-        For HH.ru URLs, fetches from API and maps to page_data (employer_data, area_data, orm_fields).
+        For HH.ru URLs, fetches from API and maps to page_data
+        (employer_data, area_data, orm_fields).
         Returns empty dict on failure.
         """
         vacancy_id = self._extract_vacancy_id(url)

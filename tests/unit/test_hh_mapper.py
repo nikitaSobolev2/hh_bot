@@ -1,6 +1,5 @@
 """Unit tests for HH API vacancy mapper."""
 
-import pytest
 
 from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 

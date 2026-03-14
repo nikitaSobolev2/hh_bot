@@ -5,6 +5,7 @@ import pytest
 from src.services.ai.client import (
     AIClient,
     _parse_batch_compat_response,
+    _parse_batch_keywords_response,
 )
 from src.services.ai.prompts import (
     VacancyCompatInput,
@@ -206,6 +207,30 @@ class TestParseBatchCompatResponse:
         assert result == {}
 
 
+class TestParseBatchKeywordsResponse:
+    def test_parse_batch_keywords_valid_response(self):
+        raw = "[Vacancy]:a\n[Keywords]:Python, Django\n[VacancyEnd]:a"
+        result = _parse_batch_keywords_response(raw)
+        assert result == {"a": ["Python", "Django"]}
+
+    def test_parse_batch_keywords_multiple_vacancies(self):
+        raw = (
+            "[Vacancy]:v1\n[Keywords]:Python, FastAPI\n[VacancyEnd]:v1\n"
+            "[Vacancy]:v2\n[Keywords]:Java, Spring\n[VacancyEnd]:v2\n"
+        )
+        result = _parse_batch_keywords_response(raw)
+        assert result == {"v1": ["Python", "FastAPI"], "v2": ["Java", "Spring"]}
+
+    def test_parse_batch_keywords_returns_empty_for_malformed(self):
+        result = _parse_batch_keywords_response("garbage input without markers")
+        assert result == {}
+
+    def test_parse_batch_keywords_handles_empty_keywords(self):
+        raw = "[Vacancy]:x\n[Keywords]:\n[VacancyEnd]:x"
+        result = _parse_batch_keywords_response(raw)
+        assert result == {"x": []}
+
+
 class TestCalculateCompatibilityBatch:
     @pytest.mark.asyncio
     async def test_returns_scores_for_batch(self):
@@ -258,3 +283,53 @@ class TestCalculateCompatibilityBatch:
             )
 
         assert scores == {"v1": 0.0}
+
+
+class TestExtractKeywordsBatch:
+    @pytest.mark.asyncio
+    async def test_extract_keywords_batch_returns_keywords_for_batch(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            "[Vacancy]:v1\n[Keywords]:Python, Django\n[VacancyEnd]:v1\n"
+            "[Vacancy]:v2\n[Keywords]:Java, Spring\n[VacancyEnd]:v2\n"
+        )
+
+        vacancies = [
+            VacancyCompatInput("v1", "Python Dev", ["Python"], "desc1"),
+            VacancyCompatInput("v2", "Java Dev", ["Java"], "desc2"),
+        ]
+
+        with patch.object(
+            client._client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = mock_response
+            result = await client.extract_keywords_batch(vacancies)
+
+        assert result == {"v1": ["Python", "Django"], "v2": ["Java", "Spring"]}
+        mock_create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_extract_keywords_batch_fallback_on_error(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        vacancies = [
+            VacancyCompatInput("v1", "Dev", [], "desc1"),
+            VacancyCompatInput("v2", "Dev", [], "desc2"),
+        ]
+
+        with patch.object(
+            client._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=Exception("API error"),
+        ):
+            result = await client.extract_keywords_batch(vacancies)
+
+        assert result == {"v1": [], "v2": []}
+
+    @pytest.mark.asyncio
+    async def test_extract_keywords_batch_empty_input_returns_empty_dict(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        result = await client.extract_keywords_batch([])
+        assert result == {}

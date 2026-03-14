@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.hh import HHEmployer, HHArea
+from src.models.hh import HHArea, HHEmployer
 from src.repositories.base import BaseRepository
 
 

@@ -4,6 +4,7 @@ from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.models.balance import BalanceTransaction
 from src.models.ban import UserBan
 from src.models.blacklist import VacancyBlacklist
+from src.models.hh import HHArea, HHEmployer
 from src.models.interview import (
     Interview,
     InterviewImprovement,
@@ -12,7 +13,6 @@ from src.models.interview import (
     InterviewQuestion,
 )
 from src.models.interview_qa import StandardQuestion
-from src.models.hh import HHArea, HHEmployer
 from src.models.parsing import AggregatedResult, ParsedVacancy, ParsingCompany
 from src.models.recommendation_letter import RecommendationLetter
 from src.models.referral import ReferralEvent

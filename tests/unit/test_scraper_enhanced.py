@@ -114,7 +114,12 @@ def _api_response_detail(
         "work_schedule_by_days": [{"id": "FIVE_ON_TWO_OFF", "name": work_schedule}],
         "working_hours": [{"id": "HOURS_8", "name": working_hours}],
         "work_format": [{"id": "REMOTE", "name": work_formats}],
-        "salary": {"from": 100000, "to": 200000, "currency": "RUR", "period": compensation_frequency},
+        "salary": {
+            "from": 100000,
+            "to": 200000,
+            "currency": "RUR",
+            "period": compensation_frequency,
+        },
     }
 
 
@@ -145,7 +150,9 @@ class TestParseVacancyPageEnhanced:
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None):
+        with patch.object(
+            scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None
+        ):
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result == {}

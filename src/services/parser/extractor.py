@@ -24,6 +24,7 @@ _DEFAULT_CONCURRENCY = 15
 _AI_CONCURRENCY = 3
 _COMPAT_BATCH_SIZE = 8
 _COMPAT_FETCH_BATCH_SIZE = 50
+_KEYWORD_BATCH_SIZE = 5
 
 
 class ParsingExtractor:
@@ -358,58 +359,103 @@ class ParsingExtractor:
                     passing = list(partials)
                     scores = {}
 
-                for partial in passing:
-                    ai_keywords: list[str] = []
-                    if partial.description or partial.vacancy_api_context:
-                        async with ai_sem:
-                            ai_keywords = await self._ai.extract_keywords(
-                                partial.description,
-                                vacancy_api_context=partial.vacancy_api_context,
+                for chunk_start in range(0, len(passing), _KEYWORD_BATCH_SIZE):
+                    chunk = passing[chunk_start : chunk_start + _KEYWORD_BATCH_SIZE]
+                    kw_map: dict[str, list[str]] = {}
+
+                    if len(chunk) == 1:
+                        p = chunk[0]
+                        if p.description or p.vacancy_api_context:
+                            async with ai_sem:
+                                kw_map[p.hh_vacancy_id] = await self._ai.extract_keywords(
+                                    p.description,
+                                    vacancy_api_context=p.vacancy_api_context,
+                                )
+                    else:
+                        inputs = [
+                            VacancyCompatInput(
+                                hh_vacancy_id=p.hh_vacancy_id,
+                                title=p.title,
+                                skills=p.raw_skills,
+                                description=p.description,
+                                vacancy_api_context=p.vacancy_api_context,
                             )
+                            for p in chunk
+                        ]
+                        async with ai_sem:
+                            kw_map = await self._ai.extract_keywords_batch(inputs)
 
-                    async with kw_lock:
-                        kw_count[0] += 1
-                        current = kw_count[0]
+                        need_full_fallback = len(kw_map) < len(chunk)
+                        if need_full_fallback:
+                            for p in chunk:
+                                if p.description or p.vacancy_api_context:
+                                    async with ai_sem:
+                                        kw_map[p.hh_vacancy_id] = (
+                                            await self._ai.extract_keywords(
+                                                p.description,
+                                                vacancy_api_context=p.vacancy_api_context,
+                                            )
+                                        )
+                        else:
+                            for p in chunk:
+                                has_content = bool(p.description or p.vacancy_api_context)
+                                if has_content and kw_map.get(p.hh_vacancy_id, []) == []:
+                                    async with ai_sem:
+                                        kw_map[p.hh_vacancy_id] = (
+                                            await self._ai.extract_keywords(
+                                                p.description,
+                                                vacancy_api_context=p.vacancy_api_context,
+                                            )
+                                        )
 
-                    score = scores.get(partial.hh_vacancy_id, 0) if compat_params else 0
-                    logger.info(
-                        "Vacancy processed",
-                        index=current,
-                        score=score,
-                        total=total,
-                        title=partial.title[:60],
-                        keywords_found=len(ai_keywords),
-                        skills_found=len(partial.raw_skills),
-                    )
+                    for partial in chunk:
+                        ai_keywords = kw_map.get(partial.hh_vacancy_id, [])
 
-                    vacancy_data = VacancyData(
-                        hh_vacancy_id=partial.hh_vacancy_id,
-                        url=partial.url,
-                        title=partial.title,
-                        raw_skills=partial.raw_skills,
-                        description=partial.description,
-                        ai_keywords=ai_keywords,
-                        salary=partial.salary,
-                        company_name=partial.company_name,
-                        work_experience=partial.work_experience,
-                        employment_type=partial.employment_type,
-                        work_schedule=partial.work_schedule,
-                        work_formats=partial.work_formats,
-                        compensation_frequency=partial.compensation_frequency,
-                        working_hours=partial.working_hours,
-                        vacancy_api_context=partial.vacancy_api_context,
-                        employer_data=partial.employer_data,
-                        area_data=partial.area_data,
-                        orm_fields=partial.orm_fields,
-                    )
-                    processed_vacancies.append(vacancy_data)
-                    for skill in partial.raw_skills:
-                        skills_counter[skill.strip()] += 1
-                    for kw in ai_keywords:
-                        keywords_counter[kw.strip()] += 1
+                        async with kw_lock:
+                            kw_count[0] += 1
+                            current = kw_count[0]
 
-                    if on_vacancy_processed:
-                        await on_vacancy_processed(current, total, vacancy_data)
+                        score = (
+                            scores.get(partial.hh_vacancy_id, 0) if compat_params else 0
+                        )
+                        logger.info(
+                            "Vacancy processed",
+                            index=current,
+                            score=score,
+                            total=total,
+                            title=partial.title[:60],
+                            keywords_found=len(ai_keywords),
+                            skills_found=len(partial.raw_skills),
+                        )
+
+                        vacancy_data = VacancyData(
+                            hh_vacancy_id=partial.hh_vacancy_id,
+                            url=partial.url,
+                            title=partial.title,
+                            raw_skills=partial.raw_skills,
+                            description=partial.description,
+                            ai_keywords=ai_keywords,
+                            salary=partial.salary,
+                            company_name=partial.company_name,
+                            work_experience=partial.work_experience,
+                            employment_type=partial.employment_type,
+                            work_schedule=partial.work_schedule,
+                            work_formats=partial.work_formats,
+                            compensation_frequency=partial.compensation_frequency,
+                            working_hours=partial.working_hours,
+                            vacancy_api_context=partial.vacancy_api_context,
+                            employer_data=partial.employer_data,
+                            area_data=partial.area_data,
+                            orm_fields=partial.orm_fields,
+                        )
+                        processed_vacancies.append(vacancy_data)
+                        for skill in partial.raw_skills:
+                            skills_counter[skill.strip()] += 1
+                        for kw in ai_keywords:
+                            keywords_counter[kw.strip()] += 1
+
+                        if on_vacancy_processed:
+                            await on_vacancy_processed(current, total, vacancy_data)
 
         return PipelineResult(
             vacancies=processed_vacancies,

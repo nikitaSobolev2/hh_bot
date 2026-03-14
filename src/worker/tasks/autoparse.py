@@ -207,7 +207,6 @@ async def _resolve_cached_vacancy(
 async def _run_autoparse_company_async(
     session_factory, task, company_id: int, notify_user_id: int | None = None
 ) -> dict:
-    from src.models.autoparse import AutoparsedVacancy
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
     from src.repositories.parsing import ParsedVacancyRepository
@@ -423,11 +422,11 @@ async def _run_autoparse_company_async(
                 )
 
             async with session_factory() as session:
-                from src.repositories.hh import HHEmployerRepository, HHAreaRepository
+                from src.repositories.hh import HHAreaRepository, HHEmployerRepository
 
                 employer_repo = HHEmployerRepository(session)
                 area_repo = HHAreaRepository(session)
-                for vac_dict, compat_input in zip(vac_dicts, compat_inputs):
+                for vac_dict, compat_input in zip(vac_dicts, compat_inputs, strict=True):
                     analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
                     compat_score = analysis.compatibility_score if analysis else None
                     ai_summary = (analysis.summary or None) if analysis else None

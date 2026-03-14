@@ -107,6 +107,9 @@ class TestExtractorCompatFilter:
 
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 75.0})
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={"1": ["Python", "Docker"], "2": ["Java", "Spring"]}
+        )
         ai_client.extract_keywords = AsyncMock(return_value=["Python", "Docker"])
 
         scraper = _make_compat_scraper(_COMPAT_URLS)
@@ -152,13 +155,16 @@ class TestExtractorCompatFilter:
         from src.services.parser.extractor import ParsingExtractor
 
         ai_client = MagicMock()
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={"1": ["Go"], "2": ["Go"]}
+        )
         ai_client.extract_keywords = AsyncMock(return_value=["Go"])
 
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
         result = await extractor.run_pipeline("https://hh.ru/search", "", 2)
 
         assert len(result.vacancies) == 2
-        assert ai_client.extract_keywords.await_count == 2
+        ai_client.extract_keywords_batch.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_keywords_only_aggregated_from_passing_vacancies(self):
@@ -284,6 +290,9 @@ class TestCompatFetchMoreLoop:
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(
             return_value={str(i): 80.0 for i in range(100)}
+        )
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={str(i): ["kw"] for i in range(100)}
         )
         ai_client.extract_keywords = AsyncMock(return_value=["kw"])
 

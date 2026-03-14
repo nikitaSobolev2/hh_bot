@@ -414,7 +414,7 @@ async def _save_single_vacancy(
     """Persist a single processed vacancy and its blacklist entry. Used for incremental save."""
     from src.models.blacklist import VacancyBlacklist
     from src.models.parsing import ParsedVacancy
-    from src.repositories.hh import HHEmployerRepository, HHAreaRepository
+    from src.repositories.hh import HHAreaRepository, HHEmployerRepository
 
     async with session_factory() as session:
         employer_id = None
