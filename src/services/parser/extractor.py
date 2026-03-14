@@ -153,10 +153,11 @@ class ParsingExtractor:
             start_page = 0
 
         if not vacancies:
+            first_batch_size = max(_COMPAT_FETCH_BATCH_SIZE, target_count)
             batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
                 base_url=search_url,
                 keyword=keyword_filter,
-                batch_size=min(_COMPAT_FETCH_BATCH_SIZE, target_count * 2),
+                batch_size=first_batch_size,
                 start_page=0,
                 blacklisted_ids=blacklisted,
                 exclude_ids=None,

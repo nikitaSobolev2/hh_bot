@@ -197,6 +197,28 @@ class TestStartTask:
         state = json.loads(first_set_call.args[1])
         assert state["celery_task_id"] == "abc-123-def"
 
+    @pytest.mark.asyncio
+    async def test_initial_totals_sets_bar_totals_from_start(self):
+        svc, bot, redis = _make_service(chat_id=111)
+        redis.get = AsyncMock(return_value=None)
+        redis.set = AsyncMock(return_value=True)
+        redis.keys = AsyncMock(return_value=["progress:task:111:parse:1"])
+        redis.mget = AsyncMock(return_value=[json.dumps(_task_state())])
+
+        await svc.start_task(
+            "parse:1",
+            "Backend Dev",
+            ["🌐 Scraping", "🧠 Keywords"],
+            initial_totals=[200, 200],
+        )
+
+        first_set_call = redis.set.call_args_list[0]
+        state = json.loads(first_set_call.args[1])
+        assert state["bars"][0]["total"] == 200
+        assert state["bars"][1]["total"] == 200
+        assert state["bars"][0]["current"] == 0
+        assert state["bars"][1]["current"] == 0
+
 
 # ---------------------------------------------------------------------------
 # cancel_task
@@ -521,6 +543,28 @@ class TestFinishTask:
         # Must not raise even when task key is absent.
         await svc.finish_task("parse:missing")
 
+    @pytest.mark.asyncio
+    async def test_shortage_note_stored_in_task_state(self):
+        initial = _task_state(bars=[{"label": "🧠 Keywords", "current": 111, "total": 200}])
+        redis = _make_redis(
+            pin="42",
+            task=json.dumps(initial),
+            task_keys=["progress:task:111:parse:1"],
+            task_values=[json.dumps(initial)],
+        )
+        svc, bot, _ = _make_service(chat_id=111, redis=redis)
+
+        await svc.finish_task(
+            "parse:1",
+            shortage_note="Only 111 of 200 vacancies found.",
+        )
+
+        set_calls = redis.set.call_args_list
+        task_set_call = next(c for c in set_calls if "progress:task" in str(c.args[0]))
+        saved = json.loads(task_set_call.args[1])
+        assert saved["status"] == "completed"
+        assert saved["note"] == "Only 111 of 200 vacancies found."
+
 
 # ---------------------------------------------------------------------------
 # _render_progress_text
@@ -606,6 +650,18 @@ class TestRenderProgressText:
         }
         text = svc._render_progress_text(tasks)
         assert "Something went wrong, retrying" in text
+
+    def test_completed_task_with_note_includes_shortage_message(self):
+        svc, _, _ = _make_service()
+        state = _task_state(
+            title="Python Dev",
+            status="completed",
+            bars=[{"label": "🧠 Keywords", "current": 111, "total": 200}],
+        )
+        state["note"] = "Только 111 из 200 вакансий найдено."
+        tasks = {"parse:1": state}
+        text = svc._render_progress_text(tasks)
+        assert "Только 111 из 200 вакансий найдено." in text
 
 
 # ---------------------------------------------------------------------------

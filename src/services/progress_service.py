@@ -89,12 +89,17 @@ class ProgressService:
         title: str,
         bar_labels: list[str],
         celery_task_id: str | None = None,
+        initial_totals: list[int] | None = None,
     ) -> None:
         """Register a new task and show or update the pinned progress message."""
+        bars = []
+        for i, label in enumerate(bar_labels):
+            total = initial_totals[i] if initial_totals and i < len(initial_totals) else 0
+            bars.append({"label": label, "current": 0, "total": total})
         state = {
             "title": title,
             "status": "running",
-            "bars": [{"label": label, "current": 0, "total": 0} for label in bar_labels],
+            "bars": bars,
         }
         if celery_task_id is not None:
             state["celery_task_id"] = celery_task_id
@@ -152,7 +157,11 @@ class ProgressService:
         else:
             await self._refresh_message(force=True)
 
-    async def finish_task(self, task_key: str) -> None:
+    async def finish_task(
+        self,
+        task_key: str,
+        shortage_note: str | None = None,
+    ) -> None:
         """Mark task complete; send summary and clean up when all tasks are done."""
         raw = await self._redis.get(self._task_key(task_key))
         if raw:
@@ -161,6 +170,8 @@ class ProgressService:
             for bar in state["bars"]:
                 if bar["total"] > 0:
                     bar["current"] = bar["total"]
+            if shortage_note:
+                state["note"] = shortage_note
             await self._redis.set(
                 self._task_key(task_key),
                 json.dumps(state),
@@ -397,6 +408,8 @@ class ProgressService:
         lines = [f"<b>📋</b> {task_number}. {title}{done_mark}"]
         if is_retrying:
             lines.append(get_text("progress-retrying", self._locale))
+        if is_done and state.get("note"):
+            lines.append(state["note"])
         for bar in state["bars"]:
             total = bar["total"]
             if total <= 0:

@@ -787,6 +787,8 @@ progress-btn-cancel = ❌ Отмена
 progress-btn-cancel-task = ❌ Отмена: { $n } - { $title }
 progress-task-cancelled = Задача отменена.
 progress-task-already-finished = Задача уже завершена.
+progress-parsing-shortage = Только { $count } из { $target } { $entity } найдено.
+progress-entity-vacancies = вакансий
 
 # ── Work Experience (shared module) ──────────────────────────
 work-exp-title = 💼 Опыт работы

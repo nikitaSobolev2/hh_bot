@@ -786,6 +786,8 @@ progress-btn-cancel = ❌ Cancel
 progress-btn-cancel-task = ❌ Cancel: { $n } - { $title }
 progress-task-cancelled = Task cancelled.
 progress-task-already-finished = Task already finished.
+progress-parsing-shortage = Only { $count } of { $target } { $entity } found.
+progress-entity-vacancies = vacancies
 
 # ── Work Experience (shared module) ──────────────────────────
 work-exp-title = 💼 Work Experience

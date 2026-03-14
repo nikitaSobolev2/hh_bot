@@ -244,6 +244,39 @@ class TestCompatFetchMoreLoop:
         assert len(result.vacancies) == 1
         assert result.vacancies[0].hh_vacancy_id == "1"
 
+    @pytest.mark.asyncio
+    async def test_first_batch_requests_target_count_when_target_exceeds_50(self):
+        """First batch size should be target_count when target_count > 50."""
+        from src.services.parser.extractor import ParsingExtractor
+
+        batch = [
+            {"title": f"V{i}", "url": f"https://hh.ru/{i}", "hh_vacancy_id": str(i)}
+            for i in range(100)
+        ]
+        scraper = MagicMock()
+        scraper.collect_vacancy_urls_batch = AsyncMock(
+            return_value=(batch, 5, False)
+        )
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value={"description": "desc", "skills": ["Python"]}
+        )
+        ai_client = MagicMock()
+        ai_client.calculate_compatibility_batch = AsyncMock(
+            return_value={str(i): 80.0 for i in range(100)}
+        )
+        ai_client.extract_keywords = AsyncMock(return_value=["kw"])
+
+        extractor = ParsingExtractor(scraper=scraper, ai_client=ai_client)
+        await extractor.run_pipeline(
+            "https://hh.ru/search",
+            "",
+            target_count=200,
+            compat_params=(["Python"], "exp", 50),
+        )
+
+        first_call = scraper.collect_vacancy_urls_batch.call_args_list[0]
+        assert first_call.kwargs["batch_size"] == 200
+
 
 # ---------------------------------------------------------------------------
 # _run_parsing_company_async: compat_params forwarded to run_pipeline

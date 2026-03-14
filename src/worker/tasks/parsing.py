@@ -189,7 +189,8 @@ async def _run_parsing_company_async(
 
         async def _on_page_scraped(current: int, total: int) -> None:
             if progress:
-                await progress.update_bar(task_key, 0, current, total)
+                display_total = company.target_count if use_compat else total
+                await progress.update_bar(task_key, 0, current, display_total)
 
         async def _on_urls_fetched(new_urls: list[dict]) -> None:
             # Do NOT extend vacancies here: extractor already did vacancies.extend(batch)
@@ -208,7 +209,8 @@ async def _run_parsing_company_async(
         ) -> None:
             await _report_progress(session_factory, parsing_company_id, current, total)
             if progress:
-                await progress.update_bar(task_key, 1, current, total)
+                display_total = company.target_count if use_compat else total
+                await progress.update_bar(task_key, 1, current, display_total)
             if vacancies and current > 0:
                 await checkpoint.save_parsing(
                     checkpoint_key,
@@ -252,7 +254,18 @@ async def _run_parsing_company_async(
         await checkpoint.clear(checkpoint_key)
 
         if progress:
-            await progress.finish_task(task_key)
+            shortage_note = None
+            if use_compat and vacancies_count < company.target_count:
+                from src.core.i18n import get_text
+
+                shortage_note = get_text(
+                    "progress-parsing-shortage",
+                    locale,
+                    count=vacancies_count,
+                    target=company.target_count,
+                    entity=get_text("progress-entity-vacancies", locale),
+                )
+            await progress.finish_task(task_key, shortage_note=shortage_note)
 
         try:
             await _notify_user(
@@ -319,6 +332,12 @@ async def _start_progress(
     from src.core.i18n import get_text
     from src.services.progress_service import ProgressService, create_progress_redis
 
+    use_compat_display = (
+        company.use_compatibility_check and company.compatibility_threshold is not None
+    )
+    initial_totals = (
+        [company.target_count, company.target_count] if use_compat_display else None
+    )
     svc = ProgressService(bot, chat_id, create_progress_redis(), locale)
     await svc.start_task(
         task_key=f"parse:{company.id}",
@@ -328,6 +347,7 @@ async def _start_progress(
             get_text("progress-bar-keywords", locale),
         ],
         celery_task_id=celery_task_id,
+        initial_totals=initial_totals,
     )
     return svc
 
