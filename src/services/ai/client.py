@@ -376,7 +376,7 @@ class AIClient:
                 ),
             },
         ]
-        max_tokens = max(50 * len(vacancies), 100)
+        max_tokens = max(100 * len(vacancies), 100)
 
         async def _call() -> dict[str, float]:
             await self._acquire_rate_limit()
@@ -387,6 +387,7 @@ class AIClient:
                 max_tokens=max_tokens,
                 temperature=0.1,
             )
+            logger.info(f"Batch compatibility response: {response.choices[0].message.content}")
             raw = (response.choices[0].message.content or "").strip()
             parsed = _parse_batch_compat_response(raw)
             if len(parsed) != len(vacancies):
