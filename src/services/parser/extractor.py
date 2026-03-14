@@ -14,7 +14,7 @@ from src.services.parser.scraper import HHScraper
 
 logger = get_logger(__name__)
 
-OnProgressCallback = Callable[[int, int], Awaitable[None]]
+OnProgressCallback = Callable[[int, int, VacancyData | None], Awaitable[None]]
 
 # (tech_stack, work_exp_text, threshold) — when set, use batch compat instead of per-vacancy
 CompatParams = tuple[list[str], str, int]
@@ -161,7 +161,7 @@ class ParsingExtractor:
                                 title=p.title[:60],
                             )
                             if on_vacancy_processed:
-                                await on_vacancy_processed(current, total)
+                                await on_vacancy_processed(current, total, None)
                 else:
                     passing = list(partials)
 
@@ -186,9 +186,6 @@ class ParsingExtractor:
                         skills_found=len(partial.raw_skills),
                     )
 
-                    if on_vacancy_processed:
-                        await on_vacancy_processed(current, total)
-
                     vacancy_data = VacancyData(
                         hh_vacancy_id=partial.hh_vacancy_id,
                         url=partial.url,
@@ -210,6 +207,9 @@ class ParsingExtractor:
                         skills_counter[skill.strip()] += 1
                     for kw in ai_keywords:
                         keywords_counter[kw.strip()] += 1
+
+                    if on_vacancy_processed:
+                        await on_vacancy_processed(current, total, vacancy_data)
 
         return PipelineResult(
             vacancies=processed_vacancies,

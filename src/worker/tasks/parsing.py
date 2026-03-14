@@ -139,6 +139,12 @@ async def _run_parsing_company_async(
                     company.vacancy_title,
                 )
 
+            settings_repo = AppSettingRepository(session)
+            bl_days = await settings_repo.get_value("blacklist_days", default=30)
+            bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(
+                tzinfo=None
+            )
+
         task_key = f"parse:{parsing_company_id}"
         progress = await _start_progress(bot, telegram_chat_id, company, locale)
 
@@ -168,7 +174,9 @@ async def _run_parsing_company_async(
             if progress:
                 await progress.update_bar(task_key, 0, current, total)
 
-        async def _on_vacancy_processed(current: int, total: int) -> None:
+        async def _on_vacancy_processed(
+            current: int, total: int, vacancy_data: "VacancyData | None" = None
+        ) -> None:
             await _report_progress(session_factory, parsing_company_id, current, total)
             if progress:
                 await progress.update_bar(task_key, 1, current, total)
@@ -179,6 +187,15 @@ async def _run_parsing_company_async(
                     processed=current,
                     total=total,
                     urls=vacancies,
+                )
+            if vacancy_data is not None:
+                await _save_single_vacancy(
+                    session_factory,
+                    parsing_company_id,
+                    user_id,
+                    vacancy_data,
+                    company.vacancy_title,
+                    bl_until,
                 )
 
         compat_params = None
@@ -204,7 +221,7 @@ async def _run_parsing_company_async(
             resume_from=resume_from,
         )
 
-        await _save_parsing_results(
+        vacancies_count, keywords_count, skills_count = await _save_parsing_results(
             session_factory,
             parsing_company_id,
             user_id,
@@ -230,9 +247,9 @@ async def _run_parsing_company_async(
 
         return {
             "status": "completed",
-            "vacancies_count": result.vacancy_count,
-            "keywords_count": result.keyword_count,
-            "skills_count": result.skill_count,
+            "vacancies_count": vacancies_count,
+            "keywords_count": keywords_count,
+            "skills_count": skills_count,
         }
 
     except Exception as exc:
@@ -300,6 +317,53 @@ def _create_bot() -> "Bot":  # noqa: F821
     return create_task_bot()
 
 
+async def _save_single_vacancy(
+    session_factory: async_sessionmaker[AsyncSession],
+    parsing_company_id: int,
+    user_id: int,
+    vac_data: "VacancyData",  # noqa: F821
+    vacancy_title: str,
+    bl_until: datetime,
+) -> None:
+    """Persist a single processed vacancy and its blacklist entry. Used for incremental save."""
+    from src.models.blacklist import VacancyBlacklist
+    from src.models.parsing import ParsedVacancy
+
+    async with session_factory() as session:
+        session.add(
+            ParsedVacancy(
+                parsing_company_id=parsing_company_id,
+                hh_vacancy_id=vac_data.hh_vacancy_id,
+                url=vac_data.url,
+                title=vac_data.title,
+                description=vac_data.description,
+                raw_skills=vac_data.raw_skills,
+                ai_keywords=vac_data.ai_keywords,
+            )
+        )
+        stmt = (
+            pg_insert(VacancyBlacklist)
+            .values(
+                user_id=user_id,
+                vacancy_title_context=vacancy_title,
+                hh_vacancy_id=vac_data.hh_vacancy_id,
+                vacancy_url=vac_data.url,
+                vacancy_name=vac_data.title,
+                blacklisted_until=bl_until,
+            )
+            .on_conflict_do_update(
+                constraint="uq_user_vacancy_context",
+                set_={
+                    "vacancy_url": vac_data.url,
+                    "vacancy_name": vac_data.title,
+                    "blacklisted_until": bl_until,
+                },
+            )
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+
 async def _report_progress(
     session_factory: async_sessionmaker[AsyncSession],
     parsing_company_id: int,
@@ -323,69 +387,68 @@ async def _save_parsing_results(
     task,
     result: "PipelineResult",  # noqa: F821
     idempotency_key: str,
-) -> None:
-    from src.models.blacklist import VacancyBlacklist
+) -> tuple[int, int, int]:
+    """Save final parsing results. ParsedVacancy and VacancyBlacklist are already saved incrementally.
+
+    Returns (vacancies_count, keywords_count, skills_count) for the task response.
+    """
+    from collections import Counter
+
+    from sqlalchemy import select
+
     from src.models.parsing import AggregatedResult, ParsedVacancy
     from src.models.task import BaseCeleryTask
-    from src.repositories.app_settings import AppSettingRepository
     from src.repositories.parsing import ParsingCompanyRepository
 
     async with session_factory() as session:
         company_repo = ParsingCompanyRepository(session)
         company = await company_repo.get_by_id(parsing_company_id)
 
-        for vac_data in result.vacancies:
-            session.add(
-                ParsedVacancy(
-                    parsing_company_id=parsing_company_id,
-                    hh_vacancy_id=vac_data.hh_vacancy_id,
-                    url=vac_data.url,
-                    title=vac_data.title,
-                    description=vac_data.description,
-                    raw_skills=vac_data.raw_skills,
-                    ai_keywords=vac_data.ai_keywords,
+        # Recompute AggregatedResult from all ParsedVacancy for this company
+        stmt = select(ParsedVacancy).where(
+            ParsedVacancy.parsing_company_id == parsing_company_id
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+        keywords_counter: Counter[str] = Counter()
+        skills_counter: Counter[str] = Counter()
+        for vac in rows:
+            if vac.ai_keywords:
+                for kw in vac.ai_keywords:
+                    if isinstance(kw, str) and kw.strip():
+                        keywords_counter[kw.strip()] += 1
+            if vac.raw_skills:
+                for skill in vac.raw_skills:
+                    if isinstance(skill, str) and skill.strip():
+                        skills_counter[skill.strip()] += 1
+
+        top_keywords = dict(keywords_counter.most_common())
+        top_skills = dict(skills_counter.most_common())
+        vacancies_count = len(rows)
+
+        # Upsert AggregatedResult
+        existing = (
+            await session.execute(
+                select(AggregatedResult).where(
+                    AggregatedResult.parsing_company_id == parsing_company_id
                 )
             )
-
-        session.add(
-            AggregatedResult(
-                parsing_company_id=parsing_company_id,
-                top_keywords=dict(result.keywords),
-                top_skills=dict(result.skills),
+        ).scalar_one_or_none()
+        if existing:
+            existing.top_keywords = top_keywords
+            existing.top_skills = top_skills
+        else:
+            session.add(
+                AggregatedResult(
+                    parsing_company_id=parsing_company_id,
+                    top_keywords=top_keywords,
+                    top_skills=top_skills,
+                )
             )
-        )
 
         if company:
             company.status = "completed"
-            company.vacancies_processed = result.vacancy_count
+            # vacancies_processed is already updated by _report_progress via on_vacancy_processed
             company.completed_at = datetime.now(UTC).replace(tzinfo=None)
-
-        settings_repo = AppSettingRepository(session)
-        bl_days = await settings_repo.get_value("blacklist_days", default=30)
-        bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
-        vacancy_title = company.vacancy_title if company else ""
-
-        for vac_data in result.vacancies:
-            stmt = (
-                pg_insert(VacancyBlacklist)
-                .values(
-                    user_id=user_id,
-                    vacancy_title_context=vacancy_title,
-                    hh_vacancy_id=vac_data.hh_vacancy_id,
-                    vacancy_url=vac_data.url,
-                    vacancy_name=vac_data.title,
-                    blacklisted_until=bl_until,
-                )
-                .on_conflict_do_update(
-                    constraint="uq_user_vacancy_context",
-                    set_={
-                        "vacancy_url": vac_data.url,
-                        "vacancy_name": vac_data.title,
-                        "blacklisted_until": bl_until,
-                    },
-                )
-            )
-            await session.execute(stmt)
 
         session.add(
             BaseCeleryTask(
@@ -394,11 +457,12 @@ async def _save_parsing_results(
                 user_id=user_id,
                 status="completed",
                 idempotency_key=idempotency_key,
-                result_data={"vacancies_count": result.vacancy_count},
+                result_data={"vacancies_count": vacancies_count},
             )
         )
 
         await session.commit()
+        return vacancies_count, len(top_keywords), len(top_skills)
 
 
 async def _handle_parsing_soft_timeout(

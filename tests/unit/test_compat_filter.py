@@ -95,10 +95,10 @@ class TestExtractorCompatFilter:
         )
         ai_client.extract_keywords = AsyncMock(return_value=[])
 
-        processed_calls: list[tuple[int, int]] = []
+        processed_calls: list[tuple[int, int, object]] = []
 
-        async def on_processed(current: int, total: int) -> None:
-            processed_calls.append((current, total))
+        async def on_processed(current: int, total: int, vacancy_data: object = None) -> None:
+            processed_calls.append((current, total, vacancy_data))
 
         extractor = ParsingExtractor(scraper=_make_scraper(), ai_client=ai_client)
         await extractor.run_pipeline(
@@ -110,6 +110,8 @@ class TestExtractorCompatFilter:
         )
 
         assert len(processed_calls) == 2
+        # Skipped vacancies get vacancy_data=None
+        assert all(c[2] is None for c in processed_calls)
 
     @pytest.mark.asyncio
     async def test_no_compat_filter_runs_full_pipeline(self):
@@ -204,7 +206,7 @@ class TestParsingTaskCompatIntegration:
                 new=AsyncMock(return_value=(None, "ru")),
             ),
             patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
-            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock()),
+            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock(return_value=(0, 0, 0))),
             patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
@@ -304,7 +306,7 @@ class TestParsingTaskCompatIntegration:
                 new=AsyncMock(return_value=(None, "ru")),
             ),
             patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
-            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock()),
+            patch("src.worker.tasks.parsing._save_parsing_results", new=AsyncMock(return_value=(0, 0, 0))),
             patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
