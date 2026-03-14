@@ -524,7 +524,7 @@ async def _save_parsing_results(
     from sqlalchemy import select
 
     from src.models.parsing import AggregatedResult, ParsedVacancy
-    from src.models.task import BaseCeleryTask
+    from src.models.task import CompanyParseTask
     from src.repositories.parsing import ParsingCompanyRepository
 
     async with session_factory() as session:
@@ -576,13 +576,14 @@ async def _save_parsing_results(
             company.completed_at = datetime.now(UTC).replace(tzinfo=None)
 
         session.add(
-            BaseCeleryTask(
+            CompanyParseTask(
                 celery_task_id=task.request.id if task.request else None,
                 task_type="parse_company",
                 user_id=user_id,
                 status="completed",
                 idempotency_key=idempotency_key,
                 result_data={"vacancies_count": vacancies_count},
+                parsing_company_id=parsing_company_id,
             )
         )
 
@@ -635,7 +636,7 @@ async def _mark_parsing_failed(
     idempotency_key: str,
     exc: Exception,
 ) -> None:
-    from src.models.task import BaseCeleryTask
+    from src.models.task import CompanyParseTask
     from src.repositories.parsing import ParsingCompanyRepository
 
     async with session_factory() as session:
@@ -646,13 +647,14 @@ async def _mark_parsing_failed(
             await session.commit()
 
         session.add(
-            BaseCeleryTask(
+            CompanyParseTask(
                 celery_task_id=task.request.id if task.request else None,
                 task_type="parse_company",
                 user_id=user_id,
                 status="failed",
                 idempotency_key=idempotency_key,
                 error_message=str(exc),
+                parsing_company_id=parsing_company_id,
             )
         )
         await session.commit()

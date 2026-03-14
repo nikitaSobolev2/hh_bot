@@ -91,3 +91,22 @@ class CompanyCreateKeyPhrasesTask(BaseCeleryTask):
     parsing_company: Mapped[ParsingCompany] = relationship(foreign_keys=[parsing_company_id])
 
     __mapper_args__ = {"polymorphic_identity": "create_key_phrases"}
+
+
+class CompanyParseTask(BaseCeleryTask):
+    """Task record for the full parsing run (parse_company)."""
+
+    __tablename__ = "tasks_parse_company"
+
+    id: Mapped[int] = mapped_column(
+        ForeignKey("celery_tasks.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    parsing_company_id: Mapped[int] = mapped_column(
+        ForeignKey("parsing_companies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    parsing_company: Mapped[ParsingCompany] = relationship(foreign_keys=[parsing_company_id])
+
+    __mapper_args__ = {"polymorphic_identity": "parse_company"}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -11,10 +11,14 @@ def _safe_str(val: Any, default: str = "") -> str:
 
 
 def _parse_published_at(val: str | None) -> datetime | None:
+    """Parse ISO datetime from HH API. Returns naive UTC for DB storage (TIMESTAMP WITHOUT TIME ZONE)."""
     if not val:
         return None
     try:
-        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
     except (ValueError, TypeError):
         return None
 

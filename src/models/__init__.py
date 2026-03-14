@@ -23,6 +23,7 @@ from src.models.task import (
     BaseCeleryTask,
     CompanyCreateKeyPhrasesTask,
     CompanyParseKeywordsFromDescriptionTask,
+    CompanyParseTask,
 )
 from src.models.user import User
 from src.models.vacancy_feed import VacancyFeedSession
@@ -46,6 +47,7 @@ __all__ = [
     "BaseCeleryTask",
     "CompanyParseKeywordsFromDescriptionTask",
     "CompanyCreateKeyPhrasesTask",
+    "CompanyParseTask",
     "AppSetting",
     "BalanceTransaction",
     "ReferralEvent",
