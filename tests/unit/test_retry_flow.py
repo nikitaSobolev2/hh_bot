@@ -281,6 +281,11 @@ class TestRetryCompatFlow:
                 return_value=company,
             ),
             patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_blacklisted_count",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
                 "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
                 new_callable=AsyncMock,
                 return_value=99,
@@ -322,6 +327,11 @@ class TestRetryCompatFlow:
                 "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
                 new_callable=AsyncMock,
                 return_value=company,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_blacklisted_count",
+                new_callable=AsyncMock,
+                return_value=0,
             ),
             patch(
                 "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
@@ -382,6 +392,189 @@ class TestRetryCompatFlow:
 
         mock_clone.assert_not_awaited()
         callback.message.answer.assert_awaited_once()
+
+
+class TestRetryBlacklistFlow:
+    @pytest.mark.asyncio
+    async def test_retry_with_non_empty_blacklist_shows_prompt_before_launch(self):
+        from src.bot.modules.parsing.handlers import fsm_retry_compat_skip
+        from src.bot.modules.parsing.states import ParsingForm
+
+        company = _make_company()
+        state = _make_state(data={"retry_company_id": company.id, "retry_count": 40})
+        callback = _make_callback()
+
+        with (
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
+                new_callable=AsyncMock,
+                return_value=company,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_blacklisted_count",
+                new_callable=AsyncMock,
+                return_value=5,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
+                new_callable=AsyncMock,
+            ) as mock_clone,
+        ):
+            await fsm_retry_compat_skip(callback, _make_user(), state, MagicMock(), _make_i18n())
+
+        mock_clone.assert_not_awaited()
+        state.set_state.assert_awaited_once_with(ParsingForm.blacklist_check)
+        state.update_data.assert_awaited_once_with(
+            retry_company_id=company.id,
+            retry_count=40,
+            use_compatibility_check=False,
+            compatibility_threshold=None,
+        )
+        callback.message.answer.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_with_empty_blacklist_launches_directly(self):
+        from src.bot.modules.parsing.handlers import fsm_retry_compat_skip
+
+        company = _make_company()
+        state = _make_state(data={"retry_company_id": company.id, "retry_count": 40})
+        callback = _make_callback()
+
+        with (
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
+                new_callable=AsyncMock,
+                return_value=company,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_blacklisted_count",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
+                new_callable=AsyncMock,
+                return_value=99,
+            ) as mock_clone,
+        ):
+            await fsm_retry_compat_skip(callback, _make_user(), state, MagicMock(), _make_i18n())
+
+        mock_clone.assert_awaited_once()
+        state.clear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_blacklist_choice_skip_launches_with_include_false(self):
+        from src.bot.modules.parsing.handlers import fsm_blacklist_choice
+
+        company = _make_company()
+        state = _make_state(
+            data={
+                "retry_company_id": company.id,
+                "retry_count": 40,
+                "use_compatibility_check": False,
+                "compatibility_threshold": None,
+            }
+        )
+        callback = _make_callback()
+        callback_data = MagicMock()
+        callback_data.action = "bl_skip"
+
+        with (
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
+                new_callable=AsyncMock,
+                return_value=company,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
+                new_callable=AsyncMock,
+                return_value=99,
+            ) as mock_clone,
+        ):
+            await fsm_blacklist_choice(
+                callback, callback_data, _make_user(), state, MagicMock(), _make_i18n()
+            )
+
+        state.clear.assert_awaited_once()
+        mock_clone.assert_awaited_once()
+        _, kwargs = mock_clone.call_args
+        assert kwargs.get("include_blacklisted") is False
+
+    @pytest.mark.asyncio
+    async def test_retry_blacklist_choice_include_launches_with_include_true(self):
+        from src.bot.modules.parsing.handlers import fsm_blacklist_choice
+
+        company = _make_company()
+        state = _make_state(
+            data={
+                "retry_company_id": company.id,
+                "retry_count": 40,
+                "use_compatibility_check": False,
+                "compatibility_threshold": None,
+            }
+        )
+        callback = _make_callback()
+        callback_data = MagicMock()
+        callback_data.action = "bl_include"
+
+        with (
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
+                new_callable=AsyncMock,
+                return_value=company,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
+                new_callable=AsyncMock,
+                return_value=99,
+            ) as mock_clone,
+        ):
+            await fsm_blacklist_choice(
+                callback, callback_data, _make_user(), state, MagicMock(), _make_i18n()
+            )
+
+        state.clear.assert_awaited_once()
+        mock_clone.assert_awaited_once()
+        _, kwargs = mock_clone.call_args
+        assert kwargs.get("include_blacklisted") is True
+
+    @pytest.mark.asyncio
+    async def test_retry_blacklist_choice_preserves_compat_params(self):
+        from src.bot.modules.parsing.handlers import fsm_blacklist_choice
+
+        company = _make_company()
+        state = _make_state(
+            data={
+                "retry_company_id": company.id,
+                "retry_count": 60,
+                "use_compatibility_check": True,
+                "compatibility_threshold": 75,
+            }
+        )
+        callback = _make_callback()
+        callback_data = MagicMock()
+        callback_data.action = "bl_skip"
+
+        with (
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.get_company_for_user",
+                new_callable=AsyncMock,
+                return_value=company,
+            ),
+            patch(
+                "src.bot.modules.parsing.handlers.parsing_service.clone_and_dispatch",
+                new_callable=AsyncMock,
+                return_value=99,
+            ) as mock_clone,
+        ):
+            await fsm_blacklist_choice(
+                callback, callback_data, _make_user(), state, MagicMock(), _make_i18n()
+            )
+
+        _, kwargs = mock_clone.call_args
+        assert kwargs.get("use_compatibility_check") is True
+        assert kwargs.get("compatibility_threshold") == 75
+        assert kwargs.get("include_blacklisted") is False
 
 
 class TestCloneAndDispatchTargetCount:
@@ -546,6 +739,40 @@ class TestCloneAndDispatchTargetCount:
         _, kwargs = mock_create.call_args
         assert kwargs["use_compatibility_check"] is True
         assert kwargs["compatibility_threshold"] == 65
+
+    @pytest.mark.asyncio
+    async def test_passes_include_blacklisted_to_dispatch(self):
+        from src.bot.modules.parsing.services import clone_and_dispatch
+
+        source = MagicMock()
+        source.vacancy_title = "Dev"
+        source.search_url = "https://hh.ru/search"
+        source.keyword_filter = ""
+        source.target_count = 50
+        source.use_compatibility_check = False
+        source.compatibility_threshold = None
+
+        with (
+            patch("src.bot.modules.parsing.services.ParsingCompanyRepository") as mock_repo_cls,
+            patch(
+                "src.bot.modules.parsing.services.create_parsing_company",
+                new_callable=AsyncMock,
+                return_value=10,
+            ),
+            patch(
+                "src.bot.modules.parsing.services.dispatch_parsing_task",
+            ) as mock_dispatch,
+        ):
+            repo_instance = AsyncMock()
+            repo_instance.get_by_id = AsyncMock(return_value=source)
+            mock_repo_cls.return_value = repo_instance
+
+            session = MagicMock()
+            await clone_and_dispatch(session, 1, 42, include_blacklisted=True)
+
+        mock_dispatch.assert_awaited_once()
+        _, dispatch_kwargs = mock_dispatch.call_args
+        assert dispatch_kwargs.get("include_blacklisted") is True
 
 
 class TestRunAsyncClosedLoopSuppression:

@@ -243,10 +243,33 @@ async def fsm_blacklist_choice(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    data = await state.get_data()
     include = callback_data.action == "bl_include"
-    await _confirm_and_launch(
-        callback.message, user, state, session, i18n, include_blacklisted=include
-    )
+
+    if "retry_company_id" in data:
+        company = await _fetch_retry_company(session, user, data)
+        if company is None:
+            await state.clear()
+            await callback.message.answer(i18n.get("parsing-not-found"))
+            await callback.answer()
+            return
+
+        await state.clear()
+        await _launch_retry(
+            callback.message,
+            user,
+            session,
+            i18n,
+            company,
+            data["retry_count"],
+            use_compatibility_check=data.get("use_compatibility_check", False),
+            compatibility_threshold=data.get("compatibility_threshold"),
+            include_blacklisted=include,
+        )
+    else:
+        await _confirm_and_launch(
+            callback.message, user, state, session, i18n, include_blacklisted=include
+        )
     await callback.answer()
 
 
@@ -412,17 +435,17 @@ async def fsm_retry_compat_skip(
     i18n: I18nContext,
 ) -> None:
     data = await state.get_data()
-    await state.clear()
-
     company = await _fetch_retry_company(session, user, data)
     if company is None:
+        await state.clear()
         await callback.message.answer(i18n.get("parsing-not-found"))
         await callback.answer()
         return
 
-    await _launch_retry(
+    await _proceed_to_retry_blacklist_or_launch(
         callback.message,
         user,
+        state,
         session,
         i18n,
         company,
@@ -463,16 +486,16 @@ async def fsm_retry_compat_threshold(
 
     threshold = int(text)
     data = await state.get_data()
-    await state.clear()
-
     company = await _fetch_retry_company(session, user, data)
     if company is None:
+        await state.clear()
         await message.answer(i18n.get("parsing-not-found"))
         return
 
-    await _launch_retry(
+    await _proceed_to_retry_blacklist_or_launch(
         message,
         user,
+        state,
         session,
         i18n,
         company,
@@ -493,6 +516,52 @@ async def _fetch_retry_company(
     return await parsing_service.get_company_for_user(session, company_id, user.id)
 
 
+async def _proceed_to_retry_blacklist_or_launch(
+    message: Message,
+    user: "User",  # noqa: F821
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+    company: "ParsingCompany",  # noqa: F821
+    retry_count: int,
+    *,
+    use_compatibility_check: bool = False,
+    compatibility_threshold: int | None = None,
+) -> None:
+    blacklisted_count = await parsing_service.get_blacklisted_count(
+        session, user.id, company.vacancy_title
+    )
+    if blacklisted_count > 0:
+        await state.update_data(
+            retry_company_id=company.id,
+            retry_count=retry_count,
+            use_compatibility_check=use_compatibility_check,
+            compatibility_threshold=compatibility_threshold,
+        )
+        await state.set_state(ParsingForm.blacklist_check)
+        await message.answer(
+            i18n.get(
+                "parsing-blacklist-check",
+                count=str(blacklisted_count),
+                title=company.vacancy_title,
+            ),
+            reply_markup=blacklist_choice_keyboard(i18n),
+        )
+    else:
+        await state.clear()
+        await _launch_retry(
+            message,
+            user,
+            session,
+            i18n,
+            company,
+            retry_count,
+            use_compatibility_check=use_compatibility_check,
+            compatibility_threshold=compatibility_threshold,
+            include_blacklisted=False,
+        )
+
+
 async def _launch_retry(
     message: Message,
     user: "User",  # noqa: F821
@@ -503,6 +572,7 @@ async def _launch_retry(
     *,
     use_compatibility_check: bool = False,
     compatibility_threshold: int | None = None,
+    include_blacklisted: bool = False,
 ) -> None:
     max_count = get_max_target_count(user)
     if target_count > max_count:
@@ -515,6 +585,7 @@ async def _launch_retry(
         target_count=target_count,
         use_compatibility_check=use_compatibility_check,
         compatibility_threshold=compatibility_threshold,
+        include_blacklisted=include_blacklisted,
     )
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
     text = i18n.get(

@@ -77,6 +77,7 @@ async def clone_and_dispatch(
     target_count: int | None = None,
     use_compatibility_check: bool | None = None,
     compatibility_threshold: int | None = None,
+    include_blacklisted: bool = False,
 ) -> int:
     repo = ParsingCompanyRepository(session)
     source = await repo.get_by_id(source_company_id)
@@ -107,7 +108,7 @@ async def clone_and_dispatch(
     await dispatch_parsing_task(
         new_id,
         user_id,
-        include_blacklisted=False,
+        include_blacklisted=include_blacklisted,
         telegram_chat_id=telegram_chat_id,
     )
     return new_id
