@@ -33,7 +33,11 @@ _DETAIL_FIELD_PREFIXES: dict[str, str] = {
 }
 
 _MULTI_SPACE_RE = re.compile(r" {2,}")
-_MAX_PAGES = 100  # ~2000 vacancies max; HH typically 20 per page
+_MAX_PAGES = 100  # ~2000 vacancies max; API supports up to 100 per page
+HH_API_BASE = "https://api.hh.ru/vacancies"
+_API_UNSUPPORTED_PARAMS = frozenset(
+    {"hhtmFrom", "hhtmFromLabel", "L_save_area", "ored_clusters", "enable_snippets", "search_field"}
+)
 
 
 def _looks_like_salary(text: str) -> bool:
@@ -53,6 +57,95 @@ def _strip_field_prefix(field: str, text: str) -> str:
     if prefix and text.startswith(prefix):
         return text[len(prefix) :].strip()
     return text
+
+
+_CURRENCY_SYMBOLS: dict[str, str] = {
+    "RUR": "руб.",
+    "RUB": "руб.",
+    "USD": "$",
+    "EUR": "€",
+    "UZS": "сум",
+}
+
+
+def _format_api_salary(salary: dict | None) -> str:
+    """Format HH.ru API salary object to human-readable string."""
+    if not salary:
+        return ""
+    parts: list[str] = []
+    if "from" in salary and salary["from"] is not None:
+        parts.append(f"{salary['from']:,}".replace(",", " "))
+    if "to" in salary and salary["to"] is not None:
+        parts.append(f"{salary['to']:,}".replace(",", " "))
+    if not parts:
+        return ""
+    currency = salary.get("currency", "RUR")
+    symbol = _CURRENCY_SYMBOLS.get(currency, currency)
+    return " – ".join(parts) + " " + symbol
+
+
+def _html_to_plain_text(html: str) -> str:
+    """Strip HTML tags from vacancy description for AI consumption."""
+    if not html or not html.strip():
+        return ""
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text(separator="\n", strip=True)
+
+
+def _vacancy_api_url(vacancy_id: str) -> str:
+    """Return the HH API URL for a single vacancy detail."""
+    return f"{HH_API_BASE}/{vacancy_id}"
+
+
+def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = None) -> dict:
+    """Map HH API vacancy detail response to page_data shape used by extractor.
+
+    list_item: optional dict from search list (url, title, company_name, salary, etc.)
+    for fields not in detail response.
+    """
+    list_item = list_item or {}
+    description = _html_to_plain_text(api_response.get("description", "") or "")
+    key_skills = api_response.get("key_skills") or []
+    skills = [s["name"] for s in key_skills if isinstance(s, dict) and s.get("name")]
+
+    employer = api_response.get("employer") or {}
+    company_name = employer.get("name") or list_item.get("company_name", "")
+
+    salary_str = _format_api_salary(api_response.get("salary")) or list_item.get("salary", "")
+
+    experience = api_response.get("experience")
+    work_experience = experience.get("name", "") if isinstance(experience, dict) else ""
+
+    schedule = api_response.get("schedule")
+    work_schedule = schedule.get("name", "") if isinstance(schedule, dict) else ""
+
+    employment = api_response.get("employment")
+    employment_type = employment.get("name", "") if isinstance(employment, dict) else ""
+
+    work_formats = api_response.get("work_format") or []
+    work_formats_str = ", ".join(
+        wf["name"] for wf in work_formats if isinstance(wf, dict) and wf.get("name")
+    )
+
+    working_hours = api_response.get("working_hours") or []
+    working_hours_str = ", ".join(
+        wh["name"] for wh in working_hours if isinstance(wh, dict) and wh.get("name")
+    )
+
+    result: dict = {
+        "description": description,
+        "skills": skills,
+        "title": api_response.get("name", "") or list_item.get("title", ""),
+        "company_name": company_name,
+        "salary": salary_str,
+        "work_experience": work_experience,
+        "employment_type": employment_type,
+        "work_schedule": work_schedule,
+        "work_formats": work_formats_str,
+        "working_hours": working_hours_str,
+        "raw_api_data": api_response,
+    }
+    return result
 
 
 class HHScraper:
@@ -81,6 +174,15 @@ class HHScraper:
             "Connection": "keep-alive",
         }
 
+    def _headers_api(self) -> dict[str, str]:
+        return {
+            "User-Agent": self._ua.random,
+            "Accept": "application/json",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+        }
+
     async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> BeautifulSoup | None:
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
@@ -98,6 +200,33 @@ class HHScraper:
                     logger.error("Failed to fetch page", url=url)
                     return None
 
+    async def _fetch_api_page(self, client: httpx.AsyncClient, url: str) -> dict | None:
+        """Fetch vacancy search page from HH.ru API. Returns parsed JSON or None on failure."""
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
+        for attempt in range(self._retries):
+            try:
+                resp = await client.get(url, headers=self._headers_api(), timeout=self._timeout)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPError as exc:
+                if attempt < self._retries - 1:
+                    wait = 3 + attempt * 2
+                    logger.warning("API request error, retrying", error=str(exc), wait=wait)
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error("Failed to fetch API page", url=url)
+                    return None
+
+    async def fetch_vacancy_by_id(
+        self,
+        client: httpx.AsyncClient,
+        vacancy_id: str,
+    ) -> dict | None:
+        """Fetch full vacancy detail from HH API. Returns raw JSON or None on failure."""
+        url = _vacancy_api_url(vacancy_id)
+        return await self._fetch_api_page(client, url)
+
     @staticmethod
     def _build_page_url(base_url: str, page: int) -> str:
         parsed = urlparse(base_url)
@@ -105,6 +234,24 @@ class HHScraper:
         params["page"] = [str(page)]
         new_query = urlencode({k: v[0] for k, v in params.items()})
         return urlunparse(parsed._replace(query=new_query))
+
+    @staticmethod
+    def _build_api_url(base_url: str, page: int, per_page: int = 50) -> str:
+        """Convert web search URL to HH.ru API URL, preserving filter params."""
+        parsed = urlparse(base_url)
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        params["page"] = [str(page)]
+        params["per_page"] = [str(per_page)]
+        query_pairs: list[tuple[str, str]] = []
+        for key, values in params.items():
+            if key in _API_UNSUPPORTED_PARAMS:
+                continue
+            for val in values:
+                query_pairs.append((key, val))
+        new_query = urlencode(query_pairs)
+        return urlunparse(
+            parsed._replace(scheme="https", netloc="api.hh.ru", path="/vacancies", query=new_query)
+        )
 
     @staticmethod
     def _extract_vacancy_id(url: str) -> str | None:
@@ -191,6 +338,65 @@ class HHScraper:
 
         return metadata
 
+    def _extract_vacancies_from_api_response(self, data: dict, keyword: str) -> list[dict]:
+        """Extract vacancy items from HH.ru API search response, applying keyword filter."""
+        found: list[dict] = []
+        items = data.get("items", [])
+
+        logger.debug("API vacancy items on page", items_count=len(items))
+
+        for item in items:
+            name = item.get("name", "")
+            alternate_url = item.get("alternate_url", "")
+            vacancy_id = item.get("id")
+            if not vacancy_id or not alternate_url:
+                logger.debug("API item skipped — missing id or alternate_url")
+                continue
+
+            keyword_matched = matches_keyword_expression(name, keyword)
+            logger.debug(
+                "Vacancy candidate",
+                title=name,
+                url=alternate_url,
+                keyword_matched=keyword_matched,
+            )
+
+            if not keyword_matched:
+                continue
+
+            parsed = urlparse(alternate_url)
+            clean_url = urlunparse(parsed._replace(query="", fragment=""))
+
+            result: dict = {
+                "url": clean_url,
+                "title": name,
+                "hh_vacancy_id": str(vacancy_id),
+            }
+
+            employer = item.get("employer") or {}
+            if employer.get("name"):
+                result["company_name"] = employer["name"]
+            if employer.get("alternate_url"):
+                result["company_url"] = employer["alternate_url"]
+
+            salary_str = _format_api_salary(item.get("salary"))
+            if salary_str:
+                result["salary"] = salary_str
+
+            tags: list[str] = []
+            for wf in item.get("work_format") or []:
+                if isinstance(wf, dict) and wf.get("name"):
+                    tags.append(wf["name"])
+            schedule = item.get("schedule")
+            if isinstance(schedule, dict) and schedule.get("name"):
+                tags.append(schedule["name"])
+            if tags:
+                result["tags"] = tags
+
+            found.append(result)
+
+        return found
+
     @staticmethod
     def _collect_new_from_page(
         page_results: list[dict[str, str]],
@@ -242,18 +448,22 @@ class HHScraper:
                 if page >= _MAX_PAGES:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES)
                     break
-                url = self._build_page_url(base_url, page)
+                url = self._build_api_url(base_url, page)
                 logger.info("Fetching search page", url=url, page=page + 1)
-                soup = await self._fetch_page(client, url)
-                if soup is None:
+                data = await self._fetch_api_page(client, url)
+                if data is None:
                     break
 
-                raw_blocks = soup.select('[data-qa="vacancy-serp__vacancy"]')
-                if not raw_blocks:
-                    logger.info("No vacancy blocks on page", page=page + 1, url=url)
+                items = data.get("items", [])
+                if not items:
+                    logger.info("No vacancy items on page", page=page + 1, url=url)
                     break
 
-                page_results = self._extract_vacancies_from_page(soup, keyword)
+                total_pages = data.get("pages", 0)
+                if page >= total_pages:
+                    break
+
+                page_results = self._extract_vacancies_from_api_response(data, keyword)
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
                     page_results,
                     seen_urls,
@@ -267,7 +477,7 @@ class HHScraper:
                     "Search page scraped",
                     page=page + 1,
                     url=url,
-                    raw_blocks=len(raw_blocks),
+                    raw_blocks=len(items),
                     keyword_matched=len(page_results),
                     blacklisted_skipped=blacklisted_skipped,
                     new=new_count,
@@ -317,18 +527,22 @@ class HHScraper:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES)
                     return collected[:batch_size], page, False
 
-                url = self._build_page_url(base_url, page)
+                url = self._build_api_url(base_url, page)
                 logger.info("Fetching search page", url=url, page=page + 1)
-                soup = await self._fetch_page(client, url)
-                if soup is None:
+                data = await self._fetch_api_page(client, url)
+                if data is None:
                     return collected[:batch_size], page, False
 
-                raw_blocks = soup.select('[data-qa="vacancy-serp__vacancy"]')
-                if not raw_blocks:
-                    logger.info("No vacancy blocks on page", page=page + 1, url=url)
+                items = data.get("items", [])
+                if not items:
+                    logger.info("No vacancy items on page", page=page + 1, url=url)
                     return collected[:batch_size], page, False
 
-                page_results = self._extract_vacancies_from_page(soup, keyword)
+                total_pages = data.get("pages", 0)
+                if page >= total_pages:
+                    return collected[:batch_size], page + 1, False
+
+                page_results = self._extract_vacancies_from_api_response(data, keyword)
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
                     page_results,
                     seen_urls,
@@ -342,7 +556,7 @@ class HHScraper:
                     "Search page scraped",
                     page=page + 1,
                     url=url,
-                    raw_blocks=len(raw_blocks),
+                    raw_blocks=len(items),
                     keyword_matched=len(page_results),
                     blacklisted_skipped=blacklisted_skipped,
                     new=new_count,
@@ -360,60 +574,21 @@ class HHScraper:
         has_more = page < _MAX_PAGES and zero_pages < 3
         return collected[:batch_size], page, has_more
 
-    _VACANCY_DETAIL_SELECTORS: dict[str, str] = {
-        "compensation_frequency": "compensation-frequency-text",
-        "work_experience": "work-experience-text",
-        "employment_type": "common-employment-text",
-        "work_schedule": "work-schedule-by-days-text",
-        "working_hours": "working-hours-text",
-        "work_formats": "work-formats-text",
-    }
-
     async def parse_vacancy_page(
         self,
         client: httpx.AsyncClient,
         url: str,
     ) -> dict:
-        """Parse a single vacancy page and return all available fields.
+        """Parse a single vacancy page via HH API. Returns page_data shape with raw_api_data.
 
-        Returns a dict with keys: description, skills, and optional detail
-        fields (compensation_frequency, work_experience, etc.).
-        Returns an empty dict on fetch failure.
+        For HH.ru URLs, fetches from API and maps to page_data. Returns empty dict on failure.
         """
-        soup = await self._fetch_page(client, url)
-        if soup is None:
+        vacancy_id = self._extract_vacancy_id(url)
+        if not vacancy_id:
             return {}
 
-        title_el = soup.find(attrs={"data-qa": "vacancy-title"})
-        if title_el:
-            from bs4 import NavigableString
+        api_response = await self.fetch_vacancy_by_id(client, vacancy_id)
+        if not api_response:
+            return {}
 
-            raw_title = "".join(
-                str(node) for node in title_el.children if isinstance(node, NavigableString)
-            )
-            title = _MULTI_SPACE_RE.sub(" ", raw_title.replace("\n", " ")).strip()
-        else:
-            title = ""
-
-        desc_el = soup.find(attrs={"data-qa": "vacancy-description"})
-        description = desc_el.get_text(separator="\n", strip=True) if desc_el else ""
-
-        company_el = soup.find(attrs={"data-qa": "vacancy-company-name"})
-        company_name = company_el.get_text(strip=True) if company_el else ""
-
-        skill_elements = soup.select('[data-qa="skills-element"] > div')
-        skills = [el.get_text(strip=True) for el in skill_elements if el.get_text(strip=True)]
-
-        result: dict = {
-            "description": description,
-            "skills": skills,
-            "title": title,
-            "company_name": company_name,
-        }
-
-        for field, data_qa in self._VACANCY_DETAIL_SELECTORS.items():
-            el = soup.find(attrs={"data-qa": data_qa})
-            if el:
-                result[field] = _strip_field_prefix(field, el.get_text(strip=True))
-
-        return result
+        return _map_api_vacancy_to_page_data(api_response, {"url": url})

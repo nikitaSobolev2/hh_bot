@@ -61,15 +61,35 @@ class TestExtractKeywords:
             assert len(user_content) <= MAX_DESCRIPTION_LENGTH + 200
 
 
-def _make_compat_scraper(urls: list[dict]):
+def _make_api_vacancy_response(vac: dict, description: str = "desc", skills: list | None = None):
+    """Build API vacancy detail response for _map_api_vacancy_to_page_data."""
+    skills = skills or ["Python"]
+    return {
+        "id": vac["hh_vacancy_id"],
+        "name": vac.get("title", ""),
+        "description": description,
+        "key_skills": [{"name": s} for s in skills],
+        "employer": {"name": vac.get("company_name", "")},
+    }
+
+
+def _make_compat_scraper(urls: list[dict], description: str = "desc", skills: list | None = None):
     """Scraper mock for compat flow: first call returns urls, second returns empty."""
     scraper = MagicMock()
     scraper.collect_vacancy_urls_batch = AsyncMock(
         side_effect=[(urls, 1, False), ([], 1, False)]
     )
-    scraper.parse_vacancy_page = AsyncMock(
-        return_value={"description": "desc", "skills": ["Python"]}
-    )
+    skills = skills or ["Python"]
+
+    async def _fetch_vacancy_by_id(client, vacancy_id: str):
+        vac = next((u for u in urls if u["hh_vacancy_id"] == vacancy_id), {})
+        return _make_api_vacancy_response(
+            {"hh_vacancy_id": vacancy_id, "title": vac.get("title", ""), **vac},
+            description=description,
+            skills=skills,
+        )
+
+    scraper.fetch_vacancy_by_id = AsyncMock(side_effect=_fetch_vacancy_by_id)
     return scraper
 
 
@@ -85,9 +105,6 @@ class TestExtractorBatchCompat:
             {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
         ]
         scraper = _make_compat_scraper(urls)
-        scraper.parse_vacancy_page = AsyncMock(
-            return_value={"description": "desc", "skills": ["Python"]}
-        )
 
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 80.0, "2": 60.0})
@@ -118,8 +135,7 @@ class TestExtractorBatchCompat:
             {"url": "https://hh.ru/1", "title": "V1", "hh_vacancy_id": "1"},
             {"url": "https://hh.ru/2", "title": "V2", "hh_vacancy_id": "2"},
         ]
-        scraper = _make_compat_scraper(urls)
-        scraper.parse_vacancy_page = AsyncMock(return_value={"description": "desc", "skills": []})
+        scraper = _make_compat_scraper(urls, skills=[])
 
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(return_value={"1": 70.0, "2": 30.0})

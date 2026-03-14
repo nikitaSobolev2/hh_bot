@@ -70,6 +70,7 @@ class AutoparsedVacancy(Base):
     compatibility_score: Mapped[float | None] = mapped_column(Float, default=None)
     ai_summary: Mapped[str | None] = mapped_column(Text, default=None)
     ai_stack: Mapped[list | None] = mapped_column(JSONB, default=None)
+    raw_api_data: Mapped[dict | None] = mapped_column(JSONB, default=None)
 
     autoparse_company: Mapped[AutoparseCompany] = relationship(back_populates="vacancies")
 

@@ -237,14 +237,30 @@ class AIClient:
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
 
-    async def extract_keywords(self, description: str) -> list[str]:
-        if not description.strip():
+    async def extract_keywords(
+        self,
+        description: str,
+        raw_api_data: dict | None = None,
+    ) -> list[str]:
+        has_content = description.strip() or (
+            raw_api_data
+            and (
+                raw_api_data.get("snippet")
+                or raw_api_data.get("key_skills")
+            )
+        )
+        if not has_content:
             return []
 
-        truncated = description[:MAX_DESCRIPTION_LENGTH]
+        truncated = (description or "")[:MAX_DESCRIPTION_LENGTH]
         messages = [
             {"role": "system", "content": build_keyword_extraction_system_prompt()},
-            {"role": "user", "content": build_keyword_extraction_user_content(truncated)},
+            {
+                "role": "user",
+                "content": build_keyword_extraction_user_content(
+                    truncated, raw_api_data=raw_api_data
+                ),
+            },
         ]
 
         async def _call() -> list[str]:

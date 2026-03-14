@@ -109,6 +109,18 @@ class TestRenderBar:
         assert "<code>" in result
         assert "</code>" in result
 
+    def test_current_exceeds_total_caps_at_100_percent(self):
+        """When goal < batch, current can exceed total; cap display at 100%."""
+        from src.services.progress_service import render_bar
+
+        result = render_bar(100, 30)
+        assert "100%" in result
+        assert "30/30" in result
+
+        result = render_bar(58, 30)
+        assert "100%" in result
+        assert "30/30" in result
+
 
 # ---------------------------------------------------------------------------
 # start_task

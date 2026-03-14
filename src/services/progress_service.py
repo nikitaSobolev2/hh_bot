@@ -46,10 +46,16 @@ _MSGLOCK_TTL = 10  # seconds
 
 def render_bar(current: int, total: int) -> str:
     """Render a single progress bar: ``<code>██░░</code>  50%  5/10``."""
-    pct = round(current / total * 100) if total else 0
-    filled = round(_BAR_WIDTH * current / total) if total else 0
+    if total <= 0:
+        pct = 0
+        filled = 0
+        display_current = 0
+    else:
+        display_current = min(current, total)  # Cap at 100% when goal < actual work
+        pct = round(display_current / total * 100)
+        filled = round(_BAR_WIDTH * display_current / total)
     blocks = "\u2588" * filled + "\u2591" * (_BAR_WIDTH - filled)
-    return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{current}/{total}</i>"
+    return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{display_current}/{total}</i>"
 
 
 def create_progress_redis():

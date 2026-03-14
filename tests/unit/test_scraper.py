@@ -114,14 +114,15 @@ class TestCollectVacancyUrls:
     """Tests for collect_vacancy_urls pagination and stop conditions."""
 
     @pytest.mark.asyncio
-    async def test_stops_after_three_pages_all_blacklisted(self, sample_vacancy_html: str) -> None:
+    async def test_stops_after_three_pages_all_blacklisted(
+        self, sample_vacancy_api_response: dict
+    ) -> None:
         """Stops after 3 consecutive pages that add nothing (e.g. all blacklisted)."""
         scraper = HHScraper()
-        soup = BeautifulSoup(sample_vacancy_html, "html.parser")
-        blacklisted = {"12345", "67890"}  # all IDs from sample_vacancy_html
-        mock_fetch = AsyncMock(return_value=soup)
+        blacklisted = {"12345", "67890"}  # all IDs from sample_vacancy_api_response
+        mock_fetch = AsyncMock(return_value=sample_vacancy_api_response)
 
-        with patch.object(scraper, "_fetch_page", mock_fetch):
+        with patch.object(scraper, "_fetch_api_page", mock_fetch):
             result = await scraper.collect_vacancy_urls(
                 "https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -137,13 +138,14 @@ class TestCollectVacancyUrlsBatch:
     """Tests for collect_vacancy_urls_batch (incremental fetching for compat flow)."""
 
     @pytest.mark.asyncio
-    async def test_returns_urls_next_page_and_has_more(self, sample_vacancy_html: str) -> None:
+    async def test_returns_urls_next_page_and_has_more(
+        self, sample_vacancy_api_response: dict
+    ) -> None:
         """Returns (urls, next_page, has_more) tuple."""
         scraper = HHScraper()
-        soup = BeautifulSoup(sample_vacancy_html, "html.parser")
-        mock_fetch = AsyncMock(return_value=soup)
+        mock_fetch = AsyncMock(return_value=sample_vacancy_api_response)
 
-        with patch.object(scraper, "_fetch_page", mock_fetch):
+        with patch.object(scraper, "_fetch_api_page", mock_fetch):
             urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -159,13 +161,14 @@ class TestCollectVacancyUrlsBatch:
         assert next_page >= 0
 
     @pytest.mark.asyncio
-    async def test_exclude_ids_skips_those_vacancies(self, sample_vacancy_html: str) -> None:
+    async def test_exclude_ids_skips_those_vacancies(
+        self, sample_vacancy_api_response: dict
+    ) -> None:
         """Vacancies in exclude_ids are not included in the result."""
         scraper = HHScraper()
-        soup = BeautifulSoup(sample_vacancy_html, "html.parser")
-        mock_fetch = AsyncMock(return_value=soup)
+        mock_fetch = AsyncMock(return_value=sample_vacancy_api_response)
 
-        with patch.object(scraper, "_fetch_page", mock_fetch):
+        with patch.object(scraper, "_fetch_api_page", mock_fetch):
             urls, _, _ = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -181,12 +184,12 @@ class TestCollectVacancyUrlsBatch:
 
     @pytest.mark.asyncio
     async def test_has_more_false_when_no_pages(self) -> None:
-        """has_more is False when no vacancy blocks on page."""
+        """has_more is False when no vacancy items on page."""
         scraper = HHScraper()
-        soup = BeautifulSoup("<html><body></body></html>", "html.parser")
-        mock_fetch = AsyncMock(return_value=soup)
+        empty_api_response = {"items": [], "pages": 0, "page": 0, "per_page": 50}
+        mock_fetch = AsyncMock(return_value=empty_api_response)
 
-        with patch.object(scraper, "_fetch_page", mock_fetch):
+        with patch.object(scraper, "_fetch_api_page", mock_fetch):
             urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -210,6 +213,81 @@ class TestBuildPageUrl:
         assert "page=0" not in url
 
 
+class TestBuildApiUrl:
+    def test_converts_to_api_base(self):
+        url = HHScraper._build_api_url(
+            "https://izhevsk.hh.ru/search/vacancy?text=Backend", page=0
+        )
+        assert url.startswith("https://api.hh.ru/vacancies")
+        assert "text=Backend" in url
+        assert "page=0" in url
+        assert "per_page=50" in url
+
+    def test_preserves_filter_params(self):
+        base = "https://hh.ru/search/vacancy?text=Python&area=113&employment_form=FULL"
+        url = HHScraper._build_api_url(base, page=2, per_page=20)
+        assert "text=Python" in url
+        assert "area=113" in url
+        assert "employment_form=FULL" in url
+        assert "page=2" in url
+        assert "per_page=20" in url
+
+    def test_drops_unsupported_params(self):
+        base = "https://hh.ru/search/vacancy?text=Python&hhtmFrom=vacancy_search_list"
+        url = HHScraper._build_api_url(base, page=0)
+        assert "hhtmFrom" not in url
+        assert "text=Python" in url
+
+    def test_overwrites_existing_page_and_per_page_params(self):
+        base = "https://hh.ru/search/vacancy?text=python&page=0&per_page=10"
+        url = HHScraper._build_api_url(base, page=2, per_page=20)
+        assert "text=python" in url
+        assert "page=2" in url
+        assert "per_page=20" in url
+        assert "page=0" not in url
+        assert "per_page=10" not in url
+
+
+class TestExtractVacanciesFromApiResponse:
+    def test_extracts_vacancies_with_matching_keyword(
+        self, sample_vacancy_api_response: dict
+    ):
+        scraper = HHScraper()
+        results = scraper._extract_vacancies_from_api_response(
+            sample_vacancy_api_response, "frontend"
+        )
+        assert len(results) == 1
+        assert results[0]["title"] == "Frontend Developer"
+        assert results[0]["hh_vacancy_id"] == "12345"
+        assert results[0]["url"] == "https://hh.ru/vacancy/12345"
+        assert results[0]["company_name"] == "Yandex"
+        assert "300 000" in results[0]["salary"]
+        assert "руб." in results[0]["salary"]
+
+    def test_extracts_all_vacancies_without_keyword(
+        self, sample_vacancy_api_response: dict
+    ):
+        scraper = HHScraper()
+        results = scraper._extract_vacancies_from_api_response(
+            sample_vacancy_api_response, ""
+        )
+        assert len(results) == 2
+
+    def test_returns_empty_for_no_matches(self, sample_vacancy_api_response: dict):
+        scraper = HHScraper()
+        results = scraper._extract_vacancies_from_api_response(
+            sample_vacancy_api_response, "devops"
+        )
+        assert len(results) == 0
+
+    def test_cleans_url_query_params(self, sample_vacancy_api_response: dict):
+        scraper = HHScraper()
+        results = scraper._extract_vacancies_from_api_response(
+            sample_vacancy_api_response, "frontend"
+        )
+        assert "?" not in results[0]["url"]
+
+
 class TestExtractVacancyId:
     def test_extracts_id_from_url(self):
         assert HHScraper._extract_vacancy_id("https://hh.ru/vacancy/12345") == "12345"
@@ -221,28 +299,56 @@ class TestExtractVacancyId:
         assert HHScraper._extract_vacancy_id("https://example.com/page") is None
 
 
+@pytest.fixture
+def sample_vacancy_detail_api_response() -> dict:
+    """HH.ru API vacancy detail response."""
+    return {
+        "id": "1",
+        "name": "Python Developer",
+        "description": "<p>Python developer needed. Django experience required.</p>",
+        "key_skills": [
+            {"name": "Python"},
+            {"name": "Django"},
+            {"name": "PostgreSQL"},
+        ],
+        "employer": {"name": "Acme Corp"},
+        "experience": {"id": "between1And3", "name": "1–3 года"},
+        "schedule": {"id": "fullDay", "name": "Полный день"},
+        "employment": {"id": "full", "name": "Полная занятость"},
+    }
+
+
 class TestParseVacancyPage:
     @pytest.mark.asyncio
-    async def test_extracts_description_and_skills(self, sample_vacancy_page_html: str):
+    async def test_extracts_description_and_skills(
+        self, sample_vacancy_detail_api_response: dict
+    ):
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(scraper, "_fetch_page") as mock_fetch:
-            mock_fetch.return_value = BeautifulSoup(sample_vacancy_page_html, "html.parser")
-            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = sample_vacancy_detail_api_response
+            result = await scraper.parse_vacancy_page(
+                mock_client, "https://hh.ru/vacancy/1"
+            )
 
         assert "Python" in result["description"]
         assert "Django" in result["description"]
         assert "Python" in result["skills"]
         assert "Django" in result["skills"]
         assert "PostgreSQL" in result["skills"]
+        assert result["raw_api_data"] == sample_vacancy_detail_api_response
 
     @pytest.mark.asyncio
     async def test_returns_empty_on_failed_fetch(self):
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(scraper, "_fetch_page", return_value=None):
-            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
+        with patch.object(
+            scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None
+        ):
+            result = await scraper.parse_vacancy_page(
+                mock_client, "https://hh.ru/vacancy/1"
+            )
 
         assert result == {}

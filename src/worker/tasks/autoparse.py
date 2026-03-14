@@ -141,6 +141,7 @@ def _build_autoparsed_vacancy(
         compatibility_score=compat_score,
         ai_summary=ai_summary or None,
         ai_stack=ai_stack or None,
+        raw_api_data=vac.get("raw_api_data"),
     )
 
 
@@ -167,6 +168,7 @@ async def _resolve_cached_vacancy(
             **vac,
             "description": existing_parsed.description or "",
             "raw_skills": existing_parsed.raw_skills or [],
+            "raw_api_data": existing_parsed.raw_api_data,
         }
     return vac, None
 
@@ -290,6 +292,7 @@ async def _run_autoparse_company_async(
                 "title": orm.title,
                 "description": orm.description or "",
                 "raw_skills": orm.raw_skills or [],
+                "raw_api_data": orm.raw_api_data,
                 "company_name": orm.company_name,
                 "company_url": orm.company_url,
                 "salary": orm.salary,
@@ -324,6 +327,7 @@ async def _run_autoparse_company_async(
                             title=existing.title or "",
                             skills=existing.raw_skills or [],
                             description=existing.description or "",
+                            raw_api_data=existing.raw_api_data,
                         )
                         to_analyze.append((vac_dict, compat_input))
                         continue
@@ -333,6 +337,7 @@ async def _run_autoparse_company_async(
                     title=vac.get("title", ""),
                     skills=vac.get("raw_skills", []),
                     description=vac.get("description", ""),
+                    raw_api_data=vac.get("raw_api_data"),
                 )
                 to_analyze.append((vac, compat_input))
 

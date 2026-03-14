@@ -36,6 +36,37 @@ def sample_vacancy_html() -> str:
 
 
 @pytest.fixture
+def sample_vacancy_api_response() -> dict:
+    """HH.ru API search response: two vacancies (Frontend 12345, Backend 67890)."""
+    return {
+        "items": [
+            {
+                "id": "12345",
+                "name": "Frontend Developer",
+                "alternate_url": "https://hh.ru/vacancy/12345",
+                "employer": {"name": "Yandex", "alternate_url": "https://hh.ru/employer/100"},
+                "salary": {"from": 300000, "to": None, "currency": "RUR"},
+                "work_format": [{"id": "REMOTE", "name": "Remote"}],
+                "schedule": {"id": "fullDay", "name": "Полный день"},
+            },
+            {
+                "id": "67890",
+                "name": "Backend Developer",
+                "alternate_url": "https://hh.ru/vacancy/67890",
+                "employer": {"name": "Acme Corp", "alternate_url": "https://hh.ru/employer/200"},
+                "salary": None,
+                "work_format": [],
+                "schedule": None,
+            },
+        ],
+        "found": 100,
+        "pages": 5,
+        "page": 0,
+        "per_page": 50,
+    }
+
+
+@pytest.fixture
 def sample_vacancy_page_html() -> str:
     """Full vacancy detail page with description, skills, and all detail fields."""
     return """

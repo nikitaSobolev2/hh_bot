@@ -10,7 +10,7 @@ from src.core.logging import get_logger
 from src.schemas.vacancy import PipelineResult, VacancyData
 from src.services.ai.client import AIClient
 from src.services.ai.prompts import VacancyCompatInput
-from src.services.parser.scraper import HHScraper
+from src.services.parser.scraper import HHScraper, _map_api_vacancy_to_page_data
 
 logger = get_logger(__name__)
 
@@ -273,9 +273,20 @@ class ParsingExtractor:
             vac: dict,
         ) -> VacancyData:
             async with sem:
-                page_data = await self._scraper.parse_vacancy_page(client, vac["url"])
-            description = page_data.get("description", "")
-            skills: list[str] = page_data.get("skills", [])
+                api_response = await self._scraper.fetch_vacancy_by_id(
+                    client, vac["hh_vacancy_id"]
+                )
+            if not api_response:
+                return VacancyData(
+                    hh_vacancy_id=vac["hh_vacancy_id"],
+                    url=vac["url"],
+                    title=vac["title"],
+                    raw_skills=[],
+                    description="",
+                    salary=vac.get("salary", ""),
+                    company_name=vac.get("company_name", ""),
+                )
+            page_data = _map_api_vacancy_to_page_data(api_response, vac)
             async with scrape_lock:
                 scraped_count[0] += 1
                 scrape_current = scraped_count[0]
@@ -284,17 +295,18 @@ class ParsingExtractor:
             return VacancyData(
                 hh_vacancy_id=vac["hh_vacancy_id"],
                 url=vac["url"],
-                title=vac["title"],
-                raw_skills=skills,
-                description=description,
-                salary=vac.get("salary", ""),
-                company_name=vac.get("company_name", ""),
+                title=page_data.get("title", vac["title"]),
+                raw_skills=page_data.get("skills", []),
+                description=page_data.get("description", ""),
+                salary=page_data.get("salary", vac.get("salary", "")),
+                company_name=page_data.get("company_name", vac.get("company_name", "")),
                 work_experience=page_data.get("work_experience", ""),
                 employment_type=page_data.get("employment_type", ""),
                 work_schedule=page_data.get("work_schedule", ""),
                 work_formats=page_data.get("work_formats", ""),
                 compensation_frequency=page_data.get("compensation_frequency", ""),
                 working_hours=page_data.get("working_hours", ""),
+                raw_api_data=page_data.get("raw_api_data", {}),
             )
 
         async with httpx.AsyncClient() as client:
@@ -310,6 +322,7 @@ class ParsingExtractor:
                             title=p.title,
                             skills=p.raw_skills,
                             description=p.description,
+                            raw_api_data=p.raw_api_data,
                         )
                         for p in partials
                     ]
@@ -339,9 +352,12 @@ class ParsingExtractor:
 
                 for partial in passing:
                     ai_keywords: list[str] = []
-                    if partial.description:
+                    if partial.description or partial.raw_api_data:
                         async with ai_sem:
-                            ai_keywords = await self._ai.extract_keywords(partial.description)
+                            ai_keywords = await self._ai.extract_keywords(
+                                partial.description,
+                                raw_api_data=partial.raw_api_data or None,
+                            )
 
                     async with kw_lock:
                         kw_count[0] += 1
@@ -373,6 +389,7 @@ class ParsingExtractor:
                         work_formats=partial.work_formats,
                         compensation_frequency=partial.compensation_frequency,
                         working_hours=partial.working_hours,
+                        raw_api_data=partial.raw_api_data,
                     )
                     processed_vacancies.append(vacancy_data)
                     for skill in partial.raw_skills:

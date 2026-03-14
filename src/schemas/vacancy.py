@@ -23,6 +23,7 @@ class VacancyData:
     work_formats: str = ""
     compensation_frequency: str = ""
     working_hours: str = ""
+    raw_api_data: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

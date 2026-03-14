@@ -425,6 +425,7 @@ async def _save_single_vacancy(
                 description=vac_data.description,
                 raw_skills=vac_data.raw_skills,
                 ai_keywords=vac_data.ai_keywords,
+                raw_api_data=vac_data.raw_api_data if vac_data.raw_api_data else None,
             )
         )
         stmt = (

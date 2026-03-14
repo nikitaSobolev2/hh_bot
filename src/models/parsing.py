@@ -56,6 +56,7 @@ class ParsedVacancy(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     raw_skills: Mapped[list | None] = mapped_column(JSONB, default=None)
     ai_keywords: Mapped[list | None] = mapped_column(JSONB, default=None)
+    raw_api_data: Mapped[dict | None] = mapped_column(JSONB, default=None)
 
     parsing_company: Mapped[ParsingCompany] = relationship(back_populates="vacancies")
 
