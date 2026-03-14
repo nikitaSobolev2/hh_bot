@@ -158,6 +158,7 @@ parsing-file-sent = File sent
 
 # ── Parsing detail ───────────────────────────────────────
 detail-status = <b>Status:</b> { $status }
+detail-filter-link = <b>Filter Link:</b> <a href='{ $link }'>Link</a>
 detail-processed = <b>Processed:</b> { $processed }/{ $total }
 detail-filter = <b>Filter:</b> { $filter }
 detail-filter-none = none
@@ -781,6 +782,9 @@ progress-retrying = ⚠️ Something went wrong, retrying...
 progress-bar-scraping = 🌐 Scraping
 progress-bar-keywords = 🧠 Keywords
 progress-bar-ai = 🧠 AI Analysis
+progress-btn-cancel = ❌ Cancel
+progress-task-cancelled = Task cancelled.
+progress-task-already-finished = Task already finished.
 
 # ── Work Experience (shared module) ──────────────────────────
 work-exp-title = 💼 Work Experience

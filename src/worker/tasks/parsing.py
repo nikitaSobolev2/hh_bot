@@ -147,7 +147,9 @@ async def _run_parsing_company_async(
             bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
 
         task_key = f"parse:{parsing_company_id}"
-        progress = await _start_progress(bot, telegram_chat_id, company, locale)
+        progress = await _start_progress(
+            bot, telegram_chat_id, company, locale, celery_task_id=task.request.id
+        )
 
         restored = await checkpoint.load_parsing(checkpoint_key, task_id)
         if not restored:
@@ -291,6 +293,7 @@ async def _start_progress(
     chat_id: int,
     company: "ParsingCompany",  # noqa: F821
     locale: str,
+    celery_task_id: str | None = None,
 ) -> "ProgressService | None":  # noqa: F821
     """Create a ProgressService and register the parsing task bars."""
     if not bot or not chat_id:
@@ -306,6 +309,7 @@ async def _start_progress(
             get_text("progress-bar-scraping", locale),
             get_text("progress-bar-keywords", locale),
         ],
+        celery_task_id=celery_task_id,
     )
     return svc
 

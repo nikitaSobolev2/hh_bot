@@ -251,6 +251,7 @@ async def _run_autoparse_company_async(
                     get_text("progress-bar-scraping", locale),
                     get_text("progress-bar-ai", locale),
                 ],
+                celery_task_id=task.request.id,
             )
 
         async def _on_vacancy_scraped(current: int, total: int) -> None:

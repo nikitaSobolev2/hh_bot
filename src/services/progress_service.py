@@ -37,6 +37,7 @@ from src.core.logging import get_logger
 logger = get_logger(__name__)
 
 _BAR_WIDTH = 20
+_PROGRESS_CANCEL_PREFIX = "prog:cancel:"
 _THROTTLE_MS = 500
 _PROGRESS_TTL = 4 * 3600  # seconds
 _MSGLOCK_TTL = 10  # seconds
@@ -86,6 +87,7 @@ class ProgressService:
         task_key: str,
         title: str,
         bar_labels: list[str],
+        celery_task_id: str | None = None,
     ) -> None:
         """Register a new task and show or update the pinned progress message."""
         state = {
@@ -93,6 +95,8 @@ class ProgressService:
             "status": "running",
             "bars": [{"label": label, "current": 0, "total": 0} for label in bar_labels],
         }
+        if celery_task_id is not None:
+            state["celery_task_id"] = celery_task_id
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -136,6 +140,15 @@ class ProgressService:
                 json.dumps(state),
                 ex=_PROGRESS_TTL,
             )
+            await self._refresh_message(force=True)
+
+    async def cancel_task(self, task_key: str) -> None:
+        """Remove task from progress and refresh. Call after revoking the Celery task."""
+        await self._redis.delete(self._task_key(task_key))
+        tasks = await self._load_all_tasks()
+        if not tasks:
+            await self._cleanup_pin_only()
+        else:
             await self._refresh_message(force=True)
 
     async def finish_task(self, task_key: str) -> None:
@@ -213,7 +226,8 @@ class ProgressService:
             return
 
         text = self._render_progress_text(tasks)
-        pin_msg_id = await self._get_or_create_pin_message(text)
+        reply_markup = self._build_cancel_keyboard(tasks)
+        pin_msg_id = await self._get_or_create_pin_message(text, reply_markup)
         if pin_msg_id is None:
             return
 
@@ -223,6 +237,7 @@ class ProgressService:
                 chat_id=self._chat_id,
                 message_id=pin_msg_id,
                 parse_mode="HTML",
+                reply_markup=reply_markup,
             )
         except TelegramBadRequest:
             # Message was deleted externally or text is unchanged — safe to ignore.
@@ -231,7 +246,9 @@ class ProgressService:
             logger.warning("Progress edit flood control", retry_after=exc.retry_after)
             await asyncio.sleep(exc.retry_after)
 
-    async def _get_or_create_pin_message(self, text: str) -> int | None:
+    async def _get_or_create_pin_message(
+        self, text: str, reply_markup=None
+    ) -> int | None:
         """Return the pinned message ID, creating and pinning it if it does not exist."""
         from aiogram.exceptions import TelegramBadRequest
 
@@ -251,6 +268,7 @@ class ProgressService:
                 chat_id=self._chat_id,
                 text=text,
                 parse_mode="HTML",
+                reply_markup=reply_markup,
             )
             msg_id = msg.message_id
             await self._redis.set(self._pin_key(), str(msg_id), ex=_PROGRESS_TTL)
@@ -264,6 +282,30 @@ class ProgressService:
             return msg_id
         finally:
             await self._redis.delete(self._msglock_key())
+
+    async def _cleanup_pin_only(self) -> None:
+        """Remove pinned message and task keys without sending completion summary."""
+        from aiogram.exceptions import TelegramBadRequest
+
+        pin_raw = await self._redis.get(self._pin_key())
+        if pin_raw:
+            pin_msg_id = int(pin_raw)
+            if self._is_dm:
+                with contextlib.suppress(TelegramBadRequest):
+                    await self._bot.unpin_chat_message(
+                        chat_id=self._chat_id,
+                        message_id=pin_msg_id,
+                    )
+            with contextlib.suppress(TelegramBadRequest):
+                await self._bot.delete_message(
+                    chat_id=self._chat_id,
+                    message_id=pin_msg_id,
+                )
+            await self._redis.delete(self._pin_key())
+
+        task_keys = await self._redis.keys(f"progress:task:{self._chat_id}:*")
+        if task_keys:
+            await self._redis.delete(*task_keys)
 
     async def _finalise(self, tasks: dict[str, dict]) -> None:
         """Unpin and delete the progress message, then send a completion summary."""
@@ -299,6 +341,29 @@ class ProgressService:
     # ------------------------------------------------------------------
     # Text renderers
     # ------------------------------------------------------------------
+
+    def _build_cancel_keyboard(self, tasks: dict[str, dict]):
+        """Build inline keyboard with one cancel button per running task that has celery_task_id."""
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        buttons = []
+        for task_key, state in tasks.items():
+            if state.get("status") == "completed":
+                continue
+            if not state.get("celery_task_id"):
+                continue
+            encoded_key = task_key.replace(":", "_")
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=get_text("progress-btn-cancel", self._locale),
+                        callback_data=f"{_PROGRESS_CANCEL_PREFIX}{encoded_key}",
+                    )
+                ]
+            )
+        if not buttons:
+            return None
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
 
     def _render_progress_text(self, tasks: dict[str, dict]) -> str:
         """Render the full combined progress message for all active tasks."""

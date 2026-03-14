@@ -149,6 +149,7 @@ def format_company_detail(company: ParsingCompany, i18n: I18nContext) -> str:
     created = company.created_at.strftime("%Y-%m-%d %H:%M")
     text = (
         f"<b>{company.vacancy_title}</b>\n\n"
+        f"{i18n.get('detail-filter-link', link=company.search_url)}\n"
         f"{i18n.get('detail-status', status=company.status)}\n"
         f"{i18n.get('detail-processed', processed=processed, total=total)}\n"
         f"{i18n.get('detail-filter', filter=filter_val)}\n"

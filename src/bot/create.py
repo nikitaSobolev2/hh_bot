@@ -41,6 +41,7 @@ def _register_routers(dp: Dispatcher) -> None:
     from src.bot.modules.interviews.handlers import router as interviews_router
     from src.bot.modules.parsing.handlers import router as parsing_router
     from src.bot.modules.profile.handlers import router as profile_router
+    from src.bot.modules.progress.handlers import router as progress_router
     from src.bot.modules.resume.handlers import router as resume_router
     from src.bot.modules.start.handlers import router as start_router
     from src.bot.modules.support.admin_handlers import router as support_admin_router
@@ -50,6 +51,7 @@ def _register_routers(dp: Dispatcher) -> None:
     from src.bot.modules.work_experience.handlers import router as work_experience_router
 
     dp.include_router(start_router)
+    dp.include_router(progress_router)
     dp.include_router(profile_router)
     dp.include_router(user_settings_router)
     dp.include_router(work_experience_router)

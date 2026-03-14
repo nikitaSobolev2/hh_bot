@@ -178,6 +178,114 @@ class TestStartTask:
         bot.send_message.assert_not_called()
         bot.edit_message_text.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_stores_celery_task_id_when_provided(self):
+        svc, bot, redis = _make_service(chat_id=111)
+        redis.get = AsyncMock(return_value=None)
+        redis.set = AsyncMock(return_value=True)
+        redis.keys = AsyncMock(return_value=["progress:task:111:parse:1"])
+        redis.mget = AsyncMock(return_value=[json.dumps(_task_state())])
+
+        await svc.start_task(
+            "parse:1",
+            "Backend Dev",
+            ["🌐 Scraping"],
+            celery_task_id="abc-123-def",
+        )
+
+        first_set_call = redis.set.call_args_list[0]
+        state = json.loads(first_set_call.args[1])
+        assert state["celery_task_id"] == "abc-123-def"
+
+
+# ---------------------------------------------------------------------------
+# cancel_task
+# ---------------------------------------------------------------------------
+
+
+class TestCancelTask:
+    @pytest.mark.asyncio
+    async def test_deletes_task_and_refreshes_when_other_tasks_remain(self):
+        state1 = _task_state(title="Task 1", status="running")
+        state1["celery_task_id"] = "celery-1"
+        state2 = _task_state(title="Task 2", status="running")
+        state2["celery_task_id"] = "celery-2"
+        redis = _make_redis(
+            pin="42",
+            task=json.dumps(state1),
+            task_keys=["progress:task:111:parse:1", "progress:task:111:parse:2"],
+            task_values=[json.dumps(state1), json.dumps(state2)],
+        )
+        svc, bot, _ = _make_service(chat_id=111, redis=redis)
+
+        await svc.cancel_task("parse:1")
+
+        redis.delete.assert_any_call("progress:task:111:parse:1")
+        bot.edit_message_text.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cleans_up_pin_when_last_task_cancelled(self):
+        state = _task_state(title="Task 1", status="running")
+        state["celery_task_id"] = "celery-1"
+        redis = _make_redis(
+            pin="42",
+            task=json.dumps(state),
+            task_keys=[],  # After delete, no tasks remain
+            task_values=[],
+        )
+        svc, bot, _ = _make_service(chat_id=111, redis=redis)
+
+        await svc.cancel_task("parse:1")
+
+        redis.delete.assert_any_call("progress:task:111:parse:1")
+        bot.delete_message.assert_awaited_once()
+        bot.unpin_chat_message.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _build_cancel_keyboard
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCancelKeyboard:
+    def test_returns_none_when_no_running_tasks_with_celery_id(self):
+        svc, _, _ = _make_service()
+        tasks = {
+            "parse:1": _task_state(status="completed"),
+        }
+        result = svc._build_cancel_keyboard(tasks)
+        assert result is None
+
+    def test_returns_none_when_running_task_has_no_celery_task_id(self):
+        svc, _, _ = _make_service()
+        tasks = {
+            "parse:1": _task_state(status="running"),
+        }
+        result = svc._build_cancel_keyboard(tasks)
+        assert result is None
+
+    def test_returns_keyboard_with_button_for_running_task_with_celery_id(self):
+        svc, _, _ = _make_service(locale="en")
+        state = _task_state(status="running")
+        state["celery_task_id"] = "celery-123"
+        tasks = {"parse:1": state}
+        result = svc._build_cancel_keyboard(tasks)
+        assert result is not None
+        assert len(result.inline_keyboard) == 1
+        assert result.inline_keyboard[0][0].callback_data == "prog:cancel:parse_1"
+        assert "Cancel" in result.inline_keyboard[0][0].text
+
+    def test_includes_only_running_tasks_with_celery_id(self):
+        svc, _, _ = _make_service()
+        running = _task_state(status="running")
+        running["celery_task_id"] = "celery-1"
+        completed = _task_state(status="completed")
+        completed["celery_task_id"] = "celery-2"
+        tasks = {"parse:1": running, "parse:2": completed}
+        result = svc._build_cancel_keyboard(tasks)
+        assert result is not None
+        assert len(result.inline_keyboard) == 1
+
 
 # ---------------------------------------------------------------------------
 # mark_retrying
