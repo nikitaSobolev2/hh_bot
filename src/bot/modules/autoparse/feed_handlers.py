@@ -282,6 +282,56 @@ async def handle_feed_create_cover_letter(
     )
 
 
+@router.callback_query(FeedCallback.filter(F.action == "regenerate_cover_letter"))
+async def handle_feed_regenerate_cover_letter(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed:
+        await callback.answer()
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    from src.bot.modules.autoparse import services as ap_service
+    from src.core.celery_async import run_celery_task
+    from src.repositories.task import CeleryTaskRepository
+    from src.worker.tasks.cover_letter import generate_cover_letter_task
+
+    idempotency_key = f"cover_letter:{user.id}:{vacancy.id}"
+    await CeleryTaskRepository(session).delete_by_idempotency_key(idempotency_key)
+    await session.commit()
+
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    cover_letter_style = current.get("cover_letter_style", "professional")
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("feed-cover-letter-generating"),
+            parse_mode="HTML",
+        )
+
+    await run_celery_task(
+        generate_cover_letter_task,
+        user.id,
+        vacancy.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        user.language_code or "ru",
+        cover_letter_style,
+        callback_data.session_id,
+    )
+    await callback.answer()
+
+
 @router.callback_query(FeedCallback.filter(F.action == "back_to_vacancy"))
 async def handle_feed_back_to_vacancy(
     callback: CallbackQuery,

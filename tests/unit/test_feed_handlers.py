@@ -362,6 +362,66 @@ async def test_handle_feed_back_to_vacancy_does_nothing_when_session_not_found()
 
 
 @pytest.mark.asyncio
+async def test_handle_feed_regenerate_cover_letter_deletes_task_and_reruns(
+    make_feed_session, make_vacancy
+):
+    callback, callback_data = _make_callback(
+        session_id=1, action="regenerate_cover_letter", vacancy_id=10
+    )
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(
+        session_id=1, vacancy_ids=[10, 20], is_completed=False
+    )
+    vacancy = make_vacancy(vacancy_id=10, url="https://hh.ru/10")
+
+    task_repo_delete = AsyncMock(return_value=True)
+    run_celery_mock = AsyncMock()
+    ap_settings = AsyncMock(return_value={"cover_letter_style": "professional"})
+
+    with (
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
+            AsyncMock(return_value=feed_session),
+        ),
+        patch(
+            "src.bot.modules.autoparse.services.get_user_autoparse_settings",
+            ap_settings,
+        ),
+        patch("src.bot.modules.autoparse.feed_handlers.AutoparsedVacancyRepository") as mock_repo,
+        patch(
+            "src.repositories.task.CeleryTaskRepository"
+        ) as mock_task_repo_cls,
+        patch(
+            "src.core.celery_async.run_celery_task",
+            run_celery_mock,
+        ),
+    ):
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.get_by_id = AsyncMock(return_value=vacancy)
+        mock_repo.return_value = mock_repo_instance
+
+        mock_task_repo = AsyncMock()
+        mock_task_repo.delete_by_idempotency_key = task_repo_delete
+        mock_task_repo_cls.return_value = mock_task_repo
+
+        from src.bot.modules.autoparse.feed_handlers import (
+            handle_feed_regenerate_cover_letter,
+        )
+
+        await handle_feed_regenerate_cover_letter(
+            callback=callback,
+            callback_data=callback_data,
+            session=mock_session,
+            user=MagicMock(id=1, language_code="ru"),
+            i18n=_make_i18n(),
+        )
+
+    task_repo_delete.assert_called_once_with("cover_letter:1:10")
+    run_celery_mock.assert_called_once()
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_handle_feed_back_to_vacancy_does_nothing_when_vacancy_not_found(
     make_feed_session,
 ):

@@ -80,7 +80,7 @@ def _truncate_for_display(text: str) -> str:
 def _build_cover_letter_keyboard(
     session_id: int, vacancy_id: int, locale: str
 ):
-    """Build keyboard with Back button for cover letter view."""
+    """Build keyboard with Regenerate and Back buttons for cover letter view."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     from src.bot.modules.autoparse.callbacks import FeedCallback
@@ -90,13 +90,21 @@ def _build_cover_letter_keyboard(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text=get_text("feed-btn-regenerate-cover-letter", locale),
+                    callback_data=FeedCallback(
+                        action="regenerate_cover_letter",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
                     text=get_text("btn-back", locale),
                     callback_data=FeedCallback(
                         action="back_to_vacancy",
                         session_id=session_id,
                         vacancy_id=vacancy_id,
                     ).pack(),
-                )
+                ),
             ]
         ]
     )

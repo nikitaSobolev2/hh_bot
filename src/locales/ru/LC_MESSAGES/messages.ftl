@@ -667,6 +667,7 @@ feed-btn-open = 🔗 Открыть на HH.ru
 feed-btn-like = 👍 Нравится
 feed-btn-dislike = 👎 Не нравится
 feed-btn-create-cover-letter = ✉️ Создать сопроводительное письмо
+feed-btn-regenerate-cover-letter = 🔄 Перегенерировать
 feed-btn-show-later = 🔄 Показать позже
 feed-btn-stop = ⏹ Остановить
 feed-cover-letter-generating = ⏳ Генерирую сопроводительное письмо...

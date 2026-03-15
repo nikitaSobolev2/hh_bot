@@ -53,14 +53,15 @@ class TestTruncateForDisplay:
 
 
 class TestBuildCoverLetterKeyboard:
-    def test_returns_keyboard_with_back_button(self) -> None:
+    def test_returns_keyboard_with_regenerate_and_back_buttons(self) -> None:
         keyboard = _build_cover_letter_keyboard(session_id=1, vacancy_id=42, locale="ru")
         assert keyboard.inline_keyboard
         assert len(keyboard.inline_keyboard) == 1
         row = keyboard.inline_keyboard[0]
-        assert len(row) == 1
-        btn = row[0]
-        assert "back_to_vacancy" in btn.callback_data
+        assert len(row) == 2
+        callback_datas = [btn.callback_data for btn in row]
+        assert any("regenerate_cover_letter" in d for d in callback_datas)
+        assert any("back_to_vacancy" in d for d in callback_datas)
 
 
 @pytest.mark.asyncio

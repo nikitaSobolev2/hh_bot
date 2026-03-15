@@ -13,6 +13,14 @@ class CeleryTaskRepository(BaseRepository[BaseCeleryTask]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, BaseCeleryTask)
 
+    async def delete_by_idempotency_key(self, key: str) -> bool:
+        """Delete task by idempotency key. Returns True if a row was deleted."""
+        existing = await self.get_by_idempotency_key(key)
+        if existing:
+            await self.delete_by_id(existing.id)
+            return True
+        return False
+
     async def get_by_idempotency_key(self, key: str) -> BaseCeleryTask | None:
         stmt = select(BaseCeleryTask).where(BaseCeleryTask.idempotency_key == key)
         result = await self._session.execute(stmt)
