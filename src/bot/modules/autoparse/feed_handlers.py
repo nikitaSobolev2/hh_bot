@@ -63,6 +63,16 @@ def feed_vacancy_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("feed-btn-create-cover-letter"),
+                    callback_data=FeedCallback(
+                        action="create_cover_letter",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("feed-btn-show-later"),
                     callback_data=FeedCallback(
                         action="show_later", session_id=session_id, vacancy_id=vacancy_id
@@ -227,6 +237,48 @@ async def handle_feed_show_later(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
+
+
+@router.callback_query(FeedCallback.filter(F.action == "create_cover_letter"))
+async def handle_feed_create_cover_letter(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    await callback.answer()
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed:
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
+    if not vacancy:
+        return
+
+    from src.bot.modules.autoparse import services as ap_service
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.cover_letter import generate_cover_letter_task
+
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    cover_letter_style = current.get("cover_letter_style", "professional")
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("feed-cover-letter-generating"),
+            parse_mode="HTML",
+        )
+
+    await run_celery_task(
+        generate_cover_letter_task,
+        user.id,
+        vacancy.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        user.language_code or "ru",
+        cover_letter_style,
+    )
 
 
 @router.callback_query(FeedCallback.filter(F.action == "stop"))

@@ -16,3 +16,4 @@ class AutoparseSettingsForm(StatesGroup):
     send_time = State()
     tech_stack = State()
     min_compat_percent = State()
+    cover_letter_style_custom = State()

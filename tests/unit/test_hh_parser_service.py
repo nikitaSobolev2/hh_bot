@@ -106,8 +106,8 @@ class TestHHParserServiceDedup:
         assert len(new_results) == 5
 
     @pytest.mark.asyncio
-    async def test_collect_vacancy_urls_called_with_target_count_and_blacklist(self):
-        """Scraper receives target_count (not target_count + len(known)) and known as blacklist."""
+    async def test_collect_vacancy_urls_called_with_target_count_and_known_ids(self):
+        """Scraper receives target_count and known_ids_to_include (not blacklisted_ids)."""
         service = HHParserService()
         collected = [
             {"url": "https://hh.ru/vacancy/1", "title": "Dev 1", "hh_vacancy_id": "1"},
@@ -138,5 +138,5 @@ class TestHHParserServiceDedup:
             "https://hh.ru/search",
             "python",
             50,
-            blacklisted_ids=known,
+            known_ids_to_include=known,
         )

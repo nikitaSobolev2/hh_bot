@@ -46,7 +46,7 @@ class HHParserService:
             search_url,
             keyword_filter,
             target_count,
-            blacklisted_ids=known,
+            known_ids_to_include=known,
         )
 
         results: list[dict] = []

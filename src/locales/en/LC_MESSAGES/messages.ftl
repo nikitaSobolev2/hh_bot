@@ -644,6 +644,15 @@ autoparse-disliked-empty = You have no disliked vacancies yet.
 autoparse-include-reacted-prompt = Include previously reacted vacancies in the feed again?
 autoparse-include-reacted-yes = Yes
 autoparse-include-reacted-no = No
+autoparse-settings-cover-letter-style = ✉️ Cover letter style
+autoparse-cover-letter-style-current = Current: { $style }
+autoparse-cover-letter-style-choose = Choose style:
+autoparse-cover-letter-style-professional = Professional
+autoparse-cover-letter-style-friendly = Friendly
+autoparse-cover-letter-style-concise = Concise
+autoparse-cover-letter-style-detailed = Detailed
+autoparse-cover-letter-style-custom = Custom value
+autoparse-enter-cover-letter-style = Enter custom style description (e.g. formal, creative):
 
 # ── Vacancy Feed ──────────────────────────────────────────
 feed-stats-count = 🆕 { $count } new vacancies
@@ -654,8 +663,10 @@ feed-vacancy-progress = [{ $current } / { $total }]
 feed-btn-open = 🔗 Open on HH.ru
 feed-btn-like = 👍 Like
 feed-btn-dislike = 👎 Dislike
+feed-btn-create-cover-letter = ✉️ Create Cover Letter
 feed-btn-show-later = 🔄 Show later
 feed-btn-stop = ⏹ Stop
+feed-cover-letter-generating = ⏳ Generating cover letter...
 feed-results-header = 📊 Feed Results
 feed-results-seen = Viewed: { $seen } of { $total }
 feed-results-liked = 👍 Liked: { $liked }

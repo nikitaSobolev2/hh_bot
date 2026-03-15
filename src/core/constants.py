@@ -113,6 +113,7 @@ class TaskName(StrEnum):
     GENERATE_WORK_EXPERIENCE_AI = "work_experience.generate_ai"
     GENERATE_RESUME_KEY_PHRASES = "work_experience.generate_resume_keyphrases"
     GENERATE_RECOMMENDATION_LETTER = "recommendation_letter.generate"
+    GENERATE_COVER_LETTER = "cover_letter.generate"
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +133,7 @@ class AppSettingKey(StrEnum):
     TASK_ACHIEVEMENTS_ENABLED = "task_achievements_enabled"
     TASK_WORK_EXPERIENCE_AI_ENABLED = "task_work_experience_ai_enabled"
     TASK_RECOMMENDATION_LETTER_ENABLED = "task_recommendation_letter_enabled"
+    TASK_COVER_LETTER_ENABLED = "task_cover_letter_enabled"
 
     AUTOPARSE_INTERVAL_HOURS = "autoparse_interval_hours"
     BLACKLIST_DAYS = "blacklist_days"
@@ -157,6 +159,8 @@ class AppSettingKey(StrEnum):
     CB_WORK_EXPERIENCE_AI_RECOVERY_TIMEOUT = "cb_work_experience_ai_recovery_timeout"
     CB_RECOMMENDATION_LETTER_FAILURE_THRESHOLD = "cb_recommendation_letter_failure_threshold"
     CB_RECOMMENDATION_LETTER_RECOVERY_TIMEOUT = "cb_recommendation_letter_recovery_timeout"
+    CB_COVER_LETTER_FAILURE_THRESHOLD = "cb_cover_letter_failure_threshold"
+    CB_COVER_LETTER_RECOVERY_TIMEOUT = "cb_cover_letter_recovery_timeout"
     CB_INTERVIEW_ANALYSIS_FAILURE_THRESHOLD = "cb_interview_analysis_failure_threshold"
     CB_INTERVIEW_ANALYSIS_RECOVERY_TIMEOUT = "cb_interview_analysis_recovery_timeout"
     CB_IMPROVEMENT_FLOW_FAILURE_THRESHOLD = "cb_improvement_flow_failure_threshold"

@@ -190,12 +190,26 @@ def generate_full_md(vacancies: list[AutoparsedVacancy]) -> str:
     return "\n\n".join(parts)
 
 
+DEFAULT_COVER_LETTER_STYLE = "professional"
+COVER_LETTER_STYLES = ("professional", "friendly", "concise", "detailed")
+
+
 async def get_user_autoparse_settings(session: AsyncSession, user_id: int) -> dict:
     user_repo = UserRepository(session)
     user = await user_repo.get_by_id(user_id)
     if not user or not user.autoparse_settings:
-        return {"send_time": "12:00", "work_experience": "", "tech_stack": []}
-    defaults = {"send_time": "12:00", "work_experience": "", "tech_stack": []}
+        return {
+            "send_time": "12:00",
+            "work_experience": "",
+            "tech_stack": [],
+            "cover_letter_style": DEFAULT_COVER_LETTER_STYLE,
+        }
+    defaults = {
+        "send_time": "12:00",
+        "work_experience": "",
+        "tech_stack": [],
+        "cover_letter_style": DEFAULT_COVER_LETTER_STYLE,
+    }
     defaults.update(user.autoparse_settings)
     return defaults
 

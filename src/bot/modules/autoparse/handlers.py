@@ -23,6 +23,7 @@ from src.bot.modules.autoparse.keyboards import (
     autoparse_settings_keyboard,
     cancel_keyboard,
     confirm_delete_keyboard,
+    cover_letter_style_keyboard,
     download_format_keyboard,
     include_reacted_keyboard,
     liked_disliked_list_keyboard,
@@ -84,8 +85,12 @@ async def show_autoparse_hub(callback: CallbackQuery, i18n: I18nContext) -> None
 
 @router.callback_query(AutoparseCallback.filter(F.action == "hub"))
 async def hub_handler(
-    callback: CallbackQuery, callback_data: AutoparseCallback, i18n: I18nContext
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    state: FSMContext,
+    i18n: I18nContext,
 ) -> None:
+    await state.clear()
     await show_autoparse_hub(callback, i18n)
     await callback.answer()
 
@@ -645,12 +650,14 @@ async def settings_hub(
         stack_display = "—"
 
     min_compat = current.get("min_compatibility_percent", 50)
+    cover_style = current.get("cover_letter_style", ap_service.DEFAULT_COVER_LETTER_STYLE)
     text = (
         f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
         f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
         f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
         f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
-        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%"
+        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
+        f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=autoparse_settings_keyboard(i18n))
@@ -755,6 +762,121 @@ async def receive_min_compat_percent(
         return
     await ap_service.update_user_autoparse_settings(
         session, user.id, min_compatibility_percent=int(raw)
+    )
+    await state.clear()
+    await message.answer(
+        i18n.get("autoparse-settings-saved"),
+        reply_markup=autoparse_hub_keyboard(i18n),
+    )
+
+
+@router.callback_query(AutoparseSettingsCallback.filter(F.action == "cover_letter_style"))
+async def settings_cover_letter_style(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    cover_style = current.get("cover_letter_style", ap_service.DEFAULT_COVER_LETTER_STYLE)
+    text = (
+        f"{i18n.get('autoparse-cover-letter-style-current', style=cover_style)}\n\n"
+        f"{i18n.get('autoparse-cover-letter-style-choose')}"
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=cover_letter_style_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(
+    AutoparseSettingsCallback.filter(
+        F.action.in_(
+            {
+                "cover_letter_style_professional",
+                "cover_letter_style_friendly",
+                "cover_letter_style_concise",
+                "cover_letter_style_detailed",
+            }
+        )
+    )
+)
+async def settings_cover_letter_style_select(
+    callback: CallbackQuery,
+    callback_data: AutoparseSettingsCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    prefix = "cover_letter_style_"
+    style = (
+        callback_data.action[len(prefix) :]
+        if callback_data.action.startswith(prefix)
+        else "professional"
+    )
+    await ap_service.update_user_autoparse_settings(
+        session, user.id, cover_letter_style=style
+    )
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    experiences = await parsing_service.get_active_work_experiences(session, user.id)
+    if experiences:
+        exp_lines = [f"  \u2022 <b>{e.company_name}</b> \u2014 {e.stack}" for e in experiences]
+        exp_display = "\n" + "\n".join(exp_lines)
+    else:
+        exp_display = " —"
+    custom_stack = current.get("tech_stack", [])
+    if custom_stack:
+        stack_display = ", ".join(custom_stack)
+    elif experiences:
+        derived = ap_service.derive_tech_stack_from_experiences(experiences)
+        stack_display = f"{', '.join(derived)} ({i18n.get('autoparse-settings-stack-auto')})"
+    else:
+        stack_display = "—"
+    min_compat = current.get("min_compatibility_percent", 50)
+    cover_style = current.get("cover_letter_style", ap_service.DEFAULT_COVER_LETTER_STYLE)
+    text = (
+        f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
+        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
+        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
+        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
+        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
+        f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=autoparse_settings_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(
+    AutoparseSettingsCallback.filter(F.action == "cover_letter_style_custom")
+)
+async def settings_cover_letter_style_custom(
+    callback: CallbackQuery, state: FSMContext, i18n: I18nContext
+) -> None:
+    await state.set_state(AutoparseSettingsForm.cover_letter_style_custom)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-enter-cover-letter-style"),
+            reply_markup=cancel_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+@router.message(AutoparseSettingsForm.cover_letter_style_custom)
+async def receive_cover_letter_style_custom(
+    message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
+    custom_style = message.text.strip() if message.text else ""
+    if not custom_style:
+        await message.answer(i18n.get("autoparse-enter-cover-letter-style"))
+        return
+    await ap_service.update_user_autoparse_settings(
+        session, user.id, cover_letter_style=custom_style
     )
     await state.clear()
     await message.answer(

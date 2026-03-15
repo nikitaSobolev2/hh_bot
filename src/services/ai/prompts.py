@@ -828,6 +828,76 @@ def build_vacancy_summary_user_content(
     return "\n\n".join(parts)
 
 
+def build_cover_letter_system_prompt(style: str) -> str:
+    """Return the system prompt for generating a cover letter for a specific vacancy."""
+    style_guidance = {
+        "professional": (
+            "Стиль: профессиональный, деловой. Формальный тон, "
+            "чёткая структура, акцент на компетенциях и достижениях."
+        ),
+        "friendly": (
+            "Стиль: дружелюбный, тёплый. Мягкий тон, "
+            "личный подход, покажи интерес к компании и команде."
+        ),
+        "concise": (
+            "Стиль: краткий, лаконичный. Минимум слов, максимум смысла. "
+            "Короткие предложения, без лишних деталей."
+        ),
+        "detailed": (
+            "Стиль: подробный, развёрнутый. Детальное описание опыта, "
+            "связь достижений с требованиями вакансии, обоснование мотивации."
+        ),
+    }.get(style.lower(), f"Стиль: {style}. Учитывай это при написании.")
+
+    return (
+        "Ты — опытный карьерный консультант, специализирующийся на написании "
+        "сопроводительных писем к резюме.\n\n"
+        "[ЗАДАЧА]\n"
+        "Напиши сопроводительное письмо кандидата для конкретной вакансии. "
+        "Письмо должно быть персонализировано под вакансию и компанию, "
+        "подчёркивать релевантный опыт и достижения кандидата.\n\n"
+        f"[СТИЛЬ]\n{style_guidance}\n\n"
+        "[СТРУКТУРА]\n"
+        "1. Обращение и приветствие.\n"
+        "2. Краткое представление и интерес к вакансии/компании.\n"
+        "3. Релевантный опыт и достижения кандидата.\n"
+        "4. Связь навыков с требованиями вакансии.\n"
+        "5. Призыв к действию и завершение.\n\n"
+        "[ПРАВИЛА]\n"
+        "- Пиши от первого лица.\n"
+        "- Используй данные кандидата (достижения, обязанности, опыт) — не выдумывай.\n"
+        "- ЗАПРЕЩЕНО выдумывать цифры, метрики и факты.\n"
+        "- Объём: 200–400 слов.\n"
+        "- Выводи ТОЛЬКО текст письма. Без вступлений («Вот письмо…»), "
+        "без заключений, без предложений («Если хотите…»).\n\n"
+        f"{_STRICT_OUTPUT_PROHIBITION}\n\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_cover_letter_user_content(
+    work_experiences: list[WorkExperienceEntry],
+    vacancy_title: str,
+    company_name: str | None,
+    vacancy_description: str,
+) -> str:
+    """Return the user message for cover letter generation."""
+    exp_block = "\n".join(_format_experience_entry(i, e) for i, e in enumerate(work_experiences))
+    desc_truncated = vacancy_description[:4000] if vacancy_description else "—"
+    company_line = company_name or "—"
+    return (
+        "[ОПЫТ РАБОТЫ КАНДИДАТА]\n"
+        f"{exp_block}\n\n"
+        "[ВАКАНСИЯ]\n"
+        f"Должность: {vacancy_title}\n"
+        f"Компания: {company_line}\n\n"
+        "[ОПИСАНИЕ ВАКАНСИИ]\n"
+        f"{desc_truncated}\n\n"
+        "Напиши сопроводительное письмо на основе этих данных. "
+        "Подчеркни релевантность опыта и достижений кандидата к требованиям вакансии."
+    )
+
+
 def build_preparation_guide_system_prompt() -> str:
     """Return the system prompt for interview preparation guide generation."""
     return (

@@ -47,7 +47,7 @@ class TestCollectNewFromPage:
         items = [self._make_item("1"), self._make_item("2")]
 
         new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
-            items, seen, blacklisted=set(), collected=collected, target_count=10
+            items, seen, blacklisted=set(), known_ids=set(), collected=collected, target_count=10
         )
 
         assert new_count == 2
@@ -61,7 +61,12 @@ class TestCollectNewFromPage:
         items = [self._make_item("1"), self._make_item("2"), self._make_item("3")]
 
         new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
-            items, seen, blacklisted={"1", "2"}, collected=collected, target_count=10
+            items,
+            seen,
+            blacklisted={"1", "2"},
+            known_ids=set(),
+            collected=collected,
+            target_count=10,
         )
 
         assert new_count == 1
@@ -75,7 +80,7 @@ class TestCollectNewFromPage:
         collected: list = []
 
         new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
-            [item], seen, blacklisted={"1"}, collected=collected, target_count=10
+            [item], seen, blacklisted={"1"}, known_ids=set(), collected=collected, target_count=10
         )
 
         assert new_count == 0
@@ -88,7 +93,7 @@ class TestCollectNewFromPage:
         items = [self._make_item(str(i)) for i in range(5)]
 
         new_count, _, _ = HHScraper._collect_new_from_page(
-            items, seen, blacklisted=set(), collected=collected, target_count=3
+            items, seen, blacklisted=set(), known_ids=set(), collected=collected, target_count=3
         )
 
         assert new_count == 3
@@ -101,13 +106,42 @@ class TestCollectNewFromPage:
         items = [self._make_item("1"), self._make_item("2")]
 
         new_count, had_unseen, blacklisted_skipped = HHScraper._collect_new_from_page(
-            items, seen, blacklisted={"1", "2"}, collected=collected, target_count=10
+            items,
+            seen,
+            blacklisted={"1", "2"},
+            known_ids=set(),
+            collected=collected,
+            target_count=10,
         )
 
         assert new_count == 0
         assert had_unseen is True
         assert blacklisted_skipped == 2
         assert len(collected) == 0
+
+    def test_includes_known_ids_in_collected_without_counting_toward_target(self):
+        """Vacancies in known_ids are added to collected but do not increment new_count."""
+        collected: list = []
+        seen: set = set()
+        items = [
+            self._make_item("1"),
+            self._make_item("2"),
+            self._make_item("3"),
+        ]
+
+        new_count, _, blacklisted_skipped = HHScraper._collect_new_from_page(
+            items,
+            seen,
+            blacklisted=set(),
+            known_ids={"1", "3"},
+            collected=collected,
+            target_count=10,
+        )
+
+        assert new_count == 1
+        assert blacklisted_skipped == 0
+        assert len(collected) == 3
+        assert {c["hh_vacancy_id"] for c in collected} == {"1", "2", "3"}
 
 
 class TestCollectVacancyUrls:

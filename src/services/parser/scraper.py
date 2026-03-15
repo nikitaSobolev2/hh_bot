@@ -418,15 +418,19 @@ class HHScraper:
         page_results: list[dict[str, str]],
         seen_urls: set[str],
         blacklisted: set[str],
+        known_ids: set[str],
         collected: list[dict[str, str]],
         target_count: int,
     ) -> tuple[int, bool, int]:
-        """Filter and append new vacancies from a single page.
+        """Filter and append vacancies from a single page.
 
         Returns (new_count, page_had_unseen, blacklisted_skipped) where:
-        - new_count: vacancies added to collected this page
+        - new_count: new (non-known) vacancies added to collected this page
         - page_had_unseen: page had vacancies not in seen_urls (loop-continuation signal)
         - blacklisted_skipped: unseen vacancies dropped because they are blacklisted
+
+        Vacancies in known_ids are included in collected but not counted toward new_count.
+        Vacancies in blacklisted are skipped entirely.
         """
         new_count = 0
         blacklisted_skipped = 0
@@ -436,13 +440,15 @@ class HHScraper:
                 continue
             seen_urls.add(item["url"])
             page_had_unseen = True
-            if item["hh_vacancy_id"] in blacklisted:
+            vid = item["hh_vacancy_id"]
+            if vid in blacklisted:
                 blacklisted_skipped += 1
                 continue
             collected.append(item)
-            new_count += 1
-            if len(collected) >= target_count:
-                break
+            if vid not in known_ids:
+                new_count += 1
+                if new_count >= target_count:
+                    break
         return new_count, page_had_unseen, blacklisted_skipped
 
     async def collect_vacancy_urls(
@@ -452,15 +458,25 @@ class HHScraper:
         target_count: int,
         *,
         blacklisted_ids: set[str] | None = None,
+        known_ids_to_include: set[str] | None = None,
     ) -> list[dict[str, str]]:
+        """Collect vacancy URLs from search pages.
+
+        Stops when target_count new (non-known) vacancies are collected, or pages
+        are exhausted. Vacancies in known_ids_to_include are included in the
+        result but do not count toward target_count (caller can mark them cached).
+        Vacancies in blacklisted_ids are excluded entirely.
+        """
         blacklisted = blacklisted_ids or set()
+        known = known_ids_to_include or set()
         collected: list[dict[str, str]] = []
         seen_urls: set[str] = set()
+        new_collected_count = 0
         page = 0
         zero_pages = 0
 
         async with httpx.AsyncClient() as client:
-            while len(collected) < target_count:
+            while new_collected_count < target_count:
                 if page >= _MAX_PAGES:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES)
                     break
@@ -484,9 +500,11 @@ class HHScraper:
                     page_results,
                     seen_urls,
                     blacklisted,
+                    known,
                     collected,
                     target_count,
                 )
+                new_collected_count += new_count
 
                 zero_pages = zero_pages + 1 if new_count == 0 else 0
                 logger.info(
@@ -507,7 +525,9 @@ class HHScraper:
 
                 page += 1
 
-        return collected[:target_count]
+        if not known:
+            return collected[:target_count]
+        return collected
 
     async def collect_vacancy_urls_batch(
         self,
@@ -562,6 +582,7 @@ class HHScraper:
                     page_results,
                     seen_urls,
                     skip_ids,
+                    set(),  # known_ids: batch API excludes all skip_ids, none are "known"
                     collected,
                     batch_size,
                 )

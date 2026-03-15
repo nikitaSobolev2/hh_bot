@@ -1,0 +1,182 @@
+"""Celery task for cover letter generation from autoparse vacancy feed."""
+
+from __future__ import annotations
+
+from src.core.constants import AppSettingKey
+from src.core.logging import get_logger
+from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
+from src.worker.utils import run_async
+
+logger = get_logger(__name__)
+
+_AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
+
+
+def _strip_agent_wrapper(text: str) -> str:
+    """Remove agent intro phrases so only the cover letter content remains.
+
+    Unlike vacancy summary (third-person), cover letters are first-person documents
+    where phrases like «Могу подготовить» are natural content (e.g. call to action).
+    We only strip leading agent meta-phrases, not potential outro markers that would
+    incorrectly truncate legitimate letter content.
+    """
+    if not text or not text.strip():
+        return text
+    result = text.strip()
+
+    for phrase in _AGENT_INTRO_PHRASES:
+        if result.lower().startswith(phrase.lower()):
+            idx = result.find("\n\n")
+            if idx > 0:
+                result = result[idx + 2 :].lstrip()
+            break
+
+    return result.rstrip()
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="cover_letter.generate",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
+)
+def generate_cover_letter_task(
+    self,
+    user_id: int,
+    vacancy_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str = "ru",
+    cover_letter_style: str = "professional",
+) -> dict:
+    return run_async(
+        lambda sf: _generate_cover_letter_async(
+            self,
+            sf,
+            user_id,
+            vacancy_id,
+            chat_id,
+            message_id,
+            locale,
+            cover_letter_style,
+        )
+    )
+
+
+async def _generate_cover_letter_async(
+    task: HHBotTask,
+    session_factory,
+    user_id: int,
+    vacancy_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    cover_letter_style: str,
+) -> dict:
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.repositories.task import CeleryTaskRepository
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import (
+        WorkExperienceEntry,
+        build_cover_letter_system_prompt,
+        build_cover_letter_user_content,
+    )
+
+    enabled = await task.check_enabled(AppSettingKey.TASK_COVER_LETTER_ENABLED, session_factory)
+    if not enabled:
+        return {"status": "disabled"}
+
+    cb = await task.load_circuit_breaker(
+        "cover_letter",
+        AppSettingKey.CB_COVER_LETTER_FAILURE_THRESHOLD,
+        AppSettingKey.CB_COVER_LETTER_RECOVERY_TIMEOUT,
+        session_factory,
+    )
+    if not cb.is_call_allowed():
+        return {"status": "circuit_open"}
+
+    idempotency_key = f"cover_letter:{user_id}:{vacancy_id}"
+    async with session_factory() as session:
+        existing = await CeleryTaskRepository(session).get_by_idempotency_key(idempotency_key)
+        if existing and existing.status == "completed":
+            stored_text = (existing.result_data or {}).get("generated_text")
+            if stored_text:
+                bot = task.create_bot()
+                try:
+                    await task.notify_user(bot, chat_id, message_id, stored_text)
+                finally:
+                    await bot.session.close()
+            return {"status": "already_completed"}
+
+    async with session_factory() as session:
+        we_repo = WorkExperienceRepository(session)
+        raw_experiences = await we_repo.get_active_by_user(user_id)
+        vacancy_repo = AutoparsedVacancyRepository(session)
+        vacancy = await vacancy_repo.get_by_id(vacancy_id)
+
+    if not vacancy:
+        logger.warning("Cover letter: vacancy not found", vacancy_id=vacancy_id)
+        return {"status": "vacancy_not_found"}
+
+    experiences = [
+        WorkExperienceEntry(
+            company_name=e.company_name,
+            stack=e.stack,
+            title=e.title,
+            period=e.period,
+            achievements=e.achievements,
+            duties=e.duties,
+        )
+        for e in raw_experiences
+    ]
+
+    style = (cover_letter_style or "professional").strip() or "professional"
+    ai_client = AIClient()
+    system_prompt = build_cover_letter_system_prompt(style)
+    user_content = build_cover_letter_user_content(
+        work_experiences=experiences,
+        vacancy_title=vacancy.title,
+        company_name=vacancy.company_name,
+        vacancy_description=vacancy.description or "",
+    )
+
+    try:
+        generated_text = await ai_client.generate_text(
+            user_content,
+            system_prompt=system_prompt,
+            timeout=180,
+            max_tokens=2000,
+            temperature=0.6,
+        )
+        cb.record_success()
+    except Exception as exc:
+        cb.record_failure()
+        logger.error(
+            "Cover letter generation failed",
+            user_id=user_id,
+            vacancy_id=vacancy_id,
+            error=str(exc),
+        )
+        raise
+
+    generated_text = _strip_agent_wrapper(generated_text)
+
+    bot = task.create_bot()
+    try:
+        await task.notify_user(bot, chat_id, message_id, generated_text)
+    finally:
+        await bot.session.close()
+
+    await task.mark_completed(
+        idempotency_key,
+        "cover_letter",
+        user_id,
+        session_factory,
+        result_data={"generated_text": generated_text},
+    )
+    return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}

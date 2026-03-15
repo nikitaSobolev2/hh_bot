@@ -376,12 +376,59 @@ def autoparse_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("autoparse-settings-cover-letter-style"),
+                    callback_data=AutoparseSettingsCallback(action="cover_letter_style").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-back"),
                     callback_data=AutoparseCallback(action="hub").pack(),
                 )
             ],
         ]
     )
+
+
+def cover_letter_style_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    """Keyboard for cover letter style selection: predefined choices + custom + back."""
+    rows: list[list[InlineKeyboardButton]] = []
+    style_keys = [
+        ("professional", "autoparse-cover-letter-style-professional"),
+        ("friendly", "autoparse-cover-letter-style-friendly"),
+        ("concise", "autoparse-cover-letter-style-concise"),
+        ("detailed", "autoparse-cover-letter-style-detailed"),
+    ]
+    for style_id, i18n_key in style_keys:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get(i18n_key),
+                    callback_data=AutoparseSettingsCallback(
+                        action=f"cover_letter_style_{style_id}"
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-cover-letter-style-custom"),
+                callback_data=AutoparseSettingsCallback(
+                    action="cover_letter_style_custom"
+                ).pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action="settings").pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cancel_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
