@@ -10,6 +10,47 @@ from src.worker.utils import run_async
 
 logger = get_logger(__name__)
 
+_AGENT_OUTRO_MARKERS = ("Если хотите", "Хотите, чтобы", "Могу подготовить")
+_INTRO_PHRASES = ("Вот профессиональный", "Составляю", "Вот текст", "Готово.", "Вот ваш")
+
+
+def _strip_agent_wrapper(text: str) -> str:
+    """Remove agent intro/outro so only the summary content remains."""
+    if not text or not text.strip():
+        return text
+    result = text.strip()
+
+    # Strip trailing outro (upsell, questions)
+    for marker in _AGENT_OUTRO_MARKERS:
+        idx = result.find(marker)
+        if idx >= 0:
+            result = result[:idx].rstrip()
+            break
+
+    # Strip leading intro: before first "---" or before first real paragraph
+    if "---" in result:
+        parts = result.split("---", 2)
+        if len(parts) >= 2:
+            before, after = parts[0].strip(), "---".join(parts[1:]).strip()
+            if before and not any(
+                before.lower().startswith(p.lower()) for p in ("Я ", "🔥", "⭐", "⚠")
+            ):
+                result = after
+
+    # Remove leading intro phrase if no --- was used
+    for phrase in _INTRO_PHRASES:
+        if result.lower().startswith(phrase.lower()):
+            idx = result.find("\n\n")
+            if idx > 0:
+                result = result[idx + 2 :].lstrip()
+            break
+
+    # Remove trailing --- separator left after stripping outro
+    result = result.rstrip()
+    if result.endswith("---"):
+        result = result[:-3].rstrip()
+    return result
+
 
 @celery_app.task(
     bind=True,
@@ -135,6 +176,8 @@ async def _generate_summary_async(
         cb.record_failure()
         logger.error("Vacancy summary generation failed", summary_id=summary_id, error=str(exc))
         raise
+
+    generated_text = _strip_agent_wrapper(generated_text)
 
     async with session_factory() as session:
         repo = VacancySummaryRepository(session)

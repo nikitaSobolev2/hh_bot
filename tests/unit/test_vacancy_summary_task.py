@@ -103,3 +103,40 @@ class TestVacancySummaryIdempotencyKey:
 
         call_args = task.is_already_completed.call_args[0]
         assert "42" in call_args[0]
+
+
+class TestStripAgentWrapper:
+    """Verify _strip_agent_wrapper removes intro/outro, keeps only summary content."""
+
+    def test_strips_leading_intro_and_trailing_outro(self):
+        from src.worker.tasks.vacancy_summary import _strip_agent_wrapper
+
+        raw = (
+            "Вот профессиональный текст «О себе» для вашего резюме, составленный на основе данных:\n\n"
+            "---\n\n"
+            "Я Senior Fullstack разработчик с 5-летним опытом.\n\n"
+            "🔥 Как достигаю результата\n"
+            "Строю архитектуру.\n\n"
+            "---\n\n"
+            "Если хотите, я могу подготовить ещё более «продающий» вариант под LinkedIn. "
+            "Хотите, чтобы я так сделал?"
+        )
+        result = _strip_agent_wrapper(raw)
+        assert "Вот профессиональный" not in result
+        assert "Если хотите" not in result
+        assert "Хотите, чтобы" not in result
+        assert result.startswith("Я Senior")
+        assert "🔥 Как достигаю" in result
+
+    def test_preserves_clean_summary_unchanged(self):
+        from src.worker.tasks.vacancy_summary import _strip_agent_wrapper
+
+        clean = "Я Senior разработчик.\n\n🔥 Как достигаю результата\nСтрою архитектуру."
+        assert _strip_agent_wrapper(clean) == clean
+
+    def test_strips_only_outro_when_no_intro(self):
+        from src.worker.tasks.vacancy_summary import _strip_agent_wrapper
+
+        raw = "Я Senior разработчик.\n\nЕсли хотите, могу подготовить вариант под LinkedIn."
+        result = _strip_agent_wrapper(raw)
+        assert result == "Я Senior разработчик."

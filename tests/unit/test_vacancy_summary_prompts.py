@@ -9,6 +9,11 @@ def test_build_vacancy_summary_system_prompt_contains_structure():
     assert "О себе" in prompt
     assert "СТРУКТУРА" in prompt
     assert "ПРАВИЛА" in prompt
+    assert "продающий" in prompt
+    assert "LinkedIn" in prompt
+    assert "storytelling" in prompt
+    assert "ФОРМАТ ОТВЕТА" in prompt
+    assert "ТОЛЬКО" in prompt
 
 
 def test_build_vacancy_summary_user_content_includes_work_experiences():
