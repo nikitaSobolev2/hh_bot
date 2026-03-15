@@ -72,7 +72,13 @@ class TelegramMessenger:
             edit_kwargs["parse_mode"] = parse_mode
         try:
             await self._bot.edit_message_text(**edit_kwargs)
-        except (TelegramBadRequest, Exception):
+        except (TelegramBadRequest, Exception) as edit_exc:
+            logger.warning(
+                "edit_message_text failed, falling back to send_message",
+                error=str(edit_exc),
+                chat_id=chat_id,
+                message_id=message_id,
+            )
             await send_message_with_retry(
                 self._bot,
                 chat_id,
@@ -108,6 +114,15 @@ async def send_message_with_retry(
         try:
             await bot.send_message(**send_kwargs)
             return
+        except TelegramBadRequest as exc:
+            logger.error(
+                "send_message BadRequest",
+                error=str(exc),
+                chat_id=chat_id,
+                text_len=len(text),
+                text_preview=text[:100] if text else "",
+            )
+            raise
         except TelegramRetryAfter as exc:
             if attempt == _FLOOD_MAX_RETRIES - 1:
                 raise

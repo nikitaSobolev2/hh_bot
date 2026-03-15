@@ -673,6 +673,7 @@ feed-btn-regenerate-cover-letter = 🔄 Перегенерировать
 feed-btn-show-later = 🔄 Показать позже
 feed-btn-stop = ⏹ Остановить
 feed-cover-letter-generating = ⏳ Генерирую сопроводительное письмо...
+feed-cover-letter-generated = Сопроводительное письмо сгенерировано.
 feed-results-header = 📊 Результаты просмотра
 feed-results-seen = Просмотрено: { $seen } из { $total }
 feed-results-liked = 👍 Понравилось: { $liked }

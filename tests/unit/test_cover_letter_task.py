@@ -11,9 +11,28 @@ from src.worker.tasks.cover_letter import (
     _build_cover_letter_keyboard,
     _generate_cover_letter_async,
     _normalize_dashes,
+    _sanitize_for_telegram,
     _strip_agent_wrapper,
     _truncate_for_display,
 )
+
+
+class TestSanitizeForTelegram:
+    def test_removes_control_characters(self) -> None:
+        text = "Hello\x00World\x01Test"
+        assert _sanitize_for_telegram(text) == "HelloWorldTest"
+
+    def test_preserves_newlines_and_tabs(self) -> None:
+        text = "Line1\nLine2\tTab"
+        assert _sanitize_for_telegram(text) == "Line1\nLine2\tTab"
+
+    def test_returns_empty_for_empty_input(self) -> None:
+        assert _sanitize_for_telegram("") == ""
+        assert _sanitize_for_telegram("   ") == ""
+
+    def test_truncates_to_4096(self) -> None:
+        text = "a" * 5000
+        assert len(_sanitize_for_telegram(text)) == 4096
 
 
 class TestNormalizeDashes:

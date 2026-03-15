@@ -672,6 +672,7 @@ feed-btn-regenerate-cover-letter = 🔄 Regenerate
 feed-btn-show-later = 🔄 Show later
 feed-btn-stop = ⏹ Stop
 feed-cover-letter-generating = ⏳ Generating cover letter...
+feed-cover-letter-generated = Cover letter generated.
 feed-results-header = 📊 Feed Results
 feed-results-seen = Viewed: { $seen } of { $total }
 feed-results-liked = 👍 Liked: { $liked }

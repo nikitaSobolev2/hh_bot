@@ -12,9 +12,22 @@ logger = get_logger(__name__)
 
 _AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
 COVER_LETTER_DISPLAY_MAX = 2000
+TELEGRAM_MESSAGE_MAX = 4096
 
 # Long dash chars (em dash, en dash, etc.) to replace with regular hyphen
 _LONG_DASH_CHARS = ("—", "–", "―", "‒", "−")
+
+
+def _sanitize_for_telegram(text: str) -> str:
+    """Remove control chars and ensure text is valid for Telegram."""
+    if not text or not text.strip():
+        return ""
+    # Strip control characters except newline and tab
+    result = "".join(
+        c for c in text
+        if c in "\n\t" or (ord(c) >= 32 and ord(c) != 0x7F)
+    )
+    return result[:TELEGRAM_MESSAGE_MAX].strip()
 
 
 def _normalize_dashes(text: str) -> str:
@@ -191,7 +204,11 @@ async def _generate_cover_letter_async(
         if existing and existing.status == "completed":
             stored_text = (existing.result_data or {}).get("generated_text")
             if stored_text:
-                display_text = _truncate_for_display(_normalize_dashes(stored_text))
+                raw = _truncate_for_display(_normalize_dashes(stored_text))
+                display_text = _sanitize_for_telegram(raw)
+                if not display_text:
+                    from src.core.i18n import get_text
+                    display_text = get_text("feed-cover-letter-generated", locale)
                 keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
                 bot = task.create_bot()
                 try:
@@ -276,7 +293,12 @@ async def _generate_cover_letter_async(
 
     generated_text = _normalize_dashes(generated_text)
     generated_text = _strip_agent_wrapper(generated_text)
-    display_text = _truncate_for_display(generated_text)
+    display_text = _sanitize_for_telegram(
+        _truncate_for_display(generated_text)
+    )
+    if not display_text:
+        from src.core.i18n import get_text
+        display_text = get_text("feed-cover-letter-generated", locale)
     keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
 
     bot = task.create_bot()
