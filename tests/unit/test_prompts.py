@@ -90,7 +90,7 @@ class TestBuildKeyPhrasesPrompt:
             count=5,
             language="ru",
         )
-        assert "ТРЕБОВАНИЯ К КАЧЕСТВУ" in prompt
+        assert "ТРЕБОВАНИЯ К КЛЮЧЕВЫМ ФРАЗАМ" in prompt
         assert "ФОРМАТ" in prompt
 
 
@@ -157,7 +157,7 @@ class TestBuildPerCompanyKeyPhrasesPrompt:
             language="ru",
             work_experiences=experiences,
         )
-        assert "ТРЕБОВАНИЯ К КАЧЕСТВУ" in prompt
+        assert "ТРЕБОВАНИЯ К КЛЮЧЕВЫМ ФРАЗАМ" in prompt
         assert "ФОРМАТ" in prompt
 
     def test_includes_resume_title_and_keywords(self):
