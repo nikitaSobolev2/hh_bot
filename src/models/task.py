@@ -110,3 +110,16 @@ class CompanyParseTask(BaseCeleryTask):
     parsing_company: Mapped[ParsingCompany] = relationship(foreign_keys=[parsing_company_id])
 
     __mapper_args__ = {"polymorphic_identity": "parse_company"}
+
+
+class CoverLetterTask(BaseCeleryTask):
+    """Task record for cover letter generation (cover_letter)."""
+
+    __tablename__ = "tasks_cover_letter"
+
+    id: Mapped[int] = mapped_column(
+        ForeignKey("celery_tasks.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    __mapper_args__ = {"polymorphic_identity": "cover_letter"}
