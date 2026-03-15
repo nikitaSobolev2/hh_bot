@@ -1,13 +1,17 @@
 """Unit tests for AI prompt builders."""
 
 from src.services.ai.prompts import (
+    AchievementExperienceEntry,
     VacancyCompatInput,
     WorkExperienceEntry,
+    build_achievement_generation_prompt,
+    build_achievement_generation_system_prompt,
     build_batch_compatibility_user_content,
     build_batch_keyword_extraction_system_prompt,
     build_batch_keyword_extraction_user_content,
     build_key_phrases_prompt,
     build_per_company_key_phrases_prompt,
+    build_work_experience_achievements_system_prompt,
 )
 
 
@@ -257,3 +261,49 @@ class TestBuildBatchKeywordExtractionPrompt:
         assert len(content) < len(long_desc) + 500
         assert "x" * 3000 in content
         assert "x" * 3001 not in content
+
+
+class TestAchievementPrompts:
+    """Tests for achievement generation prompts (aligned with keyphrases rules)."""
+
+    def test_achievement_generation_system_prompt_contains_quality_rules(self):
+        prompt = build_achievement_generation_system_prompt()
+        assert "ТРЕБОВАНИЯ К ДОСТИЖЕНИЯМ" in prompt
+        assert "результат" in prompt
+        assert "бизнес-эффект" in prompt
+
+    def test_achievement_generation_system_prompt_contains_shared_examples(self):
+        prompt = build_achievement_generation_system_prompt()
+        assert "ПРИМЕРЫ" in prompt
+        assert "Перевел сервис биллинга" in prompt
+        assert "300%" in prompt
+        assert "Улучшил процессы" in prompt or "Повысил эффективность" in prompt
+
+    def test_achievement_generation_system_prompt_contains_format_markers(self):
+        prompt = build_achievement_generation_system_prompt()
+        assert "[AchStart]" in prompt
+        assert "[AchEnd]" in prompt
+
+    def test_work_experience_achievements_system_prompt_contains_quality_rules(self):
+        prompt = build_work_experience_achievements_system_prompt()
+        assert "ТРЕБОВАНИЯ К ДОСТИЖЕНИЯМ" in prompt
+
+    def test_work_experience_achievements_system_prompt_contains_shared_examples(self):
+        prompt = build_work_experience_achievements_system_prompt()
+        assert "ПРИМЕРЫ" in prompt
+        assert "Перевел сервис биллинга" in prompt
+        assert "300%" in prompt
+
+    def test_achievement_generation_prompt_includes_company_data(self):
+        entries = [
+            AchievementExperienceEntry(
+                company_name="Acme",
+                stack="Python, Django",
+                user_achievements="Built API",
+                user_responsibilities=None,
+            ),
+        ]
+        prompt = build_achievement_generation_prompt(entries)
+        assert "Acme" in prompt
+        assert "Python, Django" in prompt
+        assert "Built API" in prompt
