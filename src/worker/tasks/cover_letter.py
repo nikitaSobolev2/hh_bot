@@ -11,6 +11,7 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 _AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
+COVER_LETTER_DISPLAY_MAX = 2000
 
 
 def _strip_agent_wrapper(text: str) -> str:
@@ -52,6 +53,7 @@ def generate_cover_letter_task(
     message_id: int,
     locale: str = "ru",
     cover_letter_style: str = "professional",
+    session_id: int = 0,
 ) -> dict:
     return run_async(
         lambda sf: _generate_cover_letter_async(
@@ -63,7 +65,40 @@ def generate_cover_letter_task(
             message_id,
             locale,
             cover_letter_style,
+            session_id,
         )
+    )
+
+
+def _truncate_for_display(text: str) -> str:
+    """Truncate cover letter to a small, readable display size."""
+    if len(text) <= COVER_LETTER_DISPLAY_MAX:
+        return text
+    return text[: COVER_LETTER_DISPLAY_MAX - 10] + "\n..."
+
+
+def _build_cover_letter_keyboard(
+    session_id: int, vacancy_id: int, locale: str
+):
+    """Build keyboard with Back button for cover letter view."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from src.bot.modules.autoparse.callbacks import FeedCallback
+    from src.core.i18n import get_text
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=get_text("btn-back", locale),
+                    callback_data=FeedCallback(
+                        action="back_to_vacancy",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                )
+            ]
+        ]
     )
 
 
@@ -76,6 +111,7 @@ async def _generate_cover_letter_async(
     message_id: int,
     locale: str,
     cover_letter_style: str,
+    session_id: int,
 ) -> dict:
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.task import CeleryTaskRepository
@@ -106,9 +142,13 @@ async def _generate_cover_letter_async(
         if existing and existing.status == "completed":
             stored_text = (existing.result_data or {}).get("generated_text")
             if stored_text:
+                display_text = _truncate_for_display(stored_text)
+                keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
                 bot = task.create_bot()
                 try:
-                    await task.notify_user(bot, chat_id, message_id, stored_text)
+                    await task.notify_user(
+                        bot, chat_id, message_id, display_text, reply_markup=keyboard
+                    )
                 finally:
                     await bot.session.close()
             return {"status": "already_completed"}
@@ -165,10 +205,14 @@ async def _generate_cover_letter_async(
         raise
 
     generated_text = _strip_agent_wrapper(generated_text)
+    display_text = _truncate_for_display(generated_text)
+    keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
 
     bot = task.create_bot()
     try:
-        await task.notify_user(bot, chat_id, message_id, generated_text)
+        await task.notify_user(
+            bot, chat_id, message_id, display_text, reply_markup=keyboard
+        )
     finally:
         await bot.session.close()
 

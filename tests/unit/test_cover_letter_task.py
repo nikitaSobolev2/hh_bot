@@ -7,8 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.worker.tasks.cover_letter import (
+    COVER_LETTER_DISPLAY_MAX,
+    _build_cover_letter_keyboard,
     _generate_cover_letter_async,
     _strip_agent_wrapper,
+    _truncate_for_display,
 )
 
 
@@ -33,6 +36,33 @@ class TestStripAgentWrapper:
         assert "Могу подготовить презентацию" in result
 
 
+class TestTruncateForDisplay:
+    def test_returns_full_text_when_within_limit(self) -> None:
+        short = "Hello world"
+        assert _truncate_for_display(short) == short
+
+    def test_returns_full_text_when_exactly_at_limit(self) -> None:
+        text = "x" * COVER_LETTER_DISPLAY_MAX
+        assert _truncate_for_display(text) == text
+
+    def test_truncates_with_ellipsis_when_over_limit(self) -> None:
+        long_text = "a" * (COVER_LETTER_DISPLAY_MAX + 100)
+        result = _truncate_for_display(long_text)
+        assert len(result) == COVER_LETTER_DISPLAY_MAX - 10 + 4  # "\n..." = 4 chars
+        assert result.endswith("\n...")
+
+
+class TestBuildCoverLetterKeyboard:
+    def test_returns_keyboard_with_back_button(self) -> None:
+        keyboard = _build_cover_letter_keyboard(session_id=1, vacancy_id=42, locale="ru")
+        assert keyboard.inline_keyboard
+        assert len(keyboard.inline_keyboard) == 1
+        row = keyboard.inline_keyboard[0]
+        assert len(row) == 1
+        btn = row[0]
+        assert "back_to_vacancy" in btn.callback_data
+
+
 @pytest.mark.asyncio
 async def test_cover_letter_task_disabled_returns_early() -> None:
     task = MagicMock()
@@ -52,6 +82,7 @@ async def test_cover_letter_task_disabled_returns_early() -> None:
         message_id=456,
         locale="ru",
         cover_letter_style="professional",
+        session_id=0,
     )
 
     assert result == {"status": "disabled"}
@@ -80,6 +111,7 @@ async def test_cover_letter_task_circuit_open_returns_early() -> None:
         message_id=456,
         locale="ru",
         cover_letter_style="professional",
+        session_id=0,
     )
 
     assert result == {"status": "circuit_open"}
@@ -131,6 +163,7 @@ async def test_cover_letter_task_vacancy_not_found_returns_early() -> None:
             message_id=456,
             locale="ru",
             cover_letter_style="professional",
+            session_id=0,
         )
 
     assert result == {"status": "vacancy_not_found"}

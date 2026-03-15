@@ -22,7 +22,8 @@ class AutoparseWorkExpCallback(CallbackData, prefix="apwe"):
 
 
 class FeedCallback(CallbackData, prefix="feed"):
-    action: str  # start | like | dislike | stop | toggle_view
+    # start | like | dislike | stop | toggle_view | create_cover_letter | back_to_vacancy
+    action: str
     session_id: int
     vacancy_id: int = 0
     mode: str = "summary"  # summary | description

@@ -290,3 +290,109 @@ async def test_handle_feed_stop_does_not_complete_already_completed_session(make
 
     complete_mock.assert_not_called()
     callback.message.edit_text.assert_called_once()
+
+
+# ── handle_feed_back_to_vacancy ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_feed_back_to_vacancy_restores_vacancy_card(
+    make_feed_session, make_vacancy
+):
+    callback, callback_data = _make_callback(
+        session_id=1, action="back_to_vacancy", vacancy_id=10
+    )
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(
+        session_id=1, vacancy_ids=[10, 20, 30], current_index=1, is_completed=False
+    )
+    vacancy = make_vacancy(vacancy_id=10, url="https://hh.ru/10")
+
+    with (
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
+            AsyncMock(return_value=feed_session),
+        ),
+        patch("src.bot.modules.autoparse.feed_handlers.AutoparsedVacancyRepository") as mock_repo,
+    ):
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.get_by_id = AsyncMock(return_value=vacancy)
+        mock_repo.return_value = mock_repo_instance
+
+        from src.bot.modules.autoparse.feed_handlers import handle_feed_back_to_vacancy
+
+        await handle_feed_back_to_vacancy(
+            callback=callback,
+            callback_data=callback_data,
+            session=mock_session,
+            user=MagicMock(),
+            i18n=_make_i18n(),
+        )
+
+    callback.message.edit_text.assert_called_once()
+    call_kwargs = callback.message.edit_text.call_args.kwargs
+    assert "reply_markup" in call_kwargs
+    assert call_kwargs.get("parse_mode") == "HTML"
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_feed_back_to_vacancy_does_nothing_when_session_not_found():
+    callback, callback_data = _make_callback(
+        session_id=999, action="back_to_vacancy", vacancy_id=10
+    )
+    mock_session = AsyncMock()
+
+    with patch(
+        "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
+        AsyncMock(return_value=None),
+    ):
+        from src.bot.modules.autoparse.feed_handlers import handle_feed_back_to_vacancy
+
+        await handle_feed_back_to_vacancy(
+            callback=callback,
+            callback_data=callback_data,
+            session=mock_session,
+            user=MagicMock(),
+            i18n=_make_i18n(),
+        )
+
+    callback.answer.assert_called_once()
+    callback.message.edit_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_feed_back_to_vacancy_does_nothing_when_vacancy_not_found(
+    make_feed_session,
+):
+    callback, callback_data = _make_callback(
+        session_id=1, action="back_to_vacancy", vacancy_id=999
+    )
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(
+        session_id=1, vacancy_ids=[10, 20], is_completed=False
+    )
+
+    with (
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
+            AsyncMock(return_value=feed_session),
+        ),
+        patch("src.bot.modules.autoparse.feed_handlers.AutoparsedVacancyRepository") as mock_repo,
+    ):
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.get_by_id = AsyncMock(return_value=None)
+        mock_repo.return_value = mock_repo_instance
+
+        from src.bot.modules.autoparse.feed_handlers import handle_feed_back_to_vacancy
+
+        await handle_feed_back_to_vacancy(
+            callback=callback,
+            callback_data=callback_data,
+            session=mock_session,
+            user=MagicMock(),
+            i18n=_make_i18n(),
+        )
+
+    callback.answer.assert_called_once()
+    callback.message.edit_text.assert_not_called()

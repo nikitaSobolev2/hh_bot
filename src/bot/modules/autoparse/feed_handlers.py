@@ -278,7 +278,46 @@ async def handle_feed_create_cover_letter(
         callback.message.message_id,
         user.language_code or "ru",
         cover_letter_style,
+        callback_data.session_id,
     )
+
+
+@router.callback_query(FeedCallback.filter(F.action == "back_to_vacancy"))
+async def handle_feed_back_to_vacancy(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed:
+        await callback.answer()
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    vacancy_ids = feed_session.vacancy_ids
+    current_index = (
+        vacancy_ids.index(callback_data.vacancy_id)
+        if callback_data.vacancy_id in vacancy_ids
+        else 0
+    )
+    total = len(vacancy_ids)
+    text = feed_services.build_vacancy_card(
+        vacancy, current_index, total, i18n.locale
+    )
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n
+    )
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
 
 
 @router.callback_query(FeedCallback.filter(F.action == "stop"))
