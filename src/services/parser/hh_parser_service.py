@@ -45,8 +45,8 @@ class HHParserService:
         collected_urls = await self._scraper.collect_vacancy_urls(
             search_url,
             keyword_filter,
-            target_count + len(known),
-            blacklisted_ids=set(),
+            target_count,
+            blacklisted_ids=known,
         )
 
         results: list[dict] = []

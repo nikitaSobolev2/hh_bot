@@ -104,3 +104,39 @@ class TestHHParserServiceDedup:
         assert mock_parse.await_count == 5
         new_results = [r for r in results if not r.get("cached")]
         assert len(new_results) == 5
+
+    @pytest.mark.asyncio
+    async def test_collect_vacancy_urls_called_with_target_count_and_blacklist(self):
+        """Scraper receives target_count (not target_count + len(known)) and known as blacklist."""
+        service = HHParserService()
+        collected = [
+            {"url": "https://hh.ru/vacancy/1", "title": "Dev 1", "hh_vacancy_id": "1"},
+        ]
+        known = {"cached_1", "cached_2"}
+
+        with (
+            patch.object(
+                service._scraper, "collect_vacancy_urls", new_callable=AsyncMock
+            ) as mock_collect,
+            patch.object(
+                service._scraper, "parse_vacancy_page", new_callable=AsyncMock
+            ) as mock_parse,
+        ):
+            mock_collect.return_value = collected
+            mock_parse.return_value = {
+                "description": "d",
+                "skills": [],
+                "orm_fields": {},
+                "employer_data": {},
+            }
+
+            await service.parse_vacancies(
+                "https://hh.ru/search", "python", 50, known_hh_ids=known
+            )
+
+        mock_collect.assert_called_once_with(
+            "https://hh.ru/search",
+            "python",
+            50,
+            blacklisted_ids=known,
+        )
