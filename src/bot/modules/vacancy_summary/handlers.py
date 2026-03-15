@@ -247,7 +247,7 @@ async def _dispatch_generation(
     await state.set_state(None)
 
     repo = VacancySummaryRepository(session)
-    summary = await repo.create(
+    summary = await repo.create_for_user(
         user.id,
         excluded_industries=excluded_industries,
         location=location,
@@ -354,7 +354,7 @@ async def handle_regenerate(
         return
 
     # Clone params from the old summary and dispatch immediately
-    new_summary = await repo.create(
+    new_summary = await repo.create_for_user(
         user.id,
         excluded_industries=old_summary.excluded_industries,
         location=old_summary.location,
