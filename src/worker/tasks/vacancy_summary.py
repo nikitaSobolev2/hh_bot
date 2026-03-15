@@ -162,14 +162,20 @@ async def _generate_summary_async(
         remote_preference=remote_preference,
         additional_notes=additional_notes,
     )
+    if context == "regenerate":
+        user_content += (
+            "\n\n[ВАЖНО] Сгенерируй новый, отличающийся вариант текста «О себе». "
+            "Не повторяй предыдущую формулировку — используй другие формулировки и структуру."
+        )
 
+    temperature = 0.85 if context == "regenerate" else 0.6
     try:
         generated_text = await ai_client.generate_text(
             user_content,
             system_prompt=system_prompt,
             timeout=180,
             max_tokens=2000,
-            temperature=0.6,
+            temperature=temperature,
         )
         cb.record_success()
     except Exception as exc:

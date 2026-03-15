@@ -377,6 +377,7 @@ async def handle_regenerate(
         callback.message.chat.id,
         wait_msg.message_id if wait_msg else callback.message.message_id,
         user.language_code or "ru",
+        context="regenerate",
     )
 
 
