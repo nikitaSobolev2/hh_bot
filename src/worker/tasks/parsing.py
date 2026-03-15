@@ -572,7 +572,8 @@ async def _save_parsing_results(
 
         if company:
             company.status = "completed"
-            # vacancies_processed is already updated by _report_progress via on_vacancy_processed
+            # Use actual saved count for report; during compat mode we may have looked at more
+            company.vacancies_processed = vacancies_count
             company.completed_at = datetime.now(UTC).replace(tzinfo=None)
 
         session.add(
