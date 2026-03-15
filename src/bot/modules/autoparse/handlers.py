@@ -651,12 +651,16 @@ async def settings_hub(
 
     min_compat = current.get("min_compatibility_percent", 50)
     cover_style = current.get("cover_letter_style", ap_service.DEFAULT_COVER_LETTER_STYLE)
+    user_name = current.get("user_name", "").strip()
+    if not user_name:
+        user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
     text = (
         f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
         f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
         f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
         f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
         f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
+        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n"
         f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
     )
     with contextlib.suppress(TelegramBadRequest):
@@ -763,6 +767,32 @@ async def receive_min_compat_percent(
     await ap_service.update_user_autoparse_settings(
         session, user.id, min_compatibility_percent=int(raw)
     )
+    await state.clear()
+    await message.answer(
+        i18n.get("autoparse-settings-saved"),
+        reply_markup=autoparse_hub_keyboard(i18n),
+    )
+
+
+@router.callback_query(AutoparseSettingsCallback.filter(F.action == "user_name"))
+async def settings_user_name(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
+    await state.set_state(AutoparseSettingsForm.user_name)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-settings-user-name")
+            + "\n\n"
+            + i18n.get("autoparse-enter-user-name"),
+            reply_markup=cancel_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+@router.message(AutoparseSettingsForm.user_name)
+async def receive_user_name(
+    message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
+    name = message.text.strip()
+    await ap_service.update_user_autoparse_settings(session, user.id, user_name=name)
     await state.clear()
     await message.answer(
         i18n.get("autoparse-settings-saved"),

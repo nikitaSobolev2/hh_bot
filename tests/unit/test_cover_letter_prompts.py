@@ -13,7 +13,6 @@ class TestBuildCoverLetterSystemPrompt:
     def test_professional_style_includes_style_guidance(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
         assert "профессиональный" in prompt.lower()
-        assert "деловой" in prompt.lower()
 
     def test_friendly_style_includes_style_guidance(self) -> None:
         prompt = build_cover_letter_system_prompt("friendly")
@@ -21,20 +20,25 @@ class TestBuildCoverLetterSystemPrompt:
 
     def test_concise_style_includes_style_guidance(self) -> None:
         prompt = build_cover_letter_system_prompt("concise")
-        assert "краткий" in prompt.lower()
+        assert "лаконичный" in prompt.lower()
 
     def test_detailed_style_includes_style_guidance(self) -> None:
         prompt = build_cover_letter_system_prompt("detailed")
-        assert "подробный" in prompt.lower()
+        assert "подробнее" in prompt.lower() or "достижения" in prompt.lower()
 
     def test_custom_style_uses_fallback(self) -> None:
         prompt = build_cover_letter_system_prompt("formal")
         assert "formal" in prompt or "Стиль:" in prompt
 
-    def test_includes_structure_section(self) -> None:
+    def test_includes_two_paragraph_structure(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
-        assert "СТРУКТУРА" in prompt
-        assert "Обращение" in prompt
+        assert "2 абзаца" in prompt or "два абзаца" in prompt
+        assert "80" in prompt or "120" in prompt
+
+    def test_forbids_formal_greeting_and_closing(self) -> None:
+        prompt = build_cover_letter_system_prompt("professional")
+        assert "Уважаемая команда" in prompt or "С уважением" in prompt
+        assert "ЗАПРЕЩЕНО" in prompt
 
     def test_includes_anti_injection(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
@@ -42,6 +46,26 @@ class TestBuildCoverLetterSystemPrompt:
 
 
 class TestBuildCoverLetterUserContent:
+    def test_includes_user_name(self) -> None:
+        content = build_cover_letter_user_content(
+            work_experiences=[],
+            vacancy_title="Dev",
+            company_name="Corp",
+            vacancy_description="Desc",
+            user_name="Иван Петров",
+        )
+        assert "[ИМЯ КАНДИДАТА]" in content
+        assert "Иван Петров" in content
+
+    def test_user_name_defaults_to_kandidat(self) -> None:
+        content = build_cover_letter_user_content(
+            work_experiences=[],
+            vacancy_title="Dev",
+            company_name="Corp",
+            vacancy_description="Desc",
+        )
+        assert "Кандидат" in content
+
     def test_includes_work_experience(self) -> None:
         experiences = [
             WorkExperienceEntry(
@@ -74,6 +98,16 @@ class TestBuildCoverLetterUserContent:
         assert "Senior Python Developer" in content
         assert "Tech Corp" in content
         assert "Full description" in content
+
+    def test_instructs_two_paragraphs_no_greeting(self) -> None:
+        content = build_cover_letter_user_content(
+            work_experiences=[],
+            vacancy_title="Dev",
+            company_name="Corp",
+            vacancy_description="Desc",
+        )
+        assert "2 абзаца" in content
+        assert "Без обращения" in content or "без обращения" in content
 
     def test_empty_vacancy_description_uses_placeholder(self) -> None:
         content = build_cover_letter_user_content(

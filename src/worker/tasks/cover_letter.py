@@ -163,6 +163,19 @@ async def _generate_cover_letter_async(
         logger.warning("Cover letter: vacancy not found", vacancy_id=vacancy_id)
         return {"status": "vacancy_not_found"}
 
+    from src.bot.modules.autoparse import services as ap_service
+    from src.repositories.user import UserRepository
+
+    async with session_factory() as session:
+        settings = await ap_service.get_user_autoparse_settings(session, user_id)
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    user_name = (settings.get("user_name") or "").strip()
+    if not user_name and user:
+        user_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    if not user_name:
+        user_name = "Кандидат"
+
     experiences = [
         WorkExperienceEntry(
             company_name=e.company_name,
@@ -183,6 +196,7 @@ async def _generate_cover_letter_async(
         vacancy_title=vacancy.title,
         company_name=vacancy.company_name,
         vacancy_description=vacancy.description or "",
+        user_name=user_name,
     )
 
     try:
@@ -190,7 +204,7 @@ async def _generate_cover_letter_async(
             user_content,
             system_prompt=system_prompt,
             timeout=180,
-            max_tokens=2000,
+            max_tokens=400,
             temperature=0.6,
         )
         cb.record_success()
