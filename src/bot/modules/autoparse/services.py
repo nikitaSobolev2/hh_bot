@@ -204,6 +204,7 @@ async def get_user_autoparse_settings(session: AsyncSession, user_id: int) -> di
             "tech_stack": [],
             "cover_letter_style": DEFAULT_COVER_LETTER_STYLE,
             "user_name": "",
+            "about_me": "",
         }
     defaults = {
         "send_time": "12:00",
@@ -211,6 +212,7 @@ async def get_user_autoparse_settings(session: AsyncSession, user_id: int) -> di
         "tech_stack": [],
         "cover_letter_style": DEFAULT_COVER_LETTER_STYLE,
         "user_name": "",
+        "about_me": "",
     }
     defaults.update(user.autoparse_settings)
     return defaults

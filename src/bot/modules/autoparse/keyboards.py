@@ -382,6 +382,12 @@ def autoparse_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("autoparse-settings-about-me"),
+                    callback_data=AutoparseSettingsCallback(action="about_me").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("autoparse-settings-cover-letter-style"),
                     callback_data=AutoparseSettingsCallback(action="cover_letter_style").pack(),
                 )

@@ -654,6 +654,8 @@ async def settings_hub(
     user_name = current.get("user_name", "").strip()
     if not user_name:
         user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
+    about_me = (current.get("about_me") or "").strip()
+    about_me_display = (about_me[:60] + "…") if len(about_me) > 60 else (about_me or "—")
     text = (
         f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
         f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
@@ -661,6 +663,7 @@ async def settings_hub(
         f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
         f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
         f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n"
+        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n"
         f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
     )
     with contextlib.suppress(TelegramBadRequest):
@@ -800,6 +803,32 @@ async def receive_user_name(
     )
 
 
+@router.callback_query(AutoparseSettingsCallback.filter(F.action == "about_me"))
+async def settings_about_me(callback: CallbackQuery, state: FSMContext, i18n: I18nContext) -> None:
+    await state.set_state(AutoparseSettingsForm.about_me)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-settings-about-me")
+            + "\n\n"
+            + i18n.get("autoparse-enter-about-me"),
+            reply_markup=cancel_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+@router.message(AutoparseSettingsForm.about_me)
+async def receive_about_me(
+    message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
+    about_me = message.text.strip() if message.text else ""
+    await ap_service.update_user_autoparse_settings(session, user.id, about_me=about_me)
+    await state.clear()
+    await message.answer(
+        i18n.get("autoparse-settings-saved"),
+        reply_markup=autoparse_hub_keyboard(i18n),
+    )
+
+
 @router.callback_query(AutoparseSettingsCallback.filter(F.action == "cover_letter_style"))
 async def settings_cover_letter_style(
     callback: CallbackQuery,
@@ -866,12 +895,19 @@ async def settings_cover_letter_style_select(
         stack_display = "—"
     min_compat = current.get("min_compatibility_percent", 50)
     cover_style = current.get("cover_letter_style", ap_service.DEFAULT_COVER_LETTER_STYLE)
+    user_name = current.get("user_name", "").strip()
+    if not user_name:
+        user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
+    about_me = (current.get("about_me") or "").strip()
+    about_me_display = (about_me[:60] + "…") if len(about_me) > 60 else (about_me or "—")
     text = (
         f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
         f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
         f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
         f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
         f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
+        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n"
+        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n"
         f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
     )
     with contextlib.suppress(TelegramBadRequest):

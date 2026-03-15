@@ -33,7 +33,12 @@ class TestBuildCoverLetterSystemPrompt:
     def test_includes_two_paragraph_structure(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
         assert "2 абзаца" in prompt or "два абзаца" in prompt
-        assert "80" in prompt or "120" in prompt
+        assert "100" in prompt or "150" in prompt
+
+    def test_includes_stack_mapping_and_company_relevance_guidance(self) -> None:
+        prompt = build_cover_letter_system_prompt("professional")
+        assert "В вашем стеке" in prompt or "сопоставь стек" in prompt
+        assert "релевантно" in prompt or "компании" in prompt
 
     def test_forbids_formal_greeting_and_closing(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
@@ -106,8 +111,29 @@ class TestBuildCoverLetterUserContent:
             company_name="Corp",
             vacancy_description="Desc",
         )
-        assert "2 абзаца" in content
+        assert "2 абзаца" in content or "100" in content
         assert "Без обращения" in content or "без обращения" in content
+
+    def test_includes_about_me_when_provided(self) -> None:
+        content = build_cover_letter_user_content(
+            work_experiences=[],
+            vacancy_title="Dev",
+            company_name="Corp",
+            vacancy_description="Desc",
+            about_me="Fullstack-разработчик с 5 годами опыта.",
+        )
+        assert "[НЕСКОЛЬКО СЛОВ О СЕБЕ]" in content
+        assert "Fullstack-разработчик" in content
+
+    def test_omits_about_me_block_when_empty(self) -> None:
+        content = build_cover_letter_user_content(
+            work_experiences=[],
+            vacancy_title="Dev",
+            company_name="Corp",
+            vacancy_description="Desc",
+            about_me="",
+        )
+        assert "[НЕСКОЛЬКО СЛОВ О СЕБЕ]" not in content
 
     def test_empty_vacancy_description_uses_placeholder(self) -> None:
         content = build_cover_letter_user_content(

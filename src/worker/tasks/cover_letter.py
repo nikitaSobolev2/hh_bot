@@ -183,6 +183,7 @@ async def _generate_cover_letter_async(
         user_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
     if not user_name:
         user_name = "Кандидат"
+    about_me = (settings.get("about_me") or "").strip()
 
     experiences = [
         WorkExperienceEntry(
@@ -205,6 +206,7 @@ async def _generate_cover_letter_async(
         company_name=vacancy.company_name,
         vacancy_description=vacancy.description or "",
         user_name=user_name,
+        about_me=about_me,
     )
 
     try:
