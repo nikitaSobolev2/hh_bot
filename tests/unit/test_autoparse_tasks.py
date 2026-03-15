@@ -693,8 +693,10 @@ class TestDeliverSeenIdsFilter:
         assert passed_ids == [2]
 
     @pytest.mark.asyncio
-    async def test_includes_reacted_vacancies_when_include_reacted_in_feed_is_true(self):
-        """When company.include_reacted_in_feed is True, reacted vacancies are not filtered out."""
+    async def test_excludes_reacted_vacancies_even_when_include_reacted_in_feed_is_true(
+        self,
+    ):
+        """Reacted vacancies are always excluded from feed, regardless of setting."""
         user = self._make_user()
         company = self._make_company(include_reacted_in_feed=True)
         reacted_vacancy = self._make_vacancy(1)
@@ -742,9 +744,9 @@ class TestDeliverSeenIdsFilter:
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
             )
 
-        assert result == {"status": "delivered", "count": 2}
+        assert result == {"status": "delivered", "count": 1}
         passed_ids = mock_create.call_args.kwargs["vacancy_ids"]
-        assert set(passed_ids) == {1, 2}
+        assert passed_ids == [2]
 
     @pytest.mark.asyncio
     async def test_returns_no_new_vacancies_when_all_were_reacted_to(self):

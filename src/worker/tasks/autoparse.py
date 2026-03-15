@@ -586,10 +586,9 @@ async def _deliver_results_async(
         reacted_ids = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
         queued_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
 
-        # Exclude vacancies the user has already explicitly reviewed, unless
-        # the company is configured to include them again.
-        if not company.include_reacted_in_feed:
-            new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
+        # Always exclude vacancies the user has already liked or disliked.
+        # include_reacted_in_feed may later control re-parsing; feed never re-shows reacted.
+        new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
 
         # Also re-surface vacancies that were queued in a previous session but
         # never reached because the user stopped early.
