@@ -112,7 +112,7 @@ class HHBotTask(Task):
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | None = None,  # noqa: F821
-        parse_mode: str = "HTML",
+        parse_mode: str | None = "HTML",
     ) -> None:
         """Edit the processing message or fall back to a new message."""
         from src.services.telegram.messenger import TelegramMessenger

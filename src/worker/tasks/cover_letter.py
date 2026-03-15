@@ -13,6 +13,19 @@ logger = get_logger(__name__)
 _AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
 COVER_LETTER_DISPLAY_MAX = 2000
 
+# Long dash chars (em dash, en dash, etc.) to replace with regular hyphen
+_LONG_DASH_CHARS = ("—", "–", "―", "‒", "−")
+
+
+def _normalize_dashes(text: str) -> str:
+    """Replace long dash characters with regular hyphen."""
+    if not text:
+        return text
+    result = text
+    for char in _LONG_DASH_CHARS:
+        result = result.replace(char, "-")
+    return result
+
 
 def _strip_agent_wrapper(text: str) -> str:
     """Remove agent intro phrases so only the cover letter content remains.
@@ -178,12 +191,17 @@ async def _generate_cover_letter_async(
         if existing and existing.status == "completed":
             stored_text = (existing.result_data or {}).get("generated_text")
             if stored_text:
-                display_text = _truncate_for_display(stored_text)
+                display_text = _truncate_for_display(_normalize_dashes(stored_text))
                 keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
                 bot = task.create_bot()
                 try:
                     await task.notify_user(
-                        bot, chat_id, message_id, display_text, reply_markup=keyboard
+                        bot,
+                        chat_id,
+                        message_id,
+                        display_text,
+                        reply_markup=keyboard,
+                        parse_mode=None,
                     )
                 finally:
                     await bot.session.close()
@@ -256,6 +274,7 @@ async def _generate_cover_letter_async(
         )
         raise
 
+    generated_text = _normalize_dashes(generated_text)
     generated_text = _strip_agent_wrapper(generated_text)
     display_text = _truncate_for_display(generated_text)
     keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
@@ -263,7 +282,12 @@ async def _generate_cover_letter_async(
     bot = task.create_bot()
     try:
         await task.notify_user(
-            bot, chat_id, message_id, display_text, reply_markup=keyboard
+            bot,
+            chat_id,
+            message_id,
+            display_text,
+            reply_markup=keyboard,
+            parse_mode=None,
         )
     finally:
         await bot.session.close()

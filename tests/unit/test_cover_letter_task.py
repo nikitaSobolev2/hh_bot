@@ -10,9 +10,24 @@ from src.worker.tasks.cover_letter import (
     COVER_LETTER_DISPLAY_MAX,
     _build_cover_letter_keyboard,
     _generate_cover_letter_async,
+    _normalize_dashes,
     _strip_agent_wrapper,
     _truncate_for_display,
 )
+
+
+class TestNormalizeDashes:
+    def test_replaces_em_dash_with_hyphen(self) -> None:
+        assert _normalize_dashes("Добрый день — Fullstack") == "Добрый день - Fullstack"
+
+    def test_replaces_en_dash_with_hyphen(self) -> None:
+        assert _normalize_dashes("2020–2023") == "2020-2023"
+
+    def test_returns_empty_for_empty_input(self) -> None:
+        assert _normalize_dashes("") == ""
+
+    def test_preserves_regular_hyphen(self) -> None:
+        assert _normalize_dashes("Node.js - Python") == "Node.js - Python"
 
 
 class TestStripAgentWrapper:

@@ -55,20 +55,23 @@ class TelegramMessenger:
         text: str,
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
-        parse_mode: str = "HTML",
+        parse_mode: str | None = "HTML",
     ) -> None:
         """Edit an existing message or fall back to sending a new one.
 
         This is the canonical pattern for task completion notifications.
+        Use parse_mode=None for plain text (e.g. AI-generated content with <, >, &).
         """
+        edit_kwargs: dict = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "reply_markup": reply_markup,
+        }
+        if parse_mode is not None:
+            edit_kwargs["parse_mode"] = parse_mode
         try:
-            await self._bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-            )
+            await self._bot.edit_message_text(**edit_kwargs)
         except (TelegramBadRequest, Exception):
             await send_message_with_retry(
                 self._bot,
@@ -93,15 +96,17 @@ async def send_message_with_retry(
     Retries up to ``_FLOOD_MAX_RETRIES`` times on ``TelegramRetryAfter``.
     Raises on the final failure.
     """
+    send_kwargs: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": reply_markup,
+        **kwargs,
+    }
+    if parse_mode is not None:
+        send_kwargs["parse_mode"] = parse_mode
     for attempt in range(_FLOOD_MAX_RETRIES):
         try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup,
-                **kwargs,
-            )
+            await bot.send_message(**send_kwargs)
             return
         except TelegramRetryAfter as exc:
             if attempt == _FLOOD_MAX_RETRIES - 1:
