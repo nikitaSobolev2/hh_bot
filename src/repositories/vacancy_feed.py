@@ -45,3 +45,25 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
             reacted.update(liked)
             reacted.update(disliked)
         return reacted
+
+    async def get_all_liked_vacancy_ids_for_user(self, user_id: int) -> set[int]:
+        """Return unique vacancy IDs the user has liked across all autoparse companies."""
+        stmt = select(VacancyFeedSession.liked_ids).where(
+            VacancyFeedSession.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        liked: set[int] = set()
+        for (ids,) in result:
+            liked.update(ids)
+        return liked
+
+    async def get_all_disliked_vacancy_ids_for_user(self, user_id: int) -> set[int]:
+        """Return unique vacancy IDs the user has disliked across all autoparse companies."""
+        stmt = select(VacancyFeedSession.disliked_ids).where(
+            VacancyFeedSession.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        disliked: set[int] = set()
+        for (ids,) in result:
+            disliked.update(ids)
+        return disliked

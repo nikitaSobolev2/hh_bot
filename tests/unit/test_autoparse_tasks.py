@@ -243,11 +243,17 @@ class TestDeliverLastDeliveredAt:
         user.telegram_id = 100
         return user
 
-    def _make_company(self, *, last_delivered_at: datetime | None = None) -> MagicMock:
+    def _make_company(
+        self,
+        *,
+        last_delivered_at: datetime | None = None,
+        include_reacted_in_feed: bool = False,
+    ) -> MagicMock:
         company = MagicMock()
         company.last_delivered_at = last_delivered_at
         company.vacancy_title = "Python Dev"
         company.is_deleted = False
+        company.include_reacted_in_feed = include_reacted_in_feed
         return company
 
     def _make_vacancy(self) -> MagicMock:
@@ -610,11 +616,12 @@ class TestDeliverSeenIdsFilter:
         user.telegram_id = 100
         return user
 
-    def _make_company(self) -> MagicMock:
+    def _make_company(self, include_reacted_in_feed: bool = False) -> MagicMock:
         company = MagicMock()
         company.last_delivered_at = datetime(2026, 1, 1, 12, 0, 0)
         company.vacancy_title = "Python Dev"
         company.is_deleted = False
+        company.include_reacted_in_feed = include_reacted_in_feed
         return company
 
     def _make_vacancy(self, vacancy_id: int) -> MagicMock:
@@ -684,6 +691,60 @@ class TestDeliverSeenIdsFilter:
         assert result == {"status": "delivered", "count": 1}
         passed_ids = mock_create.call_args.kwargs["vacancy_ids"]
         assert passed_ids == [2]
+
+    @pytest.mark.asyncio
+    async def test_includes_reacted_vacancies_when_include_reacted_in_feed_is_true(self):
+        """When company.include_reacted_in_feed is True, reacted vacancies are not filtered out."""
+        user = self._make_user()
+        company = self._make_company(include_reacted_in_feed=True)
+        reacted_vacancy = self._make_vacancy(1)
+        new_vacancy = self._make_vacancy(2)
+
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_new_since = AsyncMock(
+            return_value=[reacted_vacancy, new_vacancy]
+        )
+        vacancy_repo.get_by_ids = AsyncMock(return_value=[])
+        feed_repo = MagicMock()
+        feed_repo.get_all_reacted_vacancy_ids = AsyncMock(return_value={1})
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+            patch(
+                "src.worker.tasks.autoparse._create_feed_session",
+                new_callable=AsyncMock,
+                return_value=99,
+            ) as mock_create,
+            patch(
+                "src.worker.tasks.autoparse._send_feed_stats_card",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        assert result == {"status": "delivered", "count": 2}
+        passed_ids = mock_create.call_args.kwargs["vacancy_ids"]
+        assert set(passed_ids) == {1, 2}
 
     @pytest.mark.asyncio
     async def test_returns_no_new_vacancies_when_all_were_reacted_to(self):

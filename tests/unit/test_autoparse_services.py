@@ -1,4 +1,9 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from src.bot.modules.autoparse.services import (
+    create_autoparse_company,
     generate_full_md,
     generate_links_txt,
     generate_summary_txt,
@@ -74,3 +79,57 @@ class TestGenerateFullMd:
         v = _make_vacancy(company_url=None)
         result = generate_full_md([v])
         assert "Yandex" in result
+
+
+class TestCreateAutoparseCompany:
+    @pytest.mark.asyncio
+    @patch("src.bot.modules.autoparse.services.AutoparseCompanyRepository")
+    async def test_passes_include_reacted_in_feed_to_repo(self, mock_repo_cls):
+        mock_repo = MagicMock()
+        mock_company = MagicMock()
+        mock_company.id = 1
+        mock_repo.create = AsyncMock(return_value=mock_company)
+        mock_repo_cls.return_value = mock_repo
+
+        mock_session = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        await create_autoparse_company(
+            mock_session,
+            user_id=1,
+            title="Python Dev",
+            url="https://hh.ru/search?text=python",
+            keywords="python",
+            skills="Python,Django",
+            include_reacted_in_feed=True,
+        )
+
+        mock_repo.create.assert_called_once()
+        call_kwargs = mock_repo.create.call_args.kwargs
+        assert call_kwargs["include_reacted_in_feed"] is True
+
+    @pytest.mark.asyncio
+    async def test_create_autoparse_company_default_include_reacted_is_false(self):
+        mock_repo = MagicMock()
+        mock_company = MagicMock()
+        mock_company.id = 1
+        mock_repo.create = AsyncMock(return_value=mock_company)
+
+        with patch(
+            "src.bot.modules.autoparse.services.AutoparseCompanyRepository",
+            return_value=mock_repo,
+        ):
+            mock_session = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            await create_autoparse_company(
+                mock_session,
+                user_id=1,
+                title="Dev",
+                url="https://hh.ru/search",
+                keywords="",
+                skills="",
+            )
+
+            call_kwargs = mock_repo.create.call_args.kwargs
+            assert call_kwargs.get("include_reacted_in_feed", False) is False

@@ -170,6 +170,16 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_by_ids_simple(self, ids: list[int]) -> list[AutoparsedVacancy]:
+        """Fetch vacancies by primary-key list without compatibility filter."""
+        if not ids:
+            return []
+        stmt = select(AutoparsedVacancy).where(
+            AutoparsedVacancy.id.in_(ids),
+        ).order_by(AutoparsedVacancy.created_at.desc())
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_new_since(
         self,
         company_id: int,

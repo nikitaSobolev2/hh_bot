@@ -149,12 +149,84 @@ def autoparse_list_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-show-liked"),
+                callback_data=AutoparseCallback(action="show_liked").pack(),
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-show-disliked"),
+                callback_data=AutoparseCallback(action="show_disliked").pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=i18n.get("btn-back"),
                 callback_data=AutoparseCallback(action="hub").pack(),
             )
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def liked_disliked_list_keyboard(
+    action: str,
+    page: int,
+    has_more: bool,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Keyboard for paginated liked or disliked vacancies list."""
+    rows: list[list[InlineKeyboardButton]] = []
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="<",
+                callback_data=AutoparseCallback(action=action, page=page - 1).pack(),
+            )
+        )
+    if has_more:
+        nav_row.append(
+            InlineKeyboardButton(
+                text=">",
+                callback_data=AutoparseCallback(action=action, page=page + 1).pack(),
+            )
+        )
+    if nav_row:
+        rows.append(nav_row)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action="list").pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def include_reacted_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    """Keyboard for include reacted vacancies step in create flow."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-include-reacted-yes"),
+                    callback_data=AutoparseCallback(action="include_reacted_yes").pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-include-reacted-no"),
+                    callback_data=AutoparseCallback(action="include_reacted_no").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=AutoparseCallback(action="hub").pack(),
+                )
+            ],
+        ]
+    )
 
 
 def autoparse_detail_keyboard(

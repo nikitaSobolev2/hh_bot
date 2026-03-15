@@ -24,6 +24,8 @@ from src.bot.modules.autoparse.keyboards import (
     cancel_keyboard,
     confirm_delete_keyboard,
     download_format_keyboard,
+    include_reacted_keyboard,
+    liked_disliked_list_keyboard,
     template_list_keyboard,
 )
 from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
@@ -33,12 +35,15 @@ from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
 from src.models.user import User
 from src.repositories.app_settings import AppSettingRepository
+from src.repositories.autoparse import AutoparsedVacancyRepository
 from src.repositories.parsing import ParsingCompanyRepository
+from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
 router = Router(name="autoparse")
 router.include_router(feed_router)
 
 _PER_PAGE = 5
+_VACANCIES_PER_PAGE = 15
 
 
 async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
@@ -131,23 +136,15 @@ async def template_selected(
         vacancy_title=company.vacancy_title,
         search_url=company.search_url,
         keyword_filter=company.keyword_filter,
+        skills="",
     )
 
     if await _has_tech_stack(session, user.id):
-        data = await state.get_data()
-        new_company = await ap_service.create_autoparse_company(
-            session,
-            user.id,
-            data["vacancy_title"],
-            data["search_url"],
-            data.get("keyword_filter", ""),
-            "",
-        )
-        await state.clear()
+        await state.set_state(AutoparseForm.include_reacted)
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
-                i18n.get("autoparse-created-success", id=str(new_company.id)),
-                reply_markup=autoparse_hub_keyboard(i18n),
+                i18n.get("autoparse-include-reacted-prompt"),
+                reply_markup=include_reacted_keyboard(i18n),
             )
         await callback.answer()
         return
@@ -200,22 +197,13 @@ async def receive_url(message: Message, state: FSMContext, i18n: I18nContext) ->
 async def receive_keywords(
     message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
 ) -> None:
-    await state.update_data(keyword_filter=message.text.strip())
+    await state.update_data(keyword_filter=message.text.strip(), skills="")
 
     if await _has_tech_stack(session, user.id):
-        data = await state.get_data()
-        company = await ap_service.create_autoparse_company(
-            session,
-            user.id,
-            data["vacancy_title"],
-            data["search_url"],
-            data.get("keyword_filter", ""),
-            "",
-        )
-        await state.clear()
+        await state.set_state(AutoparseForm.include_reacted)
         await message.answer(
-            i18n.get("autoparse-created-success", id=str(company.id)),
-            reply_markup=autoparse_hub_keyboard(i18n),
+            i18n.get("autoparse-include-reacted-prompt"),
+            reply_markup=include_reacted_keyboard(i18n),
         )
         return
 
@@ -230,12 +218,29 @@ async def receive_keywords(
 async def receive_skills(
     message: Message,
     state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.update_data(skills=message.text.strip())
+    await state.set_state(AutoparseForm.include_reacted)
+    await message.answer(
+        i18n.get("autoparse-include-reacted-prompt"),
+        reply_markup=include_reacted_keyboard(i18n),
+    )
+
+
+@router.callback_query(
+    AutoparseCallback.filter(F.action.in_({"include_reacted_yes", "include_reacted_no"}))
+)
+async def include_reacted_selected(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
     user: User,
     session: AsyncSession,
+    state: FSMContext,
     i18n: I18nContext,
 ) -> None:
     data = await state.get_data()
-    skills = message.text.strip()
+    include_reacted = callback_data.action == "include_reacted_yes"
 
     company = await ap_service.create_autoparse_company(
         session,
@@ -243,13 +248,16 @@ async def receive_skills(
         data["vacancy_title"],
         data["search_url"],
         data.get("keyword_filter", ""),
-        skills,
+        data.get("skills", ""),
+        include_reacted_in_feed=include_reacted,
     )
     await state.clear()
-    await message.answer(
-        i18n.get("autoparse-created-success", id=str(company.id)),
-        reply_markup=autoparse_hub_keyboard(i18n),
-    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-created-success", id=str(company.id)),
+            reply_markup=autoparse_hub_keyboard(i18n),
+        )
+    await callback.answer()
 
 
 # ── List ────────────────────────────────────────────────────────────
@@ -283,6 +291,102 @@ async def list_companies(
             reply_markup=autoparse_list_keyboard(companies, page, has_more, i18n),
         )
     await callback.answer()
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "show_liked"))
+async def show_liked_vacancies(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await callback.answer()
+    feed_repo = VacancyFeedSessionRepository(session)
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    liked_ids = await feed_repo.get_all_liked_vacancy_ids_for_user(user.id)
+    if not liked_ids:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-liked-empty"),
+                reply_markup=liked_disliked_list_keyboard(
+                    "show_liked", 0, False, i18n
+                ),
+            )
+        return
+
+    ids_list = sorted(liked_ids, reverse=True)
+    page = callback_data.page
+    start = page * _VACANCIES_PER_PAGE
+    page_ids = ids_list[start : start + _VACANCIES_PER_PAGE]
+    has_more = start + _VACANCIES_PER_PAGE < len(ids_list)
+
+    vacancies = await vacancy_repo.get_by_ids_simple(page_ids)
+    order = {vid: i for i, vid in enumerate(page_ids)}
+    vacancies_sorted = sorted(vacancies, key=lambda v: order.get(v.id, 999))
+
+    lines = [f"<b>{i18n.get('autoparse-btn-show-liked')}</b> ({len(liked_ids)})\n"]
+    for i, v in enumerate(vacancies_sorted, start=start + 1):
+        safe_title = v.title.replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(f"{i}. <a href='{v.url}'>{safe_title}</a>")
+    text = "\n".join(lines)
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=liked_disliked_list_keyboard(
+                "show_liked", page, has_more, i18n
+            ),
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "show_disliked"))
+async def show_disliked_vacancies(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await callback.answer()
+    feed_repo = VacancyFeedSessionRepository(session)
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    disliked_ids = await feed_repo.get_all_disliked_vacancy_ids_for_user(user.id)
+    if not disliked_ids:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-disliked-empty"),
+                reply_markup=liked_disliked_list_keyboard(
+                    "show_disliked", 0, False, i18n
+                ),
+            )
+        return
+
+    ids_list = sorted(disliked_ids, reverse=True)
+    page = callback_data.page
+    start = page * _VACANCIES_PER_PAGE
+    page_ids = ids_list[start : start + _VACANCIES_PER_PAGE]
+    has_more = start + _VACANCIES_PER_PAGE < len(ids_list)
+
+    vacancies = await vacancy_repo.get_by_ids_simple(page_ids)
+    order = {vid: i for i, vid in enumerate(page_ids)}
+    vacancies_sorted = sorted(vacancies, key=lambda v: order.get(v.id, 999))
+
+    lines = [f"<b>{i18n.get('autoparse-btn-show-disliked')}</b> ({len(disliked_ids)})\n"]
+    for i, v in enumerate(vacancies_sorted, start=start + 1):
+        safe_title = v.title.replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(f"{i}. <a href='{v.url}'>{safe_title}</a>")
+    text = "\n".join(lines)
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=liked_disliked_list_keyboard(
+                "show_disliked", page, has_more, i18n
+            ),
+            parse_mode="HTML",
+        )
 
 
 # ── Detail ──────────────────────────────────────────────────────────

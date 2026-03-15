@@ -28,6 +28,7 @@ class AutoparseCompany(Base):
     last_delivered_at: Mapped[datetime | None] = mapped_column(default=None)
     total_runs: Mapped[int] = mapped_column(Integer, default=0)
     total_vacancies_found: Mapped[int] = mapped_column(Integer, default=0)
+    include_reacted_in_feed: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped[User] = relationship(back_populates="autoparse_companies")
     vacancies: Mapped[list[AutoparsedVacancy]] = relationship(

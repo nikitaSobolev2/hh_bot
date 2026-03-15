@@ -638,6 +638,13 @@ autoparse-settings-min-compat = 🎯 Мин. совместимость
 autoparse-enter-min-compat = Введите минимальный процент совместимости (0–100):
 autoparse-min-compat-invalid = Введите целое число от 0 до 100.
 autoparse-delivery-header = 📥 <b>{ $title }</b> — { $count } новых вакансий
+autoparse-btn-show-liked = 👍 Понравившиеся
+autoparse-btn-show-disliked = 👎 Не понравившиеся
+autoparse-liked-empty = У вас пока нет понравившихся вакансий.
+autoparse-disliked-empty = У вас пока нет непонравившихся вакансий.
+autoparse-include-reacted-prompt = Показывать ранее оценённые вакансии в ленте снова?
+autoparse-include-reacted-yes = Да
+autoparse-include-reacted-no = Нет
 
 # ── Vacancy Feed ──────────────────────────────────────────
 feed-stats-count = 🆕 { $count } новых вакансий

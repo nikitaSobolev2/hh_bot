@@ -62,6 +62,73 @@ async def test_get_all_reacted_vacancy_ids_excludes_queued_but_unseen():
     assert 10 in reacted
 
 
+# ── VacancyFeedSessionRepository.get_all_liked_vacancy_ids_for_user ──
+
+
+@pytest.mark.asyncio
+async def test_get_all_liked_vacancy_ids_for_user_returns_unique_across_companies():
+    """Aggregates liked_ids from all sessions for the user, returns unique set."""
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(
+        return_value=iter(
+            [
+                ([10, 20],),
+                ([20, 30],),
+            ]
+        )
+    )
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    liked = await repo.get_all_liked_vacancy_ids_for_user(user_id=1)
+
+    assert liked == {10, 20, 30}
+
+
+@pytest.mark.asyncio
+async def test_get_all_liked_vacancy_ids_for_user_returns_empty_when_no_sessions():
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(return_value=iter([]))
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    liked = await repo.get_all_liked_vacancy_ids_for_user(user_id=1)
+
+    assert liked == set()
+
+
+# ── VacancyFeedSessionRepository.get_all_disliked_vacancy_ids_for_user ─
+
+
+@pytest.mark.asyncio
+async def test_get_all_disliked_vacancy_ids_for_user_returns_unique_across_companies():
+    """Aggregates disliked_ids from all sessions for the user, returns unique set."""
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(
+        return_value=iter(
+            [
+                ([5, 15],),
+                ([15, 25],),
+            ]
+        )
+    )
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    disliked = await repo.get_all_disliked_vacancy_ids_for_user(user_id=1)
+
+    assert disliked == {5, 15, 25}
+
+
 # ── AutoparsedVacancyRepository.get_by_ids ──────────────────────────
 
 

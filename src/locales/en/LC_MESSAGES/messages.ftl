@@ -637,6 +637,13 @@ autoparse-settings-min-compat = 🎯 Min. compatibility
 autoparse-enter-min-compat = Enter minimum compatibility percentage (0–100):
 autoparse-min-compat-invalid = Enter a whole number between 0 and 100.
 autoparse-delivery-header = 📥 <b>{ $title }</b> — { $count } new vacancies
+autoparse-btn-show-liked = 👍 Liked vacancies
+autoparse-btn-show-disliked = 👎 Disliked vacancies
+autoparse-liked-empty = You have no liked vacancies yet.
+autoparse-disliked-empty = You have no disliked vacancies yet.
+autoparse-include-reacted-prompt = Include previously reacted vacancies in the feed again?
+autoparse-include-reacted-yes = Yes
+autoparse-include-reacted-no = No
 
 # ── Vacancy Feed ──────────────────────────────────────────
 feed-stats-count = 🆕 { $count } new vacancies

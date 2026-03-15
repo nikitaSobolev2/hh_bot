@@ -14,6 +14,8 @@ def test_build_vacancy_summary_system_prompt_contains_structure():
     assert "storytelling" in prompt
     assert "ФОРМАТ ОТВЕТА" in prompt
     assert "ТОЛЬКО" in prompt
+    assert "АНГЛИЙСКАЯ ВЕРСИЯ" in prompt
+    assert "английском" in prompt
 
 
 def test_build_vacancy_summary_user_content_includes_work_experiences():

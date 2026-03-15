@@ -379,3 +379,106 @@ class TestAutoparseTaskProgressIntegration:
 
         progress_cls_mock.assert_not_called()
         assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_parsing_bar_synced_to_total_to_analyze_when_different_from_target(self):
+        """Parsing bar is synced to total_to_analyze when it differs from target_count."""
+        company = _make_company(company_id=15, vacancy_title="Fullstack Dev")
+        user = _make_user(telegram_id=666)
+        user.autoparse_settings = {"tech_stack": ["Python"]}  # Enables ai_client
+        session = _make_session()
+        session_factory = MagicMock(return_value=session)
+        fake_task = MagicMock()
+        fake_task.request.id = "test-id-6"
+
+        # 55 results not in known_ids -> total_to_analyze=55; target_count=50 from settings
+        vacancy_results = [
+            {
+                "hh_vacancy_id": str(i),
+                "url": f"https://hh.ru/vacancy/{i}",
+                "title": "Dev",
+                "description": "",
+                "raw_skills": [],
+                "company_name": None,
+                "company_url": None,
+                "salary": None,
+            }
+            for i in range(55)
+        ]
+
+        progress_mock = AsyncMock()
+
+        settings_repo = AsyncMock()
+
+        async def get_value(key, default=None):
+            if key == "autoparse_target_count":
+                return "50"
+            if key == "autoparse_interval_hours":
+                return "6"
+            if key == "task_autoparse_enabled":
+                return "true"
+            return default
+
+        settings_repo.get_value = get_value
+
+        base_patches = [
+            patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                new=AsyncMock(return_value=vacancy_results),
+            ),
+            patch("src.services.progress_service.ProgressService", return_value=progress_mock),
+            patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
+            patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
+            patch(
+                "src.worker.tasks.autoparse._send_run_completed_notification",
+                new=AsyncMock(),
+            ),
+            patch("aiogram.Bot", return_value=_make_mock_bot()),
+            patch(
+                "src.services.ai.client.AIClient.analyze_vacancies_batch",
+                new_callable=AsyncMock,
+                return_value={
+                    str(i): MagicMock(compatibility_score=70.0, summary="", stack=[])
+                    for i in range(55)
+                },
+            ),
+        ]
+
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            for p in base_patches + _repo_patches(company, user):
+                stack.enter_context(p)
+            # Override settings to return target_count=50; our 55 results yield total_to_analyze=55
+            stack.enter_context(
+                patch(
+                    "src.repositories.app_settings.AppSettingRepository",
+                    return_value=settings_repo,
+                )
+            )
+
+            from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+            result = await _run_autoparse_company_async(
+                session_factory,
+                fake_task,
+                company_id=15,
+                notify_user_id=42,
+            )
+
+        assert result["status"] == "completed"
+        # Parsing bar (index 0) must be synced to (55, 55) so both bars share the same denominator
+        parsing_sync_calls = [
+            c for c in progress_mock.update_bar.call_args_list
+            if c.args[1] == 0 and c.args[2] == 55 and c.args[3] == 55
+        ]
+        assert len(parsing_sync_calls) >= 1, (
+            "Parsing bar should be updated to (55, 55) when total_to_analyze=55"
+        )

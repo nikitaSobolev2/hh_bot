@@ -306,6 +306,10 @@ async def _run_autoparse_company_async(
             sum(1 for v in results if v["hh_vacancy_id"] not in known_ids) if ai_client else 0
         )
 
+        # Sync parsing bar to use total_to_analyze so both bars share the same denominator
+        if progress and total_to_analyze > 0:
+            await progress.update_bar(task_key, 0, total_to_analyze, total_to_analyze)
+
         restored = await checkpoint.load(checkpoint_key, task_id)
         analyzed_offset, original_total = restored if restored else (0, total_to_analyze)
         analyzed_count = analyzed_offset
@@ -582,8 +586,10 @@ async def _deliver_results_async(
         reacted_ids = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
         queued_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
 
-        # Exclude vacancies the user has already explicitly reviewed.
-        new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
+        # Exclude vacancies the user has already explicitly reviewed, unless
+        # the company is configured to include them again.
+        if not company.include_reacted_in_feed:
+            new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
 
         # Also re-surface vacancies that were queued in a previous session but
         # never reached because the user stopped early.

@@ -7,6 +7,7 @@ class AutoparseForm(StatesGroup):
     search_url = State()
     keyword_filter = State()
     skills = State()
+    include_reacted = State()
 
 
 class AutoparseSettingsForm(StatesGroup):

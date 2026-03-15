@@ -23,6 +23,8 @@ async def create_autoparse_company(
     url: str,
     keywords: str,
     skills: str,
+    *,
+    include_reacted_in_feed: bool = False,
 ) -> AutoparseCompany:
     repo = AutoparseCompanyRepository(session)
     company = await repo.create(
@@ -31,6 +33,7 @@ async def create_autoparse_company(
         search_url=url,
         keyword_filter=keywords,
         skills=skills,
+        include_reacted_in_feed=include_reacted_in_feed,
     )
     await session.commit()
     return company
