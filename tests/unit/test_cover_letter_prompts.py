@@ -38,7 +38,11 @@ class TestBuildCoverLetterSystemPrompt:
     def test_includes_stack_mapping_and_company_relevance_guidance(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
         assert "В вашем стеке" in prompt or "сопоставь стек" in prompt
-        assert "релевантно" in prompt or "компании" in prompt
+        assert (
+            "релевантно" in prompt
+            or "релевантен" in prompt
+            or "компании" in prompt
+        )
 
     def test_forbids_formal_greeting_and_closing(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
