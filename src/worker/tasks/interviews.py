@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.logging import get_logger
@@ -405,33 +407,59 @@ async def _generate_company_review_async(
         system_prompt = build_company_review_system_prompt()
         ai_client = AIClient()
 
-        try:
-            review = await ai_client.generate_text(
-                prompt, system_prompt=system_prompt, max_tokens=2000
-            )
-            cb.record_success()
-        except Exception as exc:
-            cb.record_failure()
-            logger.error(
-                "Company review generation failed",
-                interview_id=interview_id,
-                error=str(exc),
-            )
-            raise
-
         from src.bot.modules.interviews.keyboards import interview_detail_keyboard
 
-        header = get_text("iv-company-review-title", locale)
-        text = f"<b>{header}</b>\n\n{review}"
         keyboard = interview_detail_keyboard(
             interview_id=interview_id,
             improvements=interview.improvements,
             locale=locale,
             has_questions=bool(interview.questions),
         )
+        header = get_text("iv-company-review-title", locale) + "\n\n"
 
-        await task.notify_user(bot, chat_id, message_id, text, reply_markup=keyboard)
-        return {"status": "completed", "interview_id": interview_id}
+        try:
+            from src.services.ai.streaming import stream_to_telegram
+
+            await stream_to_telegram(
+                bot=bot,
+                chat_id=chat_id,
+                token_stream=ai_client.stream_text(
+                    prompt,
+                    system_prompt=system_prompt,
+                    max_tokens=2000,
+                ),
+                initial_text=header,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            cb.record_success()
+            with contextlib.suppress(Exception):
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            return {"status": "completed", "interview_id": interview_id}
+        except Exception:
+            try:
+                review = await ai_client.generate_text(
+                    prompt, system_prompt=system_prompt, max_tokens=2000
+                )
+                cb.record_success()
+                text = f"*{get_text('iv-company-review-title', locale)}*\n\n{review}"
+                await task.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode="Markdown",
+                )
+                return {"status": "completed", "interview_id": interview_id}
+            except Exception as exc:
+                cb.record_failure()
+                logger.error(
+                    "Company review generation failed",
+                    interview_id=interview_id,
+                    error=str(exc),
+                )
+                raise
 
     except SoftTimeLimitExceeded:
         await task.handle_soft_timeout(bot, chat_id, message_id, locale)
@@ -503,33 +531,59 @@ async def _generate_questions_to_ask_async(
         system_prompt = build_questions_to_ask_system_prompt()
         ai_client = AIClient()
 
-        try:
-            questions = await ai_client.generate_text(
-                prompt, system_prompt=system_prompt, max_tokens=2000
-            )
-            cb.record_success()
-        except Exception as exc:
-            cb.record_failure()
-            logger.error(
-                "Questions to ask generation failed",
-                interview_id=interview_id,
-                error=str(exc),
-            )
-            raise
-
         from src.bot.modules.interviews.keyboards import interview_detail_keyboard
 
-        header = get_text("iv-questions-to-ask-title", locale)
-        text = f"<b>{header}</b>\n\n{questions}"
         keyboard = interview_detail_keyboard(
             interview_id=interview_id,
             improvements=interview.improvements,
             locale=locale,
             has_questions=bool(interview.questions),
         )
+        header = get_text("iv-questions-to-ask-title", locale) + "\n\n"
 
-        await task.notify_user(bot, chat_id, message_id, text, reply_markup=keyboard)
-        return {"status": "completed", "interview_id": interview_id}
+        try:
+            from src.services.ai.streaming import stream_to_telegram
+
+            await stream_to_telegram(
+                bot=bot,
+                chat_id=chat_id,
+                token_stream=ai_client.stream_text(
+                    prompt,
+                    system_prompt=system_prompt,
+                    max_tokens=2000,
+                ),
+                initial_text=header,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+            cb.record_success()
+            with contextlib.suppress(Exception):
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            return {"status": "completed", "interview_id": interview_id}
+        except Exception:
+            try:
+                questions = await ai_client.generate_text(
+                    prompt, system_prompt=system_prompt, max_tokens=2000
+                )
+                cb.record_success()
+                text = f"*{get_text('iv-questions-to-ask-title', locale)}*\n\n{questions}"
+                await task.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode="Markdown",
+                )
+                return {"status": "completed", "interview_id": interview_id}
+            except Exception as exc:
+                cb.record_failure()
+                logger.error(
+                    "Questions to ask generation failed",
+                    interview_id=interview_id,
+                    error=str(exc),
+                )
+                raise
 
     except SoftTimeLimitExceeded:
         await task.handle_soft_timeout(bot, chat_id, message_id, locale)

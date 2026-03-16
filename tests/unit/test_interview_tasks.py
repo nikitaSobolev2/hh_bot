@@ -410,12 +410,20 @@ class TestGenerateCompanyReviewTask:
         assert result == {"status": "disabled"}
 
     @pytest.mark.asyncio
-    async def test_success_notifies_user(self):
+    async def test_success_streams_to_telegram(self):
         from src.worker.tasks.interviews import _generate_company_review_async
+
+        async def _mock_stream(*a, **kw):
+            yield "chunk1"
+            yield "chunk2"
 
         interview = _make_interview()
         mock_interview_repo = AsyncMock()
         mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+
+        mock_ai = MagicMock()
+        mock_ai.stream_text = _mock_stream
+        mock_ai.generate_text = AsyncMock(return_value="Company review text")
 
         task = _make_fake_task()
         task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
@@ -427,16 +435,46 @@ class TestGenerateCompanyReviewTask:
                 "src.repositories.interview.InterviewRepository",
                 MagicMock(return_value=mock_interview_repo),
             ),
+            patch("src.services.ai.client.AIClient", MagicMock(return_value=mock_ai)),
             patch(
-                "src.services.ai.client.AIClient",
-                MagicMock(
-                    return_value=MagicMock(
-                        generate_text=AsyncMock(
-                            return_value="Company review text"
-                        )
-                    ),
-                ),
+                "src.services.ai.streaming.stream_to_telegram",
+                AsyncMock(return_value="chunk1chunk2"),
             ),
+            patch(
+                "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
+                return_value=MagicMock(),
+            ),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+        ):
+            result = await _generate_company_review_async(
+                task, sf, 1, 100, 200, "ru"
+            )
+
+        assert result == {"status": "completed", "interview_id": 1}
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_generate_text_when_streaming_fails(self):
+        from src.worker.tasks.interviews import _generate_company_review_async
+
+        interview = _make_interview()
+        mock_interview_repo = AsyncMock()
+        mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+
+        mock_ai = MagicMock()
+        mock_ai.stream_text = MagicMock(side_effect=RuntimeError("stream failed"))
+        mock_ai.generate_text = AsyncMock(return_value="Fallback review text")
+
+        task = _make_fake_task()
+        task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
+        session = AsyncMock()
+        sf = _make_session_factory(session)
+
+        with (
+            patch(
+                "src.repositories.interview.InterviewRepository",
+                MagicMock(return_value=mock_interview_repo),
+            ),
+            patch("src.services.ai.client.AIClient", MagicMock(return_value=mock_ai)),
             patch(
                 "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
                 return_value=MagicMock(),
@@ -470,12 +508,20 @@ class TestGenerateQuestionsToAskTask:
         assert result == {"status": "disabled"}
 
     @pytest.mark.asyncio
-    async def test_success_notifies_user(self):
+    async def test_success_streams_to_telegram(self):
         from src.worker.tasks.interviews import _generate_questions_to_ask_async
+
+        async def _mock_stream(*a, **kw):
+            yield "Q1"
+            yield "Q2"
 
         interview = _make_interview()
         mock_interview_repo = AsyncMock()
         mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+
+        mock_ai = MagicMock()
+        mock_ai.stream_text = _mock_stream
+        mock_ai.generate_text = AsyncMock(return_value="*HR:* Q1\n*Tech Lead:* Q2")
 
         task = _make_fake_task()
         task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
@@ -487,16 +533,46 @@ class TestGenerateQuestionsToAskTask:
                 "src.repositories.interview.InterviewRepository",
                 MagicMock(return_value=mock_interview_repo),
             ),
+            patch("src.services.ai.client.AIClient", MagicMock(return_value=mock_ai)),
             patch(
-                "src.services.ai.client.AIClient",
-                MagicMock(
-                    return_value=MagicMock(
-                        generate_text=AsyncMock(
-                            return_value="**HR:** Q1\n**Tech Lead:** Q2"
-                        )
-                    ),
-                ),
+                "src.services.ai.streaming.stream_to_telegram",
+                AsyncMock(return_value="Q1Q2"),
             ),
+            patch(
+                "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
+                return_value=MagicMock(),
+            ),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+        ):
+            result = await _generate_questions_to_ask_async(
+                task, sf, 1, 100, 200, "ru"
+            )
+
+        assert result == {"status": "completed", "interview_id": 1}
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_generate_text_when_streaming_fails(self):
+        from src.worker.tasks.interviews import _generate_questions_to_ask_async
+
+        interview = _make_interview()
+        mock_interview_repo = AsyncMock()
+        mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+
+        mock_ai = MagicMock()
+        mock_ai.stream_text = MagicMock(side_effect=RuntimeError("stream failed"))
+        mock_ai.generate_text = AsyncMock(return_value="Fallback questions")
+
+        task = _make_fake_task()
+        task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
+        session = AsyncMock()
+        sf = _make_session_factory(session)
+
+        with (
+            patch(
+                "src.repositories.interview.InterviewRepository",
+                MagicMock(return_value=mock_interview_repo),
+            ),
+            patch("src.services.ai.client.AIClient", MagicMock(return_value=mock_ai)),
             patch(
                 "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
                 return_value=MagicMock(),

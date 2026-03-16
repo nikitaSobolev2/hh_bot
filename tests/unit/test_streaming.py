@@ -147,6 +147,21 @@ class TestStreamToTelegram:
         call_kwargs = bot.send_message.call_args.kwargs
         assert call_kwargs["parse_mode"] == "HTML"
 
+    @pytest.mark.asyncio
+    async def test_reply_markup_passed_to_final_send(self):
+        bot = _make_bot()
+        keyboard = MagicMock()
+
+        await stream_to_telegram(
+            bot,
+            42,
+            _async_gen("text"),
+            reply_markup=keyboard,
+        )
+
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs["reply_markup"] is keyboard
+
 
 class TestBuildFinalText:
     def test_replaces_hourglass_with_checkmark(self):

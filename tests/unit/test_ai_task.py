@@ -122,6 +122,68 @@ class TestAIClientKeywordExtraction:
         assert len(user_message) <= AI_MAX_DESCRIPTION_LENGTH + 100
 
 
+class TestAIClientStreamText:
+    """Tests for AIClient.stream_text."""
+
+    @pytest.mark.asyncio
+    async def test_stream_text_yields_chunks(self):
+        from src.services.ai.client import AIClient
+
+        async def mock_stream():
+            chunk1 = MagicMock()
+            chunk1.choices = [MagicMock()]
+            chunk1.choices[0].delta = MagicMock()
+            chunk1.choices[0].delta.content = "Hello "
+            chunk2 = MagicMock()
+            chunk2.choices = [MagicMock()]
+            chunk2.choices[0].delta = MagicMock()
+            chunk2.choices[0].delta.content = "world"
+            chunk3 = MagicMock()
+            chunk3.choices = [MagicMock()]
+            chunk3.choices[0].delta = MagicMock()
+            chunk3.choices[0].delta.content = None
+            for c in (chunk1, chunk2, chunk3):
+                yield c
+
+        client = AIClient(api_key="fake", base_url="http://fake", model="gpt-test")
+        client._acquire_rate_limit = AsyncMock()
+        client._client = MagicMock()
+        client._client.chat.completions.create = AsyncMock(
+            side_effect=lambda **kw: mock_stream()
+        )
+
+        chunks = []
+        async for chunk in client.stream_text("test", system_prompt="system"):
+            chunks.append(chunk)
+
+        assert chunks == ["Hello ", "world"]
+
+    @pytest.mark.asyncio
+    async def test_stream_text_includes_system_prompt_in_messages(self):
+        from src.services.ai.client import AIClient
+
+        async def mock_stream():
+            yield MagicMock(choices=[MagicMock(delta=MagicMock(content="x"))])
+
+        client = AIClient(api_key="fake", base_url="http://fake", model="gpt-test")
+        client._acquire_rate_limit = AsyncMock()
+        client._client = MagicMock()
+        client._client.chat.completions.create = AsyncMock(
+            side_effect=lambda **kw: mock_stream()
+        )
+
+        async for _ in client.stream_text("user", system_prompt="system"):
+            break
+
+        call_args = client._client.chat.completions.create.call_args
+        messages = call_args.kwargs["messages"]
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == "system"
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == "user"
+
+
 class TestRateLimiter:
     """Tests for the Redis-backed rate limiter."""
 

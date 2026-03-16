@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.types import InlineKeyboardMarkup
 
 from src.core.constants import TELEGRAM_MESSAGE_LIMIT, TELEGRAM_TRUNCATE_LIMIT
 from src.core.logging import get_logger
@@ -30,6 +31,7 @@ async def stream_to_telegram(
     *,
     initial_text: str = "",
     parse_mode: str | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
     """Stream an OpenAI response to a Telegram chat.
 
@@ -44,11 +46,15 @@ async def stream_to_telegram(
 
     second_chunk = await anext(token_stream, None)
     if not second_chunk:
-        await _send_complete_response(bot, chat_id, initial_text, first_chunk, parse_mode)
+        await _send_complete_response(
+            bot, chat_id, initial_text, first_chunk, parse_mode, reply_markup
+        )
         return first_chunk
 
     remaining = _prepend_chunks([first_chunk, second_chunk], token_stream)
-    return await _stream_via_drafts(bot, chat_id, remaining, initial_text, parse_mode)
+    return await _stream_via_drafts(
+        bot, chat_id, remaining, initial_text, parse_mode, reply_markup
+    )
 
 
 async def _send_complete_response(
@@ -57,9 +63,12 @@ async def _send_complete_response(
     header: str,
     content: str,
     parse_mode: str | None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
     text = _build_final_text(header, content)
-    await _send_with_retry(bot, chat_id, text=text, parse_mode=parse_mode)
+    await _send_with_retry(
+        bot, chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup
+    )
 
 
 async def _stream_via_drafts(
@@ -68,6 +77,7 @@ async def _stream_via_drafts(
     token_stream: AsyncGenerator[str, None],
     initial_text: str,
     parse_mode: str | None,
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
     draft_id = random.randint(1, 2**31 - 1)
     accumulated = ""
@@ -85,7 +95,9 @@ async def _stream_via_drafts(
         last_update = time.monotonic()
 
     final_text = _build_final_text(initial_text, accumulated)
-    await _send_with_retry(bot, chat_id, text=final_text, parse_mode=parse_mode)
+    await _send_with_retry(
+        bot, chat_id, text=final_text, parse_mode=parse_mode, reply_markup=reply_markup
+    )
 
     logger.info("Draft streaming complete", draft_calls=draft_calls, chars=len(accumulated))
     return accumulated

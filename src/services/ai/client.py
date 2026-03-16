@@ -688,6 +688,52 @@ class AIClient:
             logger.error("OpenAI generate_text failed", error=str(exc))
             raise
 
+    async def stream_text(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        max_tokens: int = 4000,
+        temperature: float = 0.5,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a text response from the model.
+
+        If system_prompt is provided, sends [system, user] messages; otherwise
+        sends only the user prompt.
+        """
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        async def _create_stream():
+            await self._acquire_rate_limit()
+            return await self._client.chat.completions.create(
+                model=self._model,
+                timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0),
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+
+        try:
+            stream = await _call_with_rate_limit_retry(_create_stream)
+        except Exception as exc:
+            logger.error("OpenAI stream_text create failed", error=str(exc))
+            raise
+
+        try:
+            async for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
+                text = delta.content
+                if text:
+                    yield text
+        finally:
+            pass
+
     async def stream_key_phrases(
         self,
         prompt: str,

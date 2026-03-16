@@ -218,6 +218,15 @@ class TestBuildImprovementFlowUserContent:
 # ── Company review prompts ─────────────────────────────────────────────────────
 
 
+class TestBuildCompanyReviewSystemPrompt:
+    def test_contains_telegram_markdown_instruction(self):
+        from src.services.ai.prompts import build_company_review_system_prompt
+
+        prompt = build_company_review_system_prompt()
+        assert "Telegram Markdown" in prompt
+        assert "Запрещены **" in prompt
+
+
 class TestBuildCompanyReviewPrompt:
     def test_build_company_review_prompt_contains_company(self):
         content = build_company_review_prompt(
@@ -240,6 +249,16 @@ class TestBuildCompanyReviewPrompt:
 
 
 # ── Questions to ask prompts ───────────────────────────────────────────────────
+
+
+class TestBuildQuestionsToAskSystemPrompt:
+    def test_contains_telegram_markdown_instruction(self):
+        from src.services.ai.prompts import build_questions_to_ask_system_prompt
+
+        prompt = build_questions_to_ask_system_prompt()
+        assert "Telegram Markdown" in prompt
+        assert "*Вопросы для HR*" in prompt
+        assert "*Вопросы для Tech Lead*" in prompt
 
 
 class TestBuildQuestionsToAskPrompt:
