@@ -989,8 +989,7 @@ res-no-keyphrases = No key phrases found.
 res-parsed-keywords-title = 🔑 Parsed keywords
 
 # ── Interview Preparation ─────────────────────────────────────
-btn-iv-source-plain = 📝 Just save the vacancy
-btn-iv-add-results = ➕ Add Results
+btn-iv-add-results = 📋 Results of interview
 btn-iv-prepare-me = 🎯 Prepare Me
 iv-plain-title = Vacancy
 iv-plain-created = ✅ Vacancy saved. You can now start preparation or add interview results.

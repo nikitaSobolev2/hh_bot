@@ -990,8 +990,7 @@ res-no-keyphrases = Ключевые фразы не найдены.
 res-parsed-keywords-title = 🔑 Ключевые слова из парсинга
 
 # ── Interview Preparation ─────────────────────────────────────
-btn-iv-source-plain = 📝 Просто сохранить вакансию
-btn-iv-add-results = ➕ Добавить результаты
+btn-iv-add-results = 📋 Результаты собеседования
 btn-iv-prepare-me = 🎯 Подготовь меня
 iv-plain-title = Вакансия
 iv-plain-created = ✅ Вакансия сохранена. Теперь вы можете начать подготовку или добавить результаты интервью.

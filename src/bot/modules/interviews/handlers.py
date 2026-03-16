@@ -117,13 +117,6 @@ async def fsm_source_chosen(
             i18n.get("iv-fsm-enter-hh-link"),
             reply_markup=cancel_keyboard(i18n),
         )
-    elif source == "plain":
-        await state.set_state(InterviewForm.vacancy_title)
-        await callback.message.edit_text(
-            i18n.get("iv-fsm-enter-title"),
-            reply_markup=cancel_keyboard(i18n),
-        )
-        await state.update_data(plain_mode=True)
     else:
         await state.set_state(InterviewForm.vacancy_title)
         await callback.message.edit_text(
@@ -140,6 +133,8 @@ async def fsm_source_chosen(
 async def fsm_hh_link_received(
     message: Message,
     state: FSMContext,
+    user: User,
+    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
     url = (message.text or "").strip()
@@ -165,32 +160,15 @@ async def fsm_hh_link_received(
         )
         return
 
-    await state.update_data(
-        hh_vacancy_url=url,
-        vacancy_title=data.get("title", ""),
-        vacancy_description=data.get("description", ""),
-        company_name=data.get("company_name", ""),
-        experience_level=data.get("work_experience", ""),
-    )
-
-    parsed_info = _format_parsed_vacancy_preview(data, i18n)
-    await wait_msg.edit_text(
-        f"{i18n.get('iv-fsm-hh-parsed')}\n\n{parsed_info}\n\n{i18n.get('iv-fsm-now-add-questions')}",
-        reply_markup=questions_keyboard(0, i18n),
-        disable_web_page_preview=True,
-    )
-    await state.set_state(InterviewForm.adding_question)
-
-
-def _format_parsed_vacancy_preview(data: dict, i18n: I18nContext) -> str:
-    lines = []
-    if data.get("title"):
-        lines.append(f"<b>{data['title']}</b>")
-    if data.get("company_name"):
-        lines.append(i18n.get("iv-parsed-company", value=data["company_name"]))
-    if data.get("work_experience"):
-        lines.append(i18n.get("iv-parsed-experience", value=data["work_experience"]))
-    return "\n".join(lines)
+    data_dict = {
+        "hh_vacancy_url": url,
+        "vacancy_title": data.get("title", ""),
+        "vacancy_description": data.get("description", ""),
+        "company_name": data.get("company_name", ""),
+        "experience_level": data.get("work_experience", ""),
+    }
+    await state.clear()
+    await _save_and_show_interview(wait_msg, user, session, i18n, data_dict)
 
 
 # ── FSM: manual branch ───────────────────────────────────────────────────────
@@ -258,15 +236,8 @@ async def fsm_experience_chosen(
 ) -> None:
     await state.update_data(experience_level=callback_data.value)
     data = await state.get_data()
-    if data.get("plain_mode"):
-        await _create_plain_interview(callback, user, state, session, i18n)
-        await callback.answer()
-        return
-    await state.set_state(InterviewForm.adding_question)
-    await callback.message.edit_text(
-        i18n.get("iv-fsm-now-add-questions"),
-        reply_markup=questions_keyboard(0, i18n),
-    )
+    await state.clear()
+    await _save_and_show_interview(callback.message, user, session, i18n, data)
     await callback.answer()
 
 
@@ -517,38 +488,35 @@ async def handle_detail(
     await callback.answer()
 
 
-async def _create_plain_interview(
-    callback: CallbackQuery,
+async def _save_and_show_interview(
+    message_to_edit: Message,
     user: User,
-    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
+    data: dict,
 ) -> None:
+    """Create interview from vacancy data and show interview detail view."""
     import contextlib
 
     from aiogram.exceptions import TelegramBadRequest
 
-    data = await state.get_data()
-    await state.clear()
     interview = await interview_service.create_interview(
         session,
         user_id=user.id,
-        vacancy_title=data.get("vacancy_title", i18n.get("iv-plain-title")),
+        vacancy_title=data.get("vacancy_title", ""),
         vacancy_description=data.get("vacancy_description"),
         company_name=data.get("company_name"),
         experience_level=data.get("experience_level"),
         hh_vacancy_url=data.get("hh_vacancy_url"),
     )
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
     with contextlib.suppress(TelegramBadRequest):
-        from src.bot.modules.interviews.keyboards import interview_detail_keyboard
-
-        header = interview_service.format_vacancy_header(
-            interview.vacancy_title,
-            interview.company_name,
-            interview.experience_level,
-            interview.hh_vacancy_url,
-        )
-        await callback.message.edit_text(
+        await message_to_edit.edit_text(
             f"{header}\n\n{i18n.get('iv-plain-created')}",
             reply_markup=interview_detail_keyboard(
                 interview.id,
@@ -560,7 +528,7 @@ async def _create_plain_interview(
         )
 
 
-# ── Add results (for plain interview) ───────────────────────────────────────
+# ── Add results (for interview without Q&A) ─────────────────────────────────
 
 
 @router.callback_query(InterviewCallback.filter(F.action == "add_results"))

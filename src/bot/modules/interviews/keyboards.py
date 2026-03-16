@@ -116,12 +116,6 @@ def source_choice_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                     callback_data=InterviewFormCallback(action="source", value="manual").pack(),
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-iv-source-plain"),
-                    callback_data=InterviewFormCallback(action="source", value="plain").pack(),
-                )
-            ],
             [_cancel_button(i18n)],
         ]
     )
@@ -224,6 +218,17 @@ def interview_detail_keyboard(
             ]
         )
 
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-prepare-me", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prepare_me", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+
     if not has_questions:
         rows.append(
             [
@@ -235,17 +240,6 @@ def interview_detail_keyboard(
                 )
             ]
         )
-
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=_t("btn-iv-prepare-me", i18n, locale),
-                callback_data=InterviewCallback(
-                    action="prepare_me", interview_id=interview_id
-                ).pack(),
-            )
-        ]
-    )
 
     rows.append(
         [
