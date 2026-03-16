@@ -7,3 +7,4 @@ class InterviewQAForm(StatesGroup):
     """States for interview QA flows."""
 
     why_reason_manual = State()
+    custom_question_await = State()

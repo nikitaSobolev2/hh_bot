@@ -837,6 +837,52 @@ def build_standard_qa_user_content(
     )
 
 
+def build_custom_qa_system_prompt() -> str:
+    """Return the system prompt for custom interview Q&A with topic filter."""
+    return (
+        "Ты — опытный карьерный консультант и эксперт по подготовке к собеседованиям.\n\n"
+        "[ОГРАНИЧЕНИЕ ТЕМЫ]\n"
+        "Отвечай ТОЛЬКО если вопрос касается: поиска работы, собеседований, вакансий, "
+        "карьеры, технологического стека, технологий, компании, профессионального развития.\n"
+        "Если вопрос о математике, общих знаниях, хобби или других посторонних темах — "
+        "ответь СТРОГО в формате:\n\n"
+        "[QAStart]:custom\n"
+        "[REFUSED] Question is outside the scope. I can only help with job and career-related "
+        "questions.\n"
+        "[QAEnd]:custom\n\n"
+        "[ЗАДАЧА]\n"
+        "Составь подготовленный, убедительный ответ на вопрос кандидата "
+        "на основе его опыта работы.\n\n"
+        "[ПРАВИЛА]\n"
+        "- Ответ должен быть честным, конкретным и адаптированным под опыт кандидата.\n"
+        "- Используй технологии и достижения из опыта кандидата.\n"
+        "- Пиши от первого лица, естественно и профессионально.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответ ТОЛЬКО в формате:\n\n"
+        "[QAStart]:custom\n"
+        "Текст ответа (3-5 предложений минимум с конкретным примером из опыта работы).\n"
+        "[QAEnd]:custom\n\n"
+        f"{_STRICT_OUTPUT_PROHIBITION}\n\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_custom_qa_user_content(
+    work_experiences: list[WorkExperienceEntry],
+    user_question: str,
+) -> str:
+    """Return the user message for custom Q&A generation."""
+    exp_block = "\n".join(
+        _format_experience_entry(i, e) for i, e in enumerate(work_experiences)
+    )
+    wrapped_question = _wrap_user_input("user_question", user_question)
+    return (
+        f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n{exp_block}\n\n"
+        f"[ВОПРОС КАНДИДАТА]\n{wrapped_question}\n\n"
+        "Составь развёрнутый ответ на вопрос."
+    )
+
+
 def build_vacancy_summary_system_prompt() -> str:
     """Return the system prompt for generating a vacancy application summary (about-me text)."""
     return (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 import httpx
@@ -219,3 +220,142 @@ async def _notify_user(task: HHBotTask, chat_id: int, message_id: int, locale: s
         )
     finally:
         await bot.session.close()
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="interview_qa.generate_custom",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=120,
+    time_limit=150,
+)
+def generate_custom_qa_task(
+    self,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str = "ru",
+    question_text: str = "",
+) -> dict:
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.config import settings
+
+    try:
+        return run_async(
+            lambda sf: _generate_custom_qa_async(
+                self, sf, user_id, chat_id, message_id, locale, question_text
+            )
+        )
+    except SoftTimeLimitExceeded:
+        logger.warning(
+            "interview_qa.generate_custom soft time limit exceeded",
+            user_id=user_id,
+            chat_id=chat_id,
+        )
+        _send_timeout_message(settings.bot_token, chat_id, locale)
+        self.request.retries = self.max_retries
+        raise
+
+
+async def _generate_custom_qa_async(
+    task: HHBotTask,
+    session_factory,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    question_text: str,
+) -> dict:
+    from src.core.constants import AppSettingKey
+    from src.models.interview_qa import QuestionCategory
+    from src.repositories.interview_qa import StandardQuestionRepository
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import (
+        WorkExperienceEntry,
+        build_custom_qa_system_prompt,
+        build_custom_qa_user_content,
+    )
+
+    enabled = await task.check_enabled(
+        AppSettingKey.TASK_INTERVIEW_QA_ENABLED, session_factory
+    )
+    if not enabled:
+        return {"status": "disabled"}
+
+    question_text = (question_text or "").strip()
+    if not question_text:
+        return {"status": "invalid"}
+
+    async with session_factory() as session:
+        we_repo = WorkExperienceRepository(session)
+        work_experiences_raw = await we_repo.get_active_by_user(user_id)
+
+    experiences = [
+        WorkExperienceEntry(
+            company_name=e.company_name,
+            stack=e.stack,
+            title=e.title,
+            period=e.period,
+            achievements=e.achievements,
+            duties=e.duties,
+        )
+        for e in work_experiences_raw
+    ]
+
+    ai_client = AIClient()
+    system_prompt = build_custom_qa_system_prompt()
+    user_content = build_custom_qa_user_content(experiences, question_text)
+
+    try:
+        raw = await ai_client.generate_text(
+            user_content,
+            system_prompt=system_prompt,
+            timeout=120,
+            max_tokens=2000,
+            temperature=0.5,
+        )
+    except Exception as exc:
+        logger.error(
+            "Custom QA generation failed", user_id=user_id, error=str(exc)
+        )
+        raise
+
+    blocks = _parse_qa_blocks(raw)
+    answer = blocks.get("custom", "").strip()
+
+    if "[REFUSED]" in answer or not answer:
+        from src.core.i18n import get_text
+
+        refusal_msg = get_text("iqa-custom-refused", locale)
+        bot = task.create_bot()
+        try:
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                refusal_msg,
+            )
+        finally:
+            await bot.session.close()
+        return {"status": "refused"}
+
+    question_key = f"custom_{hashlib.sha256(question_text.encode()).hexdigest()[:16]}"
+
+    async with session_factory() as session:
+        qa_repo = StandardQuestionRepository(session)
+        await qa_repo.upsert_answer(
+            user_id,
+            question_key,
+            question_text,
+            answer,
+            is_base_question=False,
+            category=QuestionCategory.AI_GENERATED,
+        )
+        await session.commit()
+
+    await _notify_user(task, chat_id, message_id, locale)
+    return {"status": "completed"}

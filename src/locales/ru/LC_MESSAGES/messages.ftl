@@ -920,6 +920,10 @@ iqa-btn-add-to-interview = ➕ Добавить в интервью
 iqa-add-select-title = Выберите интервью, чтобы добавить этот Q&A
 iqa-add-success = Добавлено в интервью
 iqa-add-no-interviews = У вас пока нет интервью. Создайте его сначала.
+iqa-btn-custom-question = Задать свой вопрос
+iqa-custom-question-prompt = Введите вопрос по теме собеседований (работа, вакансии, стек, технологии, компания):
+iqa-custom-generating = Генерирую ответ...
+iqa-custom-refused = Вопрос вне темы. Я помогаю только с вопросами о работе и карьере.
 
 # ── Vacancy Summary Generator ────────────────────────────────
 vs-list-title = 📄 Мои резюме "О себе"

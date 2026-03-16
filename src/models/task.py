@@ -123,3 +123,16 @@ class CoverLetterTask(BaseCeleryTask):
     )
 
     __mapper_args__ = {"polymorphic_identity": "cover_letter"}
+
+
+class InterviewQATask(BaseCeleryTask):
+    """Task record for interview Q&A generation (interview_qa)."""
+
+    __tablename__ = "tasks_interview_qa"
+
+    id: Mapped[int] = mapped_column(
+        ForeignKey("celery_tasks.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    __mapper_args__ = {"polymorphic_identity": "interview_qa"}

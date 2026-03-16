@@ -192,9 +192,15 @@ class HHBotTask(Task):
         result_data: dict | None = None,
     ) -> None:
         """Persist the idempotency key with status='completed'."""
-        from src.models.task import BaseCeleryTask, CoverLetterTask
+        from src.models.task import BaseCeleryTask, CoverLetterTask, InterviewQATask
 
-        task_cls = CoverLetterTask if task_type == "cover_letter" else BaseCeleryTask
+        task_cls = (
+            CoverLetterTask
+            if task_type == "cover_letter"
+            else InterviewQATask
+            if task_type == "interview_qa"
+            else BaseCeleryTask
+        )
         async with session_factory() as session:
             session.add(
                 task_cls(
@@ -217,9 +223,15 @@ class HHBotTask(Task):
         error: str,
     ) -> None:
         """Persist the idempotency key with status='failed'."""
-        from src.models.task import BaseCeleryTask, CoverLetterTask
+        from src.models.task import BaseCeleryTask, CoverLetterTask, InterviewQATask
 
-        task_cls = CoverLetterTask if task_type == "cover_letter" else BaseCeleryTask
+        task_cls = (
+            CoverLetterTask
+            if task_type == "cover_letter"
+            else InterviewQATask
+            if task_type == "interview_qa"
+            else BaseCeleryTask
+        )
         async with session_factory() as session:
             session.add(
                 task_cls(

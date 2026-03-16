@@ -434,6 +434,9 @@ class TestHandleRegenerate:
         mock_repo.get_by_key = AsyncMock(return_value=existing_question)
         mock_repo.soft_delete = AsyncMock()
 
+        mock_task_repo = AsyncMock()
+        mock_task_repo.delete_by_idempotency_key = AsyncMock(return_value=True)
+
         mock_task = MagicMock()
 
         with (
@@ -442,12 +445,17 @@ class TestHandleRegenerate:
                 return_value=mock_repo,
             ),
             patch(
+                "src.repositories.task.CeleryTaskRepository",
+                return_value=mock_task_repo,
+            ),
+            patch(
                 "src.worker.tasks.interview_qa.generate_interview_qa_task",
                 mock_task,
             ),
         ):
             await handle_regenerate(callback, callback_data, user, session, i18n)
 
+        mock_task_repo.delete_by_idempotency_key.assert_called_once()
         mock_task.delay.assert_called_once()
         delay_args = mock_task.delay.call_args.args
         assert delay_args[4] == "worst_achievement"
@@ -468,12 +476,19 @@ class TestHandleRegenerate:
         mock_repo.get_by_key = AsyncMock(return_value=existing_question)
         mock_repo.soft_delete = AsyncMock()
 
+        mock_task_repo = AsyncMock()
+        mock_task_repo.delete_by_idempotency_key = AsyncMock(return_value=True)
+
         mock_task = MagicMock()
 
         with (
             patch(
                 "src.bot.modules.interview_qa.handlers.StandardQuestionRepository",
                 return_value=mock_repo,
+            ),
+            patch(
+                "src.repositories.task.CeleryTaskRepository",
+                return_value=mock_task_repo,
             ),
             patch(
                 "src.worker.tasks.interview_qa.generate_interview_qa_task",
@@ -483,7 +498,8 @@ class TestHandleRegenerate:
             await handle_regenerate(callback, callback_data, user, session, i18n)
 
         mock_repo.soft_delete.assert_called_once_with(existing_question)
-        session.commit.assert_called_once()
+        mock_task_repo.delete_by_idempotency_key.assert_called_once()
+        session.commit.assert_called()
 
 
 # ── _generate_qa_async ────────────────────────────────────────────────────────

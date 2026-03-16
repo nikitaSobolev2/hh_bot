@@ -58,11 +58,73 @@ async def show_interview_qa_list(
 async def handle_list(
     callback: CallbackQuery,
     user: User,
+    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    await state.clear()
     await show_interview_qa_list(callback, user, session, i18n)
     await callback.answer()
+
+
+@router.callback_query(InterviewQACallback.filter(F.action == "custom_question"))
+async def handle_custom_question(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await state.set_state(InterviewQAForm.custom_question_await)
+    text = i18n.get("iqa-custom-question-prompt")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=InterviewQACallback(action="list").pack(),
+                )
+            ]
+        ]
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.message(InterviewQAForm.custom_question_await, F.text)
+async def handle_custom_question_text(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    we_repo = WorkExperienceRepository(session)
+    if not await we_repo.count_active_by_user(user.id):
+        await message.answer(i18n.get("iqa-no-work-experience"))
+        await state.clear()
+        return
+
+    question_text = (message.text or "").strip()
+    if not question_text:
+        await message.answer(i18n.get("iqa-custom-question-prompt"))
+        return
+
+    await state.clear()
+
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.interview_qa import generate_custom_qa_task
+
+    wait_msg = await message.answer(i18n.get("iqa-custom-generating"))
+    await run_celery_task(
+        generate_custom_qa_task,
+        user.id,
+        message.chat.id,
+        wait_msg.message_id if wait_msg else message.message_id,
+        user.language_code or "ru",
+        question_text,
+    )
 
 
 @router.callback_query(InterviewQACallback.filter(F.action == "base_question"))
@@ -305,7 +367,12 @@ async def handle_regenerate(
         await session.commit()
 
     from src.core.celery_async import run_celery_task
+    from src.repositories.task import CeleryTaskRepository
     from src.worker.tasks.interview_qa import generate_interview_qa_task
+
+    idempotency_key = f"interview_qa:{user.id}:{callback_data.question_key}"
+    await CeleryTaskRepository(session).delete_by_idempotency_key(idempotency_key)
+    await session.commit()
 
     wait_msg = await callback.message.edit_text(i18n.get("iqa-generating"))
     await run_celery_task(

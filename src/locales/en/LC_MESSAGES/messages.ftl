@@ -919,6 +919,10 @@ iqa-btn-add-to-interview = ➕ Add to interview
 iqa-add-select-title = Select interview to add this Q&A
 iqa-add-success = Added to interview
 iqa-add-no-interviews = No interviews yet. Create one first.
+iqa-btn-custom-question = Ask custom question
+iqa-custom-question-prompt = Enter your interview-related question (about job, vacancies, stack, technology, company):
+iqa-custom-generating = Generating answer...
+iqa-custom-refused = This question is outside the scope. I can only help with job and career-related questions.
 
 # ── Vacancy Summary Generator ────────────────────────────────
 vs-list-title = 📄 My About-Me Summaries

@@ -52,6 +52,14 @@ def interview_qa_list_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=i18n.get("iqa-btn-custom-question"),
+                callback_data=InterviewQACallback(action="custom_question").pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=i18n.get("iqa-btn-generate-all"),
                 callback_data=InterviewQACallback(action="generate_all").pack(),
             )
