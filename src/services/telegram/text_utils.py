@@ -2,9 +2,35 @@
 
 from __future__ import annotations
 
+import re
+
 from src.core.constants import TELEGRAM_SAFE_LIMIT
 
 BREAK_MARKER = "[BREAK]"
+
+_SUMMARY_PATTERN = re.compile(
+    r"<Summary>\s*(.*?)\s*</Summary>",
+    re.DOTALL | re.IGNORECASE,
+)
+_PLAN_PATTERN = re.compile(
+    r"<Plan>\s*(.*?)\s*</Plan>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def parse_deep_learning_response(text: str) -> tuple[str | None, str | None]:
+    """Extract <Summary> and <Plan> blocks from deep learning AI response.
+
+    Returns (summary, plan). If parsing fails (missing or malformed tags),
+    returns (None, None) so callers can fall back to full text.
+    """
+    if not text or not text.strip():
+        return (None, None)
+    summary_match = _SUMMARY_PATTERN.search(text)
+    plan_match = _PLAN_PATTERN.search(text)
+    summary = summary_match.group(1).strip() if summary_match else None
+    plan = plan_match.group(1).strip() if plan_match else None
+    return (summary, plan)
 
 
 def split_text_by_break(

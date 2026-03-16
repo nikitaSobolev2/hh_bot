@@ -44,6 +44,20 @@ def test_build_deep_learning_summary_prompt_contains_step_title():
 
     assert "SQL Optimization" in prompt
     assert "Data engineering role" in prompt
+    assert "<Summary>" in prompt or "Summary" in prompt
+    assert "<Plan>" in prompt or "Plan" in prompt
+
+
+def test_build_deep_learning_summary_system_prompt_contains_structure_and_agentic_prohibition():
+    from src.services.ai.prompts import build_deep_learning_summary_system_prompt
+
+    system_prompt = build_deep_learning_summary_system_prompt()
+
+    assert "<Summary>" in system_prompt
+    assert "</Summary>" in system_prompt
+    assert "<Plan>" in system_prompt
+    assert "</Plan>" in system_prompt
+    assert "Отлично" in system_prompt or "агентный" in system_prompt or "ЗАПРЕЩЕНО" in system_prompt
 
 
 def test_build_preparation_test_prompt_contains_format_markers():

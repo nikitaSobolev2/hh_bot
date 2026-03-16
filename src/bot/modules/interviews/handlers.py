@@ -700,14 +700,20 @@ async def handle_prep_continue(
     from src.bot.modules.interviews.keyboards import deep_summary_keyboard
     from src.core.celery_async import run_celery_task
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.telegram.text_utils import split_text_by_break, split_text_for_telegram
+    from src.services.telegram.text_utils import (
+        parse_deep_learning_response,
+        split_text_by_break,
+        split_text_for_telegram,
+    )
     from src.worker.tasks.interview_prep import generate_deep_summary_task
 
     prep_repo = InterviewPreparationRepository(session)
     step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
     if step and step.deep_summary:
+        summary, _ = parse_deep_learning_response(step.deep_summary)
+        display_text = summary or step.deep_summary
         header = f"*{i18n.get('prep-deep-title')}: {step.title}*\n\n"
-        full_text = header + step.deep_summary
+        full_text = header + display_text
         max_len = get_max_message_length(user, "default")
         chunks = split_text_by_break(full_text, max_len=max_len)
         if not chunks and full_text.strip():
@@ -777,7 +783,11 @@ async def handle_prep_step_deep(
 
     from src.bot.modules.interviews.keyboards import deep_summary_keyboard
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.telegram.text_utils import split_text_by_break, split_text_for_telegram
+    from src.services.telegram.text_utils import (
+        parse_deep_learning_response,
+        split_text_by_break,
+        split_text_for_telegram,
+    )
 
     prep_repo = InterviewPreparationRepository(session)
     step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
@@ -785,8 +795,10 @@ async def handle_prep_step_deep(
         await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
         return
 
+    summary, _ = parse_deep_learning_response(step.deep_summary)
+    display_text = summary or step.deep_summary
     header = f"*{i18n.get('prep-deep-title')}: {step.title}*\n\n"
-    full_text = header + step.deep_summary
+    full_text = header + display_text
     max_len = get_max_message_length(user, "default")
     chunks = split_text_by_break(full_text, max_len=max_len)
     if not chunks and full_text.strip():
@@ -864,7 +876,7 @@ async def handle_prep_download_md(
     from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.telegram.text_utils import BREAK_MARKER
+    from src.services.telegram.text_utils import parse_deep_learning_response
 
     prep_repo = InterviewPreparationRepository(session)
     step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
@@ -872,8 +884,10 @@ async def handle_prep_download_md(
         await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
         return
 
+    _, plan_content = parse_deep_learning_response(step.deep_summary)
+    body = (plan_content or step.deep_summary).replace("\r\n", "\n")
     header = f"# {i18n.get('prep-deep-title')}: {step.title}\n\n"
-    full_text = header + step.deep_summary.replace(BREAK_MARKER, "")
+    full_text = header + body
     safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in step.title[:50])
     filename = f"{safe_title}.md"
     doc = BufferedInputFile(
@@ -938,7 +952,11 @@ async def handle_prep_download_back(
 
     from src.bot.modules.interviews.keyboards import deep_summary_keyboard
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.telegram.text_utils import split_text_by_break, split_text_for_telegram
+    from src.services.telegram.text_utils import (
+        parse_deep_learning_response,
+        split_text_by_break,
+        split_text_for_telegram,
+    )
 
     prep_repo = InterviewPreparationRepository(session)
     step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
@@ -946,8 +964,10 @@ async def handle_prep_download_back(
         await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
         return
 
+    summary, _ = parse_deep_learning_response(step.deep_summary)
+    display_text = summary or step.deep_summary
     header = f"*{i18n.get('prep-deep-title')}: {step.title}*\n\n"
-    full_text = header + step.deep_summary
+    full_text = header + display_text
     max_len = get_max_message_length(user, "default")
     chunks = split_text_by_break(full_text, max_len=max_len)
     if not chunks:

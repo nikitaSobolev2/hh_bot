@@ -262,7 +262,7 @@ async def _generate_deep_summary_async(
 
         try:
             deep_summary = await ai_client.generate_text(
-                prompt, system_prompt=system_prompt, max_tokens=20000
+                prompt, system_prompt=system_prompt, max_tokens=64000
             )
             cb.record_success()
         except Exception as exc:
@@ -363,12 +363,17 @@ async def _generate_test_async(
             if not step:
                 return {"status": "not_found"}
 
+        from src.services.telegram.text_utils import parse_deep_learning_response
+
+        _, plan_content = parse_deep_learning_response(step.deep_summary or "")
+        material_for_test = plan_content or step.deep_summary or step.content
+
         ai_client = AIClient()
         system_prompt = build_preparation_test_system_prompt()
         prompt = build_preparation_test_prompt(
             step_title=step.title,
             step_content=step.content,
-            deep_summary=step.deep_summary,
+            deep_summary=material_for_test,
         )
 
         try:
@@ -449,7 +454,7 @@ async def _convert_deep_summary_to_docx_async(
 
     from src.core.i18n import get_text
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.telegram.text_utils import BREAK_MARKER
+    from src.services.telegram.text_utils import parse_deep_learning_response
 
     bot = task.create_bot()
 
@@ -463,8 +468,11 @@ async def _convert_deep_summary_to_docx_async(
                 )
                 return {"status": "not_found"}
 
+            _, plan_content = parse_deep_learning_response(step.deep_summary)
+            body = (plan_content or step.deep_summary).replace("\r\n", "\n")
+
             header = f"# {get_text('prep-deep-title', locale)}: {step.title}\n\n"
-            full_text = header + step.deep_summary.replace(BREAK_MARKER, "")
+            full_text = header + body
             safe_title = "".join(
                 c if c.isalnum() or c in " -_" else "_" for c in step.title[:50]
             )
