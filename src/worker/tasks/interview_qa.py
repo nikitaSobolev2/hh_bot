@@ -16,7 +16,7 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 _QA_BLOCK_RE = re.compile(
-    r"\[QAStart\]:(\w+)\n(.*?)\[QAEnd\]:\1",
+    r"\[QAStart\]:(\w+)\s*\n(.*?)\[QAEnd\]:\1\s*",
     re.DOTALL,
 )
 

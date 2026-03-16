@@ -179,6 +179,20 @@ def test_parse_qa_blocks_extracts_answers():
     assert "successfully delivered" in result["best_achievement"]
 
 
+def test_parse_qa_blocks_tolerates_spaces_after_key():
+    """AI sometimes returns spaces before newline, e.g. [QAStart]:key  \\n."""
+    from src.worker.tasks.interview_qa import _parse_qa_blocks
+
+    text = (
+        "[QAStart]:worst_achievement  \n"
+        "Answer with spaces after key.\n"
+        "[QAEnd]:worst_achievement  \n\n"
+    )
+    result = _parse_qa_blocks(text)
+
+    assert result == {"worst_achievement": "Answer with spaces after key."}
+
+
 def test_parse_qa_blocks_empty_text():
     from src.worker.tasks.interview_qa import _parse_qa_blocks
 
