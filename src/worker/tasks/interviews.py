@@ -410,7 +410,7 @@ async def _generate_company_review_async(
         from src.bot.modules.interviews.keyboards import company_review_view_keyboard
 
         keyboard = company_review_view_keyboard(interview_id=interview_id, locale=locale)
-        header = get_text("iv-company-review-title", locale) + "\n\n"
+        header = f"*{get_text('iv-company-review-title', locale)}*\n\n"
 
         try:
             from src.services.ai.streaming import stream_to_telegram
@@ -441,7 +441,6 @@ async def _generate_company_review_async(
                 review = await ai_client.generate_text(
                     prompt, system_prompt=system_prompt, max_tokens=2000
                 )
-                cb.record_success()
                 async with session_factory() as session:
                     await InterviewRepository(session).update_company_review(
                         interview_id, review
@@ -456,6 +455,7 @@ async def _generate_company_review_async(
                     reply_markup=keyboard,
                     parse_mode="Markdown",
                 )
+                cb.record_success()
                 return {"status": "completed", "interview_id": interview_id}
             except Exception as exc:
                 cb.record_failure()
@@ -541,7 +541,7 @@ async def _generate_questions_to_ask_async(
         keyboard = questions_to_ask_view_keyboard(
             interview_id=interview_id, locale=locale
         )
-        header = get_text("iv-questions-to-ask-title", locale) + "\n\n"
+        header = f"*{get_text('iv-questions-to-ask-title', locale)}*\n\n"
 
         try:
             from src.services.ai.streaming import stream_to_telegram
@@ -572,7 +572,6 @@ async def _generate_questions_to_ask_async(
                 questions = await ai_client.generate_text(
                     prompt, system_prompt=system_prompt, max_tokens=2000
                 )
-                cb.record_success()
                 async with session_factory() as session:
                     await InterviewRepository(session).update_questions_to_ask(
                         interview_id, questions
@@ -587,6 +586,7 @@ async def _generate_questions_to_ask_async(
                     reply_markup=keyboard,
                     parse_mode="Markdown",
                 )
+                cb.record_success()
                 return {"status": "completed", "interview_id": interview_id}
             except Exception as exc:
                 cb.record_failure()

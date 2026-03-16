@@ -522,6 +522,7 @@ async def handle_company_review(
             callback_data.interview_id,
             i18n=i18n,
         ),
+        parse_mode="HTML",
         disable_web_page_preview=True,
     )
     await callback.answer()
@@ -587,6 +588,7 @@ async def handle_questions_to_ask(
             callback_data.interview_id,
             i18n=i18n,
         ),
+        parse_mode="HTML",
         disable_web_page_preview=True,
     )
     await callback.answer()

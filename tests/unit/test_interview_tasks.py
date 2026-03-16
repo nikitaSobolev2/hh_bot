@@ -560,6 +560,7 @@ class TestGenerateQuestionsToAskTask:
             )
 
         assert result == {"status": "completed", "interview_id": 1}
+        mock_interview_repo.update_questions_to_ask.assert_called_once_with(1, "Q1Q2")
 
     @pytest.mark.asyncio
     async def test_fallback_to_generate_text_when_streaming_fails(self):
@@ -568,6 +569,7 @@ class TestGenerateQuestionsToAskTask:
         interview = _make_interview()
         mock_interview_repo = AsyncMock()
         mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+        mock_interview_repo.update_questions_to_ask = AsyncMock()
 
         mock_ai = MagicMock()
         mock_ai.stream_text = MagicMock(side_effect=RuntimeError("stream failed"))
@@ -576,6 +578,7 @@ class TestGenerateQuestionsToAskTask:
         task = _make_fake_task()
         task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
         session = AsyncMock()
+        session.commit = AsyncMock()
         sf = _make_session_factory(session)
 
         with (
@@ -585,7 +588,7 @@ class TestGenerateQuestionsToAskTask:
             ),
             patch("src.services.ai.client.AIClient", MagicMock(return_value=mock_ai)),
             patch(
-                "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
+                "src.bot.modules.interviews.keyboards.questions_to_ask_view_keyboard",
                 return_value=MagicMock(),
             ),
             patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
@@ -596,6 +599,9 @@ class TestGenerateQuestionsToAskTask:
 
         assert result == {"status": "completed", "interview_id": 1}
         task.notify_user.assert_called_once()
+        mock_interview_repo.update_questions_to_ask.assert_called_once_with(
+            1, "Fallback questions"
+        )
 
 
 # ── generate_test_task (interview_prep) ────────────────────────────────────────
