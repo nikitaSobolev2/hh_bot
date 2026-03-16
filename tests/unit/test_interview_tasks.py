@@ -600,7 +600,7 @@ class TestGenerateQuestionsToAskTask:
         assert result == {"status": "completed", "interview_id": 1}
         task.notify_user.assert_called_once()
         mock_interview_repo.update_questions_to_ask.assert_called_once_with(
-            1, "Fallback questions"
+            1, "Fallback questions\n\niv-questions-to-ask-senior-teaser"
         )
 
 

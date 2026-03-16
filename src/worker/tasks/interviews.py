@@ -543,6 +543,7 @@ async def _generate_questions_to_ask_async(
         )
         header = f"*{get_text('iv-questions-to-ask-title', locale)}*\n\n"
 
+        teaser = "\n\n" + get_text("iv-questions-to-ask-senior-teaser", locale)
         try:
             from src.services.ai.streaming import stream_to_telegram
 
@@ -555,6 +556,7 @@ async def _generate_questions_to_ask_async(
                     max_tokens=2000,
                 ),
                 initial_text=header,
+                suffix=teaser,
                 parse_mode="Markdown",
                 reply_markup=keyboard,
             )
@@ -572,12 +574,15 @@ async def _generate_questions_to_ask_async(
                 questions = await ai_client.generate_text(
                     prompt, system_prompt=system_prompt, max_tokens=2000
                 )
+                teaser = "\n\n" + get_text("iv-questions-to-ask-senior-teaser", locale)
+                questions_with_teaser = questions + teaser
                 async with session_factory() as session:
                     await InterviewRepository(session).update_questions_to_ask(
-                        interview_id, questions
+                        interview_id, questions_with_teaser
                     )
                     await session.commit()
-                text = f"*{get_text('iv-questions-to-ask-title', locale)}*\n\n{questions}"
+                title = get_text("iv-questions-to-ask-title", locale)
+                text = f"*{title}*\n\n{questions_with_teaser}"
                 await task.notify_user(
                     bot,
                     chat_id,

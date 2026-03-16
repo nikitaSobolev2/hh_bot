@@ -30,6 +30,7 @@ async def stream_to_telegram(
     token_stream: AsyncGenerator[str, None],
     *,
     initial_text: str = "",
+    suffix: str = "",
     parse_mode: str | None = None,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
@@ -38,22 +39,23 @@ async def stream_to_telegram(
     If the response arrives as a single chunk, sends it as a complete message.
     If multiple chunks arrive, streams progressively via ``sendMessageDraft``.
 
-    Returns the accumulated AI-generated text (without *initial_text*).
+    Returns the accumulated AI-generated text (without *initial_text*) plus *suffix*.
     """
     first_chunk = await anext(token_stream, None)
     if not first_chunk:
-        return ""
+        return suffix
 
     second_chunk = await anext(token_stream, None)
     if not second_chunk:
+        content = first_chunk + suffix
         await _send_complete_response(
-            bot, chat_id, initial_text, first_chunk, parse_mode, reply_markup
+            bot, chat_id, initial_text, content, parse_mode, reply_markup
         )
-        return first_chunk
+        return content
 
     remaining = _prepend_chunks([first_chunk, second_chunk], token_stream)
     return await _stream_via_drafts(
-        bot, chat_id, remaining, initial_text, parse_mode, reply_markup
+        bot, chat_id, remaining, initial_text, suffix, parse_mode, reply_markup
     )
 
 
@@ -76,6 +78,7 @@ async def _stream_via_drafts(
     chat_id: int,
     token_stream: AsyncGenerator[str, None],
     initial_text: str,
+    suffix: str,
     parse_mode: str | None,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
@@ -94,13 +97,14 @@ async def _stream_via_drafts(
         draft_calls += 1
         last_update = time.monotonic()
 
-    final_text = _build_final_text(initial_text, accumulated)
+    content = accumulated + suffix
+    final_text = _build_final_text(initial_text, content)
     await _send_with_retry(
         bot, chat_id, text=final_text, parse_mode=parse_mode, reply_markup=reply_markup
     )
 
     logger.info("Draft streaming complete", draft_calls=draft_calls, chars=len(accumulated))
-    return accumulated
+    return content
 
 
 def _should_update_draft(last_update: float) -> bool:

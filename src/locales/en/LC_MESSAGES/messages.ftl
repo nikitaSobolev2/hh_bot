@@ -809,6 +809,7 @@ iv-company-review-failed = Could not generate review. Please try later.
 iv-questions-to-ask-failed = Could not generate questions. Please try later.
 iv-company-review-empty = No data yet. Click Regenerate to generate.
 iv-questions-to-ask-empty = No data yet. Click Regenerate to generate.
+iv-questions-to-ask-senior-teaser = If you want, I can create an even more advanced list of questions to stand out at the interview and show deep understanding of the company's stack and processes. These will be Senior+ level questions.
 btn-iv-regenerate = 🔄 Regenerate
 
 # Progress bars
