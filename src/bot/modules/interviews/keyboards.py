@@ -721,6 +721,15 @@ def questions_to_ask_view_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=_t("btn-notes-start", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="notes_start_from_questions",
+                        interview_id=interview_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=_t("btn-back", i18n, locale),
                     callback_data=InterviewCallback(
                         action="detail", interview_id=interview_id

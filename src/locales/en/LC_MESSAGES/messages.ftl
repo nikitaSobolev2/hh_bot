@@ -825,7 +825,7 @@ iv-notes-added = Note added.
 iv-notes-deleted = Note deleted.
 iv-notes-updated = Note updated.
 iv-notes-invalid-number = Invalid number. Enter 1, 2, 3...
-iv-notes-noting-hint = Send messages to add notes. Tap "Stop noting" when done.
+iv-notes-noting-hint = Send messages to add notes. Tap "Stop noting" when done. Or type /stop_notes to stop.
 iv-notes-stopped = Noting stopped.
 
 # Progress bars

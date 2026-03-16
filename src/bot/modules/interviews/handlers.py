@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import httpx
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -561,6 +562,45 @@ async def handle_company_review_regenerate(
 # ── Questions to ask (AI) ───────────────────────────────────────────────────
 
 
+async def _show_questions_to_ask_view(
+    message_or_callback,
+    interview_id: int,
+    session: AsyncSession,
+    i18n: I18nContext,
+    *,
+    use_answer: bool = False,
+) -> None:
+    """Show questions-to-ask view. Use use_answer=True when message is from user."""
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(interview_id)
+    if not interview or interview.is_deleted:
+        return
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    content = interview.questions_to_ask or i18n.get("iv-questions-to-ask-empty")
+    text = f"{header}\n\n<b>{i18n.get('iv-questions-to-ask-title')}</b>\n\n{content}"
+    kb = questions_to_ask_view_keyboard(interview_id, i18n=i18n)
+    if use_answer or not hasattr(message_or_callback, "edit_text"):
+        await message_or_callback.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+    else:
+        await message_or_callback.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+
+
 @router.callback_query(InterviewCallback.filter(F.action == "questions_to_ask"))
 async def handle_questions_to_ask(
     callback: CallbackQuery,
@@ -575,23 +615,8 @@ async def handle_questions_to_ask(
         await callback.answer(i18n.get("iv-not-found"), show_alert=True)
         return
 
-    header = interview_service.format_vacancy_header(
-        interview.vacancy_title,
-        interview.company_name,
-        interview.experience_level,
-        interview.hh_vacancy_url,
-    )
-    content = interview.questions_to_ask or i18n.get("iv-questions-to-ask-empty")
-    text = f"{header}\n\n<b>{i18n.get('iv-questions-to-ask-title')}</b>\n\n{content}"
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=questions_to_ask_view_keyboard(
-            callback_data.interview_id,
-            i18n=i18n,
-        ),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
+    await _show_questions_to_ask_view(
+        callback.message, callback_data.interview_id, session, i18n
     )
     await callback.answer()
 
@@ -689,6 +714,36 @@ async def handle_notes(
     await callback.answer()
 
 
+async def _start_noting_flow(
+    callback: CallbackQuery,
+    interview_id: int,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+    return_to: str,
+) -> None:
+    """Shared logic for starting the noting flow from notes or questions view."""
+    from src.repositories.interview import InterviewNoteRepository, InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(interview_id)
+    if not interview or interview.is_deleted:
+        return
+    await state.update_data(interview_id=interview_id, return_to=return_to)
+    await state.set_state(InterviewForm.notes_noting)
+    notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
+    text = _build_notes_view_text(interview, notes, i18n)
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=notes_view_keyboard(interview_id, i18n=i18n, is_noting=True),
+        disable_web_page_preview=True,
+    )
+    await callback.message.answer(
+        i18n.get("iv-notes-noting-hint"),
+        reply_markup=notes_stop_noting_reply_keyboard(i18n=i18n),
+    )
+
+
 @router.callback_query(InterviewCallback.filter(F.action == "notes_start"))
 async def handle_notes_start(
     callback: CallbackQuery,
@@ -697,29 +752,43 @@ async def handle_notes_start(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.repositories.interview import InterviewNoteRepository, InterviewRepository
+    from src.repositories.interview import InterviewRepository
 
     interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
     if not interview or interview.is_deleted:
         await callback.answer(i18n.get("iv-not-found"), show_alert=True)
         return
 
-    await state.update_data(interview_id=callback_data.interview_id)
-    await state.set_state(InterviewForm.notes_noting)
-
-    notes = await InterviewNoteRepository(session).get_by_interview(callback_data.interview_id)
-    text = _build_notes_view_text(interview, notes, i18n)
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=notes_view_keyboard(
-            callback_data.interview_id, i18n=i18n, is_noting=True
-        ),
-        disable_web_page_preview=True,
+    await _start_noting_flow(
+        callback, callback_data.interview_id, state, session, i18n, return_to="notes"
     )
-    await callback.message.answer(
-        i18n.get("iv-notes-noting-hint"),
-        reply_markup=notes_stop_noting_reply_keyboard(i18n=i18n),
+    await callback.answer()
+
+
+@router.callback_query(
+    InterviewCallback.filter(F.action == "notes_start_from_questions")
+)
+async def handle_notes_start_from_questions(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    await _start_noting_flow(
+        callback,
+        callback_data.interview_id,
+        state,
+        session,
+        i18n,
+        return_to="questions_to_ask",
     )
     await callback.answer()
 
@@ -734,14 +803,21 @@ async def handle_notes_stop(
 ) -> None:
     from aiogram.types import ReplyKeyboardRemove
 
+    data = await state.get_data()
+    return_to = data.get("return_to", "notes")
     await state.clear()
     await callback.message.answer(
         i18n.get("iv-notes-stopped"),
         reply_markup=ReplyKeyboardRemove(),
     )
-    await _show_notes_view(
-        callback.message, callback_data.interview_id, session, i18n
-    )
+    if return_to == "questions_to_ask":
+        await _show_questions_to_ask_view(
+            callback.message, callback_data.interview_id, session, i18n
+        )
+    else:
+        await _show_notes_view(
+            callback.message, callback_data.interview_id, session, i18n
+        )
     await callback.answer()
 
 
@@ -819,6 +895,35 @@ async def handle_notes_delete(
     await callback.answer()
 
 
+@router.message(InterviewForm.notes_noting, Command("stop_notes"))
+async def handle_stop_notes_command(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    """Alternative to ReplyKeyboard button: type /stop_notes to stop noting."""
+    from aiogram.types import ReplyKeyboardRemove
+
+    data = await state.get_data()
+    interview_id = data.get("interview_id")
+    return_to = data.get("return_to", "notes")
+    await state.clear()
+    await message.answer(
+        i18n.get("iv-notes-stopped"),
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    if interview_id:
+        if return_to == "questions_to_ask":
+            await _show_questions_to_ask_view(
+                message, interview_id, session, i18n, use_answer=True
+            )
+        else:
+            await _show_notes_view(
+                message, interview_id, session, i18n, use_answer=True
+            )
+
+
 @router.message(InterviewForm.notes_noting, F.text)
 async def handle_notes_noting_message(
     message: Message,
@@ -833,15 +938,21 @@ async def handle_notes_noting_message(
     if message.text and message.text.strip() == i18n.get("btn-notes-stop"):
         data = await state.get_data()
         interview_id = data.get("interview_id")
+        return_to = data.get("return_to", "notes")
         await state.clear()
         await message.answer(
             i18n.get("iv-notes-stopped"),
             reply_markup=ReplyKeyboardRemove(),
         )
         if interview_id:
-            await _show_notes_view(
-                message, interview_id, session, i18n, use_answer=True
-            )
+            if return_to == "questions_to_ask":
+                await _show_questions_to_ask_view(
+                    message, interview_id, session, i18n, use_answer=True
+                )
+            else:
+                await _show_notes_view(
+                    message, interview_id, session, i18n, use_answer=True
+                )
         return
 
     data = await state.get_data()

@@ -874,3 +874,130 @@ async def test_handle_questions_to_ask_regenerate_dispatches_task():
     assert call_args[2] == 123  # chat_id
     assert call_args[4] == "en"  # locale
     callback.answer.assert_called_once()
+
+
+def test_questions_to_ask_view_keyboard_has_start_noting_button():
+    """questions_to_ask_view_keyboard includes Start noting button."""
+    from src.bot.modules.interviews.keyboards import questions_to_ask_view_keyboard
+
+    kb = questions_to_ask_view_keyboard(interview_id=1, i18n=_make_i18n())
+    buttons_text = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert any(
+        "Start noting" in t or "Начать запись" in t for t in buttons_text
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_notes_start_from_questions_stores_return_to_and_enters_noting():
+    """notes_start_from_questions stores return_to=questions_to_ask and shows noting UI."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_notes_start_from_questions
+    from src.bot.modules.interviews.states import InterviewForm
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.message.answer = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(
+        action="notes_start_from_questions", interview_id=1
+    )
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+
+    state = AsyncMock()
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    mock_notes_repo = AsyncMock()
+    mock_notes_repo.get_by_interview = AsyncMock(return_value=[])
+    mock_interview_repo = MagicMock()
+    mock_interview_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+
+    with (
+        patch(
+            "src.repositories.interview.InterviewRepository",
+            return_value=mock_interview_repo,
+        ),
+        patch(
+            "src.repositories.interview.InterviewNoteRepository",
+            return_value=mock_notes_repo,
+        ),
+    ):
+        await handle_notes_start_from_questions(
+            callback, callback_data, state, session, i18n
+        )
+
+    state.update_data.assert_called_once()
+    update_kw = state.update_data.call_args[1]
+    assert update_kw.get("return_to") == "questions_to_ask"
+    assert update_kw.get("interview_id") == 1
+    state.set_state.assert_called_once_with(InterviewForm.notes_noting)
+    callback.message.edit_text.assert_called_once()
+    callback.message.answer.assert_called_once()
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_notes_stop_returns_to_questions_view_when_return_to_questions():
+    """notes_stop shows questions view when return_to is questions_to_ask."""
+    from aiogram.types import ReplyKeyboardRemove
+
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_notes_stop
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.answer = AsyncMock(return_value=MagicMock())
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="notes_stop", interview_id=1)
+
+    state = AsyncMock()
+    state.get_data = AsyncMock(
+        return_value={"interview_id": 1, "return_to": "questions_to_ask"}
+    )
+    state.clear = AsyncMock()
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+    mock_interview.questions_to_ask = "Q1: Tell me about yourself"
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    mock_interview_repo = MagicMock()
+    mock_interview_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+
+    with patch(
+        "src.repositories.interview.InterviewRepository",
+        return_value=mock_interview_repo,
+    ):
+        await handle_notes_stop(
+            callback, callback_data, state, session, i18n
+        )
+
+    state.clear.assert_called_once()
+    callback.message.answer.assert_called_once()
+    answer_args = callback.message.answer.call_args
+    assert isinstance(answer_args[1]["reply_markup"], ReplyKeyboardRemove)
+    callback.message.edit_text.assert_called_once()
+    edit_args = callback.message.edit_text.call_args[0]
+    assert "Q1: Tell me about yourself" in str(edit_args)
+    callback.answer.assert_called_once()
