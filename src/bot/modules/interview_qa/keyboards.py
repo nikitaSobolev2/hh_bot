@@ -12,7 +12,10 @@ from src.models.interview_qa import BASE_QUESTION_KEYS, WHY_NEW_JOB_REASONS
 
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
+    from src.models.interview import Interview
     from src.models.interview_qa import StandardQuestion
+
+_PAGE_SIZE = 5
 
 
 def interview_qa_list_keyboard(
@@ -139,6 +142,34 @@ def generate_select_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def answer_back_keyboard(
+    question_key: str,
+    reason: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Keyboard for why_reason / why_reason_manual answer views: Add to interview + Back."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("iqa-btn-add-to-interview"),
+                    callback_data=InterviewQACallback(
+                        action="add_to_interview",
+                        question_key=question_key,
+                        reason=reason,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=InterviewQACallback(action="list").pack(),
+                )
+            ],
+        ]
+    )
+
+
 def question_detail_keyboard(
     question_key: str,
     i18n: I18nContext,
@@ -155,9 +186,83 @@ def question_detail_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("iqa-btn-add-to-interview"),
+                    callback_data=InterviewQACallback(
+                        action="add_to_interview", question_key=question_key
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-back"),
                     callback_data=InterviewQACallback(action="list").pack(),
                 )
             ],
         ]
     )
+
+
+def interview_add_select_keyboard(
+    interviews: list[Interview],
+    page: int,
+    total: int,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Paginated interview list for add-to-interview flow."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for interview in interviews:
+        date_str = interview.created_at.strftime("%m/%d")
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"📝 {interview.vacancy_title} ({date_str})",
+                    callback_data=InterviewQACallback(
+                        action="add_to_interview_select",
+                        interview_id=interview.id,
+                    ).pack(),
+                )
+            ]
+        )
+
+    total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="◀️",
+                    callback_data=InterviewQACallback(
+                        action="add_to_interview_list", page=page - 1
+                    ).pack(),
+                )
+            )
+        nav.append(
+            InlineKeyboardButton(
+                text=f"{page + 1}/{total_pages}",
+                callback_data=InterviewQACallback(
+                    action="add_to_interview_list", page=page
+                ).pack(),
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="▶️",
+                    callback_data=InterviewQACallback(
+                        action="add_to_interview_list", page=page + 1
+                    ).pack(),
+                )
+            )
+        rows.append(nav)
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=InterviewQACallback(action="add_to_interview_back").pack(),
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)

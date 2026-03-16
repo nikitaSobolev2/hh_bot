@@ -915,6 +915,10 @@ iqa-generate-select-title = ✨ Select a question to generate an answer
 iqa-generate-select-description = Tap a question to generate an answer using your work experience. ✅ = ready, ❌ = not yet generated.
 iqa-btn-generate-pending = ✨ Generate all remaining ({ $count })
 iqa-no-work-experience = Please add work experience in your profile before generating answers.
+iqa-btn-add-to-interview = ➕ Add to interview
+iqa-add-select-title = Select interview to add this Q&A
+iqa-add-success = Added to interview
+iqa-add-no-interviews = No interviews yet. Create one first.
 
 # ── Vacancy Summary Generator ────────────────────────────────
 vs-list-title = 📄 My About-Me Summaries

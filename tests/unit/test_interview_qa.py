@@ -664,3 +664,209 @@ class TestGenerateQaAsync:
             result = await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", None)
 
         assert result == {"status": "already_generated"}
+
+
+# ── Add to Interview Flow ─────────────────────────────────────────────────────
+
+
+def _make_state() -> MagicMock:
+    state = AsyncMock()
+    state.get_data = AsyncMock(return_value={})
+    state.update_data = AsyncMock()
+    return state
+
+
+class TestQuestionDetailKeyboard:
+    def test_includes_add_to_interview_button(self):
+        from src.bot.modules.interview_qa.keyboards import question_detail_keyboard
+
+        kb = question_detail_keyboard("best_achievement", _make_i18n())
+        button_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+        assert any("Add to interview" in t for t in button_texts)
+
+    def test_add_to_interview_callback_has_action_and_question_key(self):
+        from src.bot.modules.interview_qa.keyboards import question_detail_keyboard
+
+        kb = question_detail_keyboard("worst_achievement", _make_i18n())
+        all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+        add_btn_data = next(cd for cd in all_data if cd and "add_to_interview" in cd)
+        assert "worst_achievement" in add_btn_data
+
+
+class TestInterviewAddSelectKeyboard:
+    def test_empty_list_shows_only_back_button(self):
+        from src.bot.modules.interview_qa.keyboards import interview_add_select_keyboard
+
+        kb = interview_add_select_keyboard([], 0, 0, _make_i18n())
+        assert len(kb.inline_keyboard) == 1
+        assert "add_to_interview_back" in kb.inline_keyboard[0][0].callback_data
+
+    def test_interviews_listed_with_select_action(self):
+        from datetime import datetime
+
+        from src.bot.modules.interview_qa.keyboards import interview_add_select_keyboard
+        from src.models.interview import Interview
+
+        interview = MagicMock(spec=Interview)
+        interview.id = 5
+        interview.vacancy_title = "Python Dev"
+        interview.created_at = datetime(2025, 3, 15)
+
+        kb = interview_add_select_keyboard([interview], 0, 1, _make_i18n())
+        select_btns = [
+            btn
+            for row in kb.inline_keyboard
+            for btn in row
+            if btn.callback_data and "add_to_interview_select" in btn.callback_data
+        ]
+        assert len(select_btns) == 1
+        assert "5" in select_btns[0].callback_data
+
+
+class TestHandleAddToInterview:
+    @pytest.mark.asyncio
+    async def test_shows_alert_when_no_fsm_data(self):
+        from src.bot.modules.interview_qa.handlers import handle_add_to_interview
+
+        callback = _make_callback()
+        user = _make_user()
+        state = _make_state()
+        state.get_data = AsyncMock(return_value={})
+        session = _make_session()
+        i18n = _make_i18n()
+
+        await handle_add_to_interview(callback, user, state, session, i18n)
+
+        callback.answer.assert_called_once()
+        assert callback.answer.call_args.kwargs.get("show_alert") is True
+        callback.message.edit_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_shows_interview_list_when_fsm_data_exists(self):
+        from src.bot.modules.interview_qa.handlers import handle_add_to_interview
+
+        callback = _make_callback()
+        user = _make_user()
+        state = _make_state()
+        state.get_data = AsyncMock(
+            return_value={
+                "iqa_add_question": "Q?",
+                "iqa_add_answer": "A",
+                "iqa_add_prev_action": "view_question",
+                "iqa_add_prev_question_key": "best_achievement",
+                "iqa_add_prev_reason": "",
+            }
+        )
+        session = _make_session()
+        i18n = _make_i18n()
+
+        mock_interviews = []
+        mock_get_paginated = AsyncMock(return_value=(mock_interviews, 0))
+
+        with patch(
+            "src.bot.modules.interviews.services.get_interviews_paginated",
+            mock_get_paginated,
+        ):
+            await handle_add_to_interview(callback, user, state, session, i18n)
+
+        mock_get_paginated.assert_called_once_with(session, user.id, 0)
+        callback.message.edit_text.assert_called_once()
+
+
+class TestHandleAddToInterviewSelect:
+    @pytest.mark.asyncio
+    async def test_creates_note_and_returns_to_list(self):
+        from src.bot.modules.interview_qa.callbacks import InterviewQACallback
+        from src.bot.modules.interview_qa.handlers import handle_add_to_interview_select
+
+        callback = _make_callback()
+        callback_data = InterviewQACallback(
+            action="add_to_interview_select", interview_id=7
+        )
+        user = _make_user(user_id=1)
+        state = _make_state()
+        state.get_data = AsyncMock(
+            return_value={
+                "iqa_add_question": "Question?",
+                "iqa_add_answer": "Answer.",
+            }
+        )
+        session = _make_session()
+        i18n = _make_i18n()
+
+        mock_interview = MagicMock()
+        mock_interview.user_id = 1
+
+        mock_interview_repo = AsyncMock()
+        mock_interview_repo.get_by_id = AsyncMock(return_value=mock_interview)
+
+        mock_notes_repo = AsyncMock()
+        mock_notes_repo.get_by_interview = AsyncMock(return_value=[])
+        mock_notes_repo.create_note = AsyncMock()
+
+        mock_qa_repo = AsyncMock()
+        mock_qa_repo.get_ai_generated = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "src.repositories.interview.InterviewRepository",
+                return_value=mock_interview_repo,
+            ),
+            patch(
+                "src.repositories.interview.InterviewNoteRepository",
+                return_value=mock_notes_repo,
+            ),
+            patch(
+                "src.bot.modules.interview_qa.handlers.StandardQuestionRepository",
+                return_value=mock_qa_repo,
+            ),
+        ):
+            await handle_add_to_interview_select(
+                callback, callback_data, user, state, session, i18n
+            )
+
+        mock_notes_repo.create_note.assert_called_once()
+        call_kwargs = mock_notes_repo.create_note.call_args.kwargs
+        assert call_kwargs["interview_id"] == 7
+        assert "Q: Question?" in call_kwargs["content"]
+        assert "A: Answer." in call_kwargs["content"]
+        session.commit.assert_called_once()
+        callback.answer.assert_called_once()
+        callback.message.edit_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_shows_alert_when_interview_not_owned_by_user(self):
+        from src.bot.modules.interview_qa.callbacks import InterviewQACallback
+        from src.bot.modules.interview_qa.handlers import handle_add_to_interview_select
+
+        callback = _make_callback()
+        callback_data = InterviewQACallback(
+            action="add_to_interview_select", interview_id=99
+        )
+        user = _make_user(user_id=1)
+        state = _make_state()
+        state.get_data = AsyncMock(
+            return_value={
+                "iqa_add_question": "Q",
+                "iqa_add_answer": "A",
+            }
+        )
+        session = _make_session()
+        i18n = _make_i18n()
+
+        mock_interview = MagicMock()
+        mock_interview.user_id = 999
+
+        mock_interview_repo = AsyncMock()
+        mock_interview_repo.get_by_id = AsyncMock(return_value=mock_interview)
+
+        with patch(
+            "src.repositories.interview.InterviewRepository",
+            return_value=mock_interview_repo,
+        ):
+            await handle_add_to_interview_select(
+                callback, callback_data, user, state, session, i18n
+            )
+
+        callback.answer.assert_called_once()
+        assert callback.answer.call_args.kwargs.get("show_alert") is True
