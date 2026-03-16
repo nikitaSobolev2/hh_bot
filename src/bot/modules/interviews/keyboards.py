@@ -383,10 +383,9 @@ def prep_step_detail_keyboard(
                 InlineKeyboardButton(
                     text=_t("prep-btn-start-test", i18n, locale),
                     callback_data=InterviewCallback(
-                        action="prep_test",
+                        action="prep_test_enter",
                         interview_id=interview_id,
                         prep_step_id=step_id,
-                        test_q_index=0,
                     ).pack(),
                 )
             ]
@@ -508,6 +507,7 @@ def test_question_keyboard(
     step_id: int,
     interview_id: int,
     q_index: int,
+    total_questions: int,
     i18n: I18nContext | None = None,
     locale: str = "ru",
 ) -> InlineKeyboardMarkup:
@@ -527,6 +527,33 @@ def test_question_keyboard(
                 )
             ]
         )
+    nav_row: list[InlineKeyboardButton] = []
+    if q_index > 0:
+        nav_row.append(
+            InlineKeyboardButton(
+                text=_t("prep-btn-prev", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_test",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                    test_q_index=q_index - 1,
+                ).pack(),
+            )
+        )
+    if q_index < total_questions - 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text=_t("prep-btn-next", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_test",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                    test_q_index=q_index + 1,
+                ).pack(),
+            )
+        )
+    if nav_row:
+        rows.append(nav_row)
     rows.append(
         [
             InlineKeyboardButton(
@@ -540,6 +567,38 @@ def test_question_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def test_results_keyboard(
+    step_id: int,
+    interview_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("prep-btn-extend-test", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_extend_test",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-back", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_step_detail",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
 
 
 def improvement_detail_keyboard(

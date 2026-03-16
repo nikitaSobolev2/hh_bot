@@ -1138,6 +1138,30 @@ def build_preparation_test_prompt(
     )
 
 
+def build_preparation_test_extend_prompt(
+    step_title: str,
+    step_content: str,
+    deep_summary: str | None,
+    existing_questions: list[dict],
+) -> str:
+    """Return the user content for extending a test with more questions."""
+    material = (deep_summary or step_content)[:2000]
+    existing_block = "\n\n".join(
+        f"[Q]: {q['question']}\n" + "\n".join(f"[A]: {opt}" for opt in q["options"])
+        for q in existing_questions
+    )
+    return (
+        "[ЗАДАЧА]\n"
+        f"Добавь ещё 3-5 новых вопросов к тесту на тему: <{step_title}>.\n"
+        "НЕ дублируй существующие вопросы. Создавай только новые.\n\n"
+        f"[УЧЕБНЫЙ МАТЕРИАЛ]\n{material}\n\n"
+        "[СУЩЕСТВУЮЩИЕ ВОПРОСЫ — НЕ ПОВТОРЯТЬ]\n"
+        f"{existing_block}\n\n"
+        "[ПРАВИЛА]\n"
+        "- Вопросы должны проверять понимание, а не памятование."
+    )
+
+
 def build_per_company_key_phrases_prompt(
     resume_title: str,
     main_keywords: list[str],

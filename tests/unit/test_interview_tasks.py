@@ -726,3 +726,79 @@ class TestGenerateTestTask:
         }
         assert existing_test.user_answers_json is None
         session.add.assert_not_called()
+
+
+# ── extend_prep_test_task (interview_prep) ─────────────────────────────────────
+
+
+class TestExtendPrepTestTask:
+    @pytest.mark.asyncio
+    async def test_disabled_setting_returns_disabled(self):
+        from src.worker.tasks.interview_prep import _extend_prep_test_async
+
+        task = _make_fake_task()
+        task.check_enabled = AsyncMock(return_value=False)
+        sf = _make_session_factory(AsyncMock())
+
+        result = await _extend_prep_test_async(task, sf, 1, 1, 100, 200, "ru")
+
+        assert result == {"status": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_circuit_open_returns_circuit_open(self):
+        from src.worker.tasks.interview_prep import _extend_prep_test_async
+
+        task = _make_fake_task()
+        task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock(is_allowed=False))
+        sf = _make_session_factory(AsyncMock())
+
+        result = await _extend_prep_test_async(task, sf, 1, 1, 100, 200, "ru")
+
+        assert result == {"status": "circuit_open"}
+
+    @pytest.mark.asyncio
+    async def test_success_appends_questions_and_preserves_answers(self):
+        from src.worker.tasks.interview_prep import _extend_prep_test_async
+
+        step = _make_prep_step()
+        existing_test = MagicMock()
+        existing_test.questions_json = {
+            "questions": [
+                {"question": "Q1?", "options": ["A", "B"], "correct_index": 0}
+            ]
+        }
+        existing_test.user_answers_json = {"0": 0}
+
+        mock_prep_repo = AsyncMock()
+        mock_prep_repo.get_step_by_id = AsyncMock(return_value=step)
+        mock_prep_repo.get_test_by_step = AsyncMock(return_value=existing_test)
+
+        task = _make_fake_task()
+        task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
+        session = AsyncMock()
+        sf = _make_session_factory(session)
+
+        with (
+            patch(
+                "src.repositories.interview.InterviewPreparationRepository",
+                MagicMock(return_value=mock_prep_repo),
+            ),
+            patch(
+                "src.services.ai.client.AIClient",
+                MagicMock(
+                    return_value=MagicMock(
+                        generate_text=AsyncMock(
+                            return_value="[Q]:What is Python?\n[A]:A language*\n[TestEnd]"
+                        )
+                    ),
+                ),
+            ),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+        ):
+            result = await _extend_prep_test_async(task, sf, 1, 1, 100, 200, "ru")
+
+        assert result == {"status": "completed", "questions_added": 1}
+        assert len(existing_test.questions_json["questions"]) == 2
+        assert existing_test.questions_json["questions"][0]["question"] == "Q1?"
+        assert existing_test.questions_json["questions"][1]["question"] == "What is Python?"
+        assert existing_test.user_answers_json == {"0": 0}

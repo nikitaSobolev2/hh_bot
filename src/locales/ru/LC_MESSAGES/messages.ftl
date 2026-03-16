@@ -1039,6 +1039,11 @@ prep-test-correct = ✅ Правильно!
 prep-test-wrong = ❌ Неверно.
 prep-test-right-answer = Правильный ответ
 prep-test-results = Результат
+prep-test-your-answer = Ваш ответ
+prep-btn-prev = ◀ Назад
+prep-btn-next = Вперёд ▶
+prep-btn-extend-test = Сгенерировать ещё вопросы
+prep-extending-test = Генерирую ещё вопросы...
 
 # == Task UX ==
 task-soft-timeout = ⏱ Задача превысила лимит времени. Попробуйте снова.

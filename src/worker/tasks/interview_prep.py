@@ -422,6 +422,126 @@ async def _generate_test_async(
 @celery_app.task(
     bind=True,
     base=HHBotTask,
+    name="interviews.extend_prep_test",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
+)
+def extend_prep_test_task(
+    self,
+    step_id: int,
+    interview_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str = "ru",
+) -> dict:
+    return run_async(
+        lambda sf: _extend_prep_test_async(
+            self, sf, step_id, interview_id, chat_id, message_id, locale
+        )
+    )
+
+
+async def _extend_prep_test_async(
+    task: HHBotTask,
+    session_factory,
+    step_id: int,
+    interview_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+) -> dict:
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.core.constants import AppSettingKey
+    from src.core.i18n import get_text
+    from src.repositories.interview import InterviewPreparationRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import (
+        build_preparation_test_extend_prompt,
+        build_preparation_test_system_prompt,
+    )
+
+    enabled = await task.check_enabled(AppSettingKey.TASK_INTERVIEW_PREP_ENABLED, session_factory)
+    if not enabled:
+        return {"status": "disabled"}
+
+    cb = await task.load_circuit_breaker(
+        "interview_test",
+        AppSettingKey.CB_PREP_TEST_FAILURE_THRESHOLD,
+        AppSettingKey.CB_PREP_TEST_RECOVERY_TIMEOUT,
+        session_factory,
+    )
+    if not cb.is_call_allowed():
+        return {"status": "circuit_open"}
+
+    bot = task.create_bot()
+
+    try:
+        async with session_factory() as session:
+            prep_repo = InterviewPreparationRepository(session)
+            step = await prep_repo.get_step_by_id(step_id)
+            test = await prep_repo.get_test_by_step(step_id)
+            if not step or not test or not test.questions_json:
+                return {"status": "not_found"}
+
+            existing = test.questions_json.get("questions", [])
+            from src.services.telegram.text_utils import parse_deep_learning_response
+
+            _, plan_content = parse_deep_learning_response(step.deep_summary or "")
+            material_for_test = plan_content or step.deep_summary or step.content
+
+        ai_client = AIClient()
+        system_prompt = build_preparation_test_system_prompt()
+        prompt = build_preparation_test_extend_prompt(
+            step_title=step.title,
+            step_content=step.content,
+            deep_summary=material_for_test,
+            existing_questions=existing,
+        )
+
+        try:
+            response_text = await ai_client.generate_text(
+                prompt, system_prompt=system_prompt, max_tokens=2000
+            )
+            new_questions = _parse_test_questions(response_text)
+            cb.record_success()
+        except Exception as exc:
+            cb.record_failure()
+            logger.error("Test extend failed", step_id=step_id, error=str(exc))
+            raise
+
+        async with session_factory() as session:
+            prep_repo = InterviewPreparationRepository(session)
+            test = await prep_repo.get_test_by_step(step_id)
+            if not test:
+                return {"status": "not_found"}
+            merged = existing + new_questions
+            test.questions_json = {"questions": merged}
+            await session.commit()
+
+        await _notify_user_test_ready(task, bot, chat_id, message_id, step_id, interview_id, locale)
+        return {"status": "completed", "questions_added": len(new_questions)}
+
+    except SoftTimeLimitExceeded:
+        await task.handle_soft_timeout(bot, chat_id, message_id, locale)
+        task.request.retries = task.max_retries
+        raise
+
+    except Exception as exc:
+        logger.error("Test extend failed", step_id=step_id, error=str(exc))
+        if task.request.retries >= task.max_retries:
+            await task.notify_user(bot, chat_id, message_id, get_text("prep-test-failed", locale))
+        raise task.retry(exc=exc) from exc
+
+    finally:
+        await bot.session.close()
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
     name="interviews.convert_deep_summary_to_docx",
     max_retries=1,
     default_retry_delay=10,
@@ -622,10 +742,9 @@ async def _notify_user_test_ready(
                 InlineKeyboardButton(
                     text=get_text("prep-btn-start-test", locale),
                     callback_data=InterviewCallback(
-                        action="prep_test",
+                        action="prep_test_enter",
                         interview_id=interview_id,
                         prep_step_id=step_id,
-                        test_q_index=0,
                     ).pack(),
                 )
             ]

@@ -80,6 +80,27 @@ def test_build_preparation_test_prompt_contains_format_markers():
     assert "[A]:" in system_prompt
 
 
+def test_build_preparation_test_extend_prompt_includes_existing_questions():
+    from src.services.ai.prompts import build_preparation_test_extend_prompt
+
+    existing = [
+        {"question": "What is Python?", "options": ["A snake", "A language"]},
+        {"question": "What is FastAPI?", "options": ["A framework", "A library"]},
+    ]
+    prompt = build_preparation_test_extend_prompt(
+        step_title="SQL Optimization",
+        step_content="Study indexes",
+        deep_summary="Deep content",
+        existing_questions=existing,
+    )
+
+    assert "SQL Optimization" in prompt
+    assert "СУЩЕСТВУЮЩИЕ ВОПРОСЫ" in prompt or "СУЩЕСТВУЮЩИЕ" in prompt
+    assert "What is Python?" in prompt
+    assert "What is FastAPI?" in prompt
+    assert "НЕ дублируй" in prompt or "дублируй" in prompt
+
+
 def test_parse_prep_steps_extracts_steps_correctly():
     from src.worker.tasks.interview_prep import _parse_prep_steps
 

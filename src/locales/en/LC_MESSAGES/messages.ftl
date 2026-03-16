@@ -1038,6 +1038,11 @@ prep-test-correct = ✅ Correct!
 prep-test-wrong = ❌ Wrong.
 prep-test-right-answer = Correct answer
 prep-test-results = Score
+prep-test-your-answer = Your answer
+prep-btn-prev = ◀ Prev
+prep-btn-next = Next ▶
+prep-btn-extend-test = Generate more questions
+prep-extending-test = Generating more questions...
 
 # == Task UX ==
 task-soft-timeout = ⏱ The task exceeded the time limit. Please try again.

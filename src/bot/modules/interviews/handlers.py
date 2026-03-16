@@ -1234,7 +1234,146 @@ async def handle_prep_create_test(
     await callback.answer()
 
 
+@router.callback_query(InterviewCallback.filter(F.action == "prep_extend_test"))
+async def handle_prep_extend_test(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.interview_prep import extend_prep_test_task
+
+    wait_msg = await callback.message.edit_text(i18n.get("prep-extending-test"))
+    await run_celery_task(
+        extend_prep_test_task,
+        callback_data.prep_step_id,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
 # ── Test: show question ─────────────────────────────────────────────────────
+
+
+def _build_test_question_text(
+    question: dict,
+    q_index: int,
+    total: int,
+    i18n: I18nContext,
+    user_answers: dict | None = None,
+) -> str:
+    options_text = "\n".join(
+        f"{chr(65 + i)}. {opt}" for i, opt in enumerate(question["options"])
+    )
+    text = (
+        f"<b>{i18n.get('prep-test-question')} {q_index + 1}/{total}</b>\n\n"
+        f"{question['question']}\n\n{options_text}"
+    )
+    answers = user_answers or {}
+    if str(q_index) in answers:
+        ans_idx = answers[str(q_index)]
+        letter = chr(65 + ans_idx)
+        text += f"\n\n{i18n.get('prep-test-your-answer')}: {letter}"
+    return text
+
+
+async def _show_test_question(
+    callback: CallbackQuery,
+    test,
+    q_index: int,
+    questions: list,
+    i18n: I18nContext,
+    step_id: int,
+    interview_id: int,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.bot.modules.interviews.keyboards import test_question_keyboard
+
+    question = questions[q_index]
+    text = _build_test_question_text(
+        question,
+        q_index,
+        len(questions),
+        i18n,
+        test.user_answers_json,
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=test_question_keyboard(
+                question["options"],
+                step_id,
+                interview_id,
+                q_index,
+                total_questions=len(questions),
+                i18n=i18n,
+            ),
+        )
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_test_enter"))
+async def handle_prep_test_enter(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewPreparationRepository
+
+    prep_repo = InterviewPreparationRepository(session)
+    test = await prep_repo.get_test_by_step(callback_data.prep_step_id)
+    if not test or not test.questions_json:
+        await callback.answer(i18n.get("prep-test-not-ready"), show_alert=True)
+        return
+
+    questions = test.questions_json.get("questions", [])
+    answers = dict(test.user_answers_json or {})
+    first_unanswered = next(
+        (i for i in range(len(questions)) if str(i) not in answers),
+        len(questions),
+    )
+    if first_unanswered >= len(questions):
+        correct_count = sum(
+            1
+            for idx, q in enumerate(questions)
+            if str(idx) in answers and answers[str(idx)] == q["correct_index"]
+        )
+        score_text = f"{correct_count}/{len(questions)}"
+        import contextlib
+
+        from aiogram.exceptions import TelegramBadRequest
+
+        from src.bot.modules.interviews.keyboards import test_results_keyboard
+
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                f"<b>{i18n.get('prep-test-results')}: {score_text}</b>",
+                parse_mode="HTML",
+                reply_markup=test_results_keyboard(
+                    callback_data.prep_step_id,
+                    callback_data.interview_id,
+                    i18n=i18n,
+                ),
+            )
+    else:
+        await _show_test_question(
+            callback,
+            test,
+            first_unanswered,
+            questions,
+            i18n,
+            callback_data.prep_step_id,
+            callback_data.interview_id,
+        )
+    await callback.answer()
 
 
 @router.callback_query(InterviewCallback.filter(F.action == "prep_test"))
@@ -1244,11 +1383,6 @@ async def handle_prep_test_start(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    import contextlib
-
-    from aiogram.exceptions import TelegramBadRequest
-
-    from src.bot.modules.interviews.keyboards import test_question_keyboard
     from src.repositories.interview import InterviewPreparationRepository
 
     prep_repo = InterviewPreparationRepository(session)
@@ -1263,26 +1397,15 @@ async def handle_prep_test_start(
         await callback.answer(i18n.get("prep-test-done"), show_alert=True)
         return
 
-    question = questions[q_index]
-    options_text = "\n".join(
-        f"{chr(65 + i)}. {opt}" for i, opt in enumerate(question["options"])
+    await _show_test_question(
+        callback,
+        test,
+        q_index,
+        questions,
+        i18n,
+        callback_data.prep_step_id,
+        callback_data.interview_id,
     )
-    text = (
-        f"<b>{i18n.get('prep-test-question')} {q_index + 1}/{len(questions)}</b>\n\n"
-        f"{question['question']}\n\n{options_text}"
-    )
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=test_question_keyboard(
-                question["options"],
-                callback_data.prep_step_id,
-                callback_data.interview_id,
-                q_index,
-                i18n=i18n,
-            ),
-        )
     await callback.answer()
 
 
@@ -1334,14 +1457,14 @@ async def handle_prep_test_answer(
         from src.bot.modules.interviews.keyboards import test_question_keyboard
 
         next_q = questions[next_index]
-        options_text = "\n".join(
-            f"{chr(65 + i)}. {opt}" for i, opt in enumerate(next_q["options"])
+        next_text = _build_test_question_text(
+            next_q,
+            next_index,
+            len(questions),
+            i18n,
+            answers,
         )
-        text = (
-            f"{feedback}\n\n"
-            f"<b>{i18n.get('prep-test-question')} {next_index + 1}/{len(questions)}</b>\n\n"
-            f"{next_q['question']}\n\n{options_text}"
-        )
+        text = f"{feedback}\n\n{next_text}"
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 text,
@@ -1351,6 +1474,7 @@ async def handle_prep_test_answer(
                     callback_data.prep_step_id,
                     callback_data.interview_id,
                     next_index,
+                    total_questions=len(questions),
                     i18n=i18n,
                 ),
             )
@@ -1361,15 +1485,18 @@ async def handle_prep_test_answer(
             if str(idx) in answers and answers[str(idx)] == q["correct_index"]
         )
         score_text = f"{correct_count}/{len(questions)}"
-        back_kb = _make_back_to_step_keyboard(
+        from src.bot.modules.interviews.keyboards import test_results_keyboard
+
+        results_kb = test_results_keyboard(
             callback_data.prep_step_id,
             callback_data.interview_id,
-            i18n,
+            i18n=i18n,
         )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 f"{feedback}\n\n<b>{i18n.get('prep-test-results')}: {score_text}</b>",
-                reply_markup=back_kb,
+                parse_mode="HTML",
+                reply_markup=results_kb,
             )
 
 

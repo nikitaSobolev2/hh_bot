@@ -500,6 +500,57 @@ async def test_handle_prep_regenerate_plan_deletes_steps_and_dispatches_task():
     mock_run.assert_called_once()
 
 
+# ── handle_prep_extend_test ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_extend_test_edits_and_dispatches_task():
+    """prep_extend_test edits to extending message and dispatches extend_prep_test_task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_extend_test
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.message_id = 456
+    wait_msg = MagicMock()
+    wait_msg.message_id = 456
+    callback.message.edit_text = AsyncMock(return_value=wait_msg)
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(
+        action="prep_extend_test",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    user = MagicMock()
+    user.language_code = "en"
+
+    i18n = _make_i18n()
+
+    with patch(
+        "src.core.celery_async.run_celery_task",
+        new_callable=AsyncMock,
+    ) as mock_run:
+        await handle_prep_extend_test(
+            callback, callback_data, user, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    edit_args = callback.message.edit_text.call_args[0]
+    assert i18n.get("prep-extending-test") in edit_args
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args[0]
+    assert call_args[1] == 10  # prep_step_id
+    assert call_args[2] == 1  # interview_id
+    assert call_args[3] == 123  # chat_id
+    assert call_args[4] == 456  # message_id (from wait_msg)
+    assert call_args[5] == "en"  # locale
+    callback.answer.assert_called_once()
+
+
 # ── handle_company_review ──────────────────────────────────────────────────────
 
 
