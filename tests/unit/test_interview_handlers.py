@@ -133,6 +133,7 @@ async def test_handle_prep_step_deep_single_chunk_edits_with_keyboard():
     callback.message.bot = MagicMock()
     callback.message.chat = MagicMock()
     callback.message.chat.id = 123
+    callback.message.document = None
     callback.message.edit_text = AsyncMock(return_value=MagicMock())
 
     callback_data = InterviewCallback(
@@ -181,6 +182,7 @@ async def test_handle_prep_step_deep_multiple_chunks_sends_last_with_keyboard():
     callback.message.bot.send_message = AsyncMock(return_value=MagicMock())
     callback.message.chat = MagicMock()
     callback.message.chat.id = 123
+    callback.message.document = None
     callback.message.edit_text = AsyncMock(return_value=MagicMock())
 
     callback_data = InterviewCallback(
@@ -219,6 +221,56 @@ async def test_handle_prep_step_deep_multiple_chunks_sends_last_with_keyboard():
     last_send_kw = send_calls[-1].kwargs
     assert last_send_kw.get("reply_markup") is not None
     assert last_send_kw.get("parse_mode") == "Markdown"
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_step_deep_from_document_deletes_and_sends_summary():
+    """When back is clicked on document message, delete doc and send summary."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_step_deep
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.bot = AsyncMock()
+    callback.message.bot.send_message = AsyncMock(return_value=MagicMock())
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.document = MagicMock()
+    callback.message.delete = AsyncMock(return_value=True)
+
+    callback_data = InterviewCallback(
+        action="prep_step_deep",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    step = MagicMock()
+    step.id = 10
+    step.title = "Symfony"
+    step.deep_summary = "Short summary"
+    step.test = None
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_step_by_id = AsyncMock(return_value=step)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_prep_step_deep(
+            callback, callback_data, MagicMock(), session, i18n
+        )
+
+    callback.message.delete.assert_called_once()
+    callback.message.bot.send_message.assert_called_once()
+    send_args = callback.message.bot.send_message.call_args
+    assert send_args[0][0] == 123
+    text = send_args[0][1] if len(send_args[0]) > 1 else ""
+    assert "Symfony" in text
+    assert send_args.kwargs.get("reply_markup") is not None
 
 
 # ── handle_prep_download ───────────────────────────────────────────────────────

@@ -816,9 +816,32 @@ async def handle_prep_step_deep(
     )
     bot = callback.message.bot
     chat_id = callback.message.chat.id
+    is_document_message = callback.message.document is not None
 
     with contextlib.suppress(TelegramBadRequest):
-        if len(chunks) == 1:
+        if is_document_message:
+            await callback.message.delete()
+            if len(chunks) == 1:
+                await bot.send_message(
+                    chat_id,
+                    chunks[0],
+                    parse_mode="Markdown",
+                    reply_markup=keyboard,
+                )
+            else:
+                for chunk in chunks[:-1]:
+                    await bot.send_message(
+                        chat_id,
+                        chunk,
+                        parse_mode="Markdown",
+                    )
+                await bot.send_message(
+                    chat_id,
+                    chunks[-1],
+                    parse_mode="Markdown",
+                    reply_markup=keyboard,
+                )
+        elif len(chunks) == 1:
             await callback.message.edit_text(
                 chunks[0],
                 parse_mode="Markdown",
