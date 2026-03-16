@@ -427,9 +427,12 @@ def convert_deep_summary_to_docx_task(
     step_id: int,
     chat_id: int,
     locale: str = "ru",
+    message_id: int | None = None,
 ) -> dict:
     return run_async(
-        lambda sf: _convert_deep_summary_to_docx_async(self, sf, step_id, chat_id, locale)
+        lambda sf: _convert_deep_summary_to_docx_async(
+            self, sf, step_id, chat_id, locale, message_id
+        )
     )
 
 
@@ -439,6 +442,7 @@ async def _convert_deep_summary_to_docx_async(
     step_id: int,
     chat_id: int,
     locale: str,
+    message_id: int | None = None,
 ) -> dict:
     from aiogram.types import BufferedInputFile
 
@@ -454,7 +458,7 @@ async def _convert_deep_summary_to_docx_async(
             step = await prep_repo.get_step_by_id(step_id)
             if not step or not step.deep_summary:
                 await task.notify_user(
-                    bot, chat_id, None, get_text("prep-deep-not-ready", locale)
+                    bot, chat_id, message_id, get_text("prep-deep-not-ready", locale)
                 )
                 return {"status": "not_found"}
 
@@ -476,7 +480,7 @@ async def _convert_deep_summary_to_docx_async(
                 error=str(exc),
             )
             await task.notify_user(
-                bot, chat_id, None, get_text("prep-docs-failed", locale)
+                bot, chat_id, message_id, get_text("prep-docs-failed", locale)
             )
             return {"status": "conversion_failed"}
 
