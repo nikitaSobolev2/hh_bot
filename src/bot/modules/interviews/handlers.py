@@ -1264,13 +1264,17 @@ async def handle_prep_test_start(
         return
 
     question = questions[q_index]
+    options_text = "\n".join(
+        f"{chr(65 + i)}. {opt}" for i, opt in enumerate(question["options"])
+    )
     text = (
         f"<b>{i18n.get('prep-test-question')} {q_index + 1}/{len(questions)}</b>\n\n"
-        f"{question['question']}"
+        f"{question['question']}\n\n{options_text}"
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
+            parse_mode="HTML",
             reply_markup=test_question_keyboard(
                 question["options"],
                 callback_data.prep_step_id,
@@ -1330,14 +1334,18 @@ async def handle_prep_test_answer(
         from src.bot.modules.interviews.keyboards import test_question_keyboard
 
         next_q = questions[next_index]
+        options_text = "\n".join(
+            f"{chr(65 + i)}. {opt}" for i, opt in enumerate(next_q["options"])
+        )
         text = (
             f"{feedback}\n\n"
             f"<b>{i18n.get('prep-test-question')} {next_index + 1}/{len(questions)}</b>\n\n"
-            f"{next_q['question']}"
+            f"{next_q['question']}\n\n{options_text}"
         )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 text,
+                parse_mode="HTML",
                 reply_markup=test_question_keyboard(
                     next_q["options"],
                     callback_data.prep_step_id,

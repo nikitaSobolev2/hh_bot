@@ -512,11 +512,11 @@ def test_question_keyboard(
     locale: str = "ru",
 ) -> InlineKeyboardMarkup:
     rows = []
-    for i, option in enumerate(options):
+    for i in range(len(options)):
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{chr(65 + i)}. {option[:80]}",
+                    text=chr(65 + i),
                     callback_data=InterviewCallback(
                         action="prep_test_answer",
                         interview_id=interview_id,
