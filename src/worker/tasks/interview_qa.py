@@ -170,6 +170,7 @@ async def _generate_qa_async(
             max_tokens=4000,
             temperature=0.5,
         )
+        logger.info("Interview QA: AI response", raw=raw)
         blocks = _parse_qa_blocks(raw)
         if not blocks:
             cb.record_failure()
