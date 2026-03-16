@@ -504,10 +504,94 @@ async def test_handle_prep_regenerate_plan_deletes_steps_and_dispatches_task():
 
 
 @pytest.mark.asyncio
-async def test_handle_company_review_dispatches_task():
-    """handle_company_review loads interview, edits to generating, dispatches task."""
+async def test_handle_company_review_shows_view_with_existing_content():
+    """handle_company_review shows view with existing company_review content."""
     from src.bot.modules.interviews.callbacks import InterviewCallback
     from src.bot.modules.interviews.handlers import handle_company_review
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="company_review", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+    mock_interview.company_review = "Existing review content"
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_company_review(
+            callback, callback_data, session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    call_args = callback.message.edit_text.call_args
+    assert "Existing review content" in str(call_args)
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_company_review_shows_placeholder_when_empty():
+    """handle_company_review shows placeholder when company_review is empty."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_company_review
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="company_review", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+    mock_interview.company_review = None
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_company_review(
+            callback, callback_data, session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    call_args = callback.message.edit_text.call_args
+    assert "No data yet" in str(call_args) or "Данных пока нет" in str(call_args)
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_company_review_regenerate_dispatches_task():
+    """handle_company_review_regenerate edits to generating and dispatches task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_company_review_regenerate
 
     callback = AsyncMock()
     callback.message = AsyncMock()
@@ -517,7 +601,7 @@ async def test_handle_company_review_dispatches_task():
     callback.message.edit_text = AsyncMock(return_value=MagicMock())
     callback.answer = AsyncMock()
 
-    callback_data = InterviewCallback(action="company_review", interview_id=1)
+    callback_data = InterviewCallback(action="company_review_regenerate", interview_id=1)
 
     mock_interview = MagicMock()
     mock_interview.id = 1
@@ -541,7 +625,7 @@ async def test_handle_company_review_dispatches_task():
         mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
         mock_repo_cls.return_value = mock_repo
 
-        await handle_company_review(
+        await handle_company_review_regenerate(
             callback, callback_data, user, session, i18n
         )
 
@@ -558,10 +642,92 @@ async def test_handle_company_review_dispatches_task():
 
 
 @pytest.mark.asyncio
-async def test_handle_questions_to_ask_dispatches_task():
-    """handle_questions_to_ask loads interview, edits to generating, dispatches task."""
+async def test_handle_questions_to_ask_shows_view_with_existing_content():
+    """handle_questions_to_ask shows view with existing questions_to_ask content."""
     from src.bot.modules.interviews.callbacks import InterviewCallback
     from src.bot.modules.interviews.handlers import handle_questions_to_ask
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="questions_to_ask", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+    mock_interview.questions_to_ask = "Q1: Tell me about yourself"
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_questions_to_ask(
+            callback, callback_data, session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    call_args = callback.message.edit_text.call_args
+    assert "Q1: Tell me about yourself" in str(call_args)
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_questions_to_ask_shows_placeholder_when_empty():
+    """handle_questions_to_ask shows placeholder when questions_to_ask is empty."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_questions_to_ask
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="questions_to_ask", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+    mock_interview.questions_to_ask = None
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_questions_to_ask(
+            callback, callback_data, session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    callback.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_questions_to_ask_regenerate_dispatches_task():
+    """handle_questions_to_ask_regenerate edits to generating and dispatches task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_questions_to_ask_regenerate
 
     callback = AsyncMock()
     callback.message = AsyncMock()
@@ -571,7 +737,7 @@ async def test_handle_questions_to_ask_dispatches_task():
     callback.message.edit_text = AsyncMock(return_value=MagicMock())
     callback.answer = AsyncMock()
 
-    callback_data = InterviewCallback(action="questions_to_ask", interview_id=1)
+    callback_data = InterviewCallback(action="questions_to_ask_regenerate", interview_id=1)
 
     mock_interview = MagicMock()
     mock_interview.id = 1
@@ -595,7 +761,7 @@ async def test_handle_questions_to_ask_dispatches_task():
         mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
         mock_repo_cls.return_value = mock_repo
 
-        await handle_questions_to_ask(
+        await handle_questions_to_ask_regenerate(
             callback, callback_data, user, session, i18n
         )
 

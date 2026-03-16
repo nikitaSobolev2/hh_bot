@@ -16,6 +16,7 @@ from src.bot.modules.interviews import services as interview_service
 from src.bot.modules.interviews.callbacks import InterviewCallback, InterviewFormCallback
 from src.bot.modules.interviews.keyboards import (
     cancel_keyboard,
+    company_review_view_keyboard,
     confirm_keyboard,
     delete_confirm_keyboard,
     experience_level_keyboard,
@@ -24,6 +25,7 @@ from src.bot.modules.interviews.keyboards import (
     interview_list_keyboard,
     prep_steps_keyboard,
     questions_keyboard,
+    questions_to_ask_view_keyboard,
     skip_notes_keyboard,
     source_choice_keyboard,
 )
@@ -495,6 +497,40 @@ async def handle_detail(
 async def handle_company_review(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    content = interview.company_review or i18n.get("iv-company-review-empty")
+    text = f"{header}\n\n<b>{i18n.get('iv-company-review-title')}</b>\n\n{content}"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=company_review_view_keyboard(
+            callback_data.interview_id,
+            i18n=i18n,
+        ),
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "company_review_regenerate"))
+async def handle_company_review_regenerate(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
     user: User,
     session: AsyncSession,
     i18n: I18nContext,
@@ -524,6 +560,40 @@ async def handle_company_review(
 
 @router.callback_query(InterviewCallback.filter(F.action == "questions_to_ask"))
 async def handle_questions_to_ask(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    content = interview.questions_to_ask or i18n.get("iv-questions-to-ask-empty")
+    text = f"{header}\n\n<b>{i18n.get('iv-questions-to-ask-title')}</b>\n\n{content}"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=questions_to_ask_view_keyboard(
+            callback_data.interview_id,
+            i18n=i18n,
+        ),
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "questions_to_ask_regenerate"))
+async def handle_questions_to_ask_regenerate(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
     user: User,

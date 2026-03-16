@@ -72,6 +72,16 @@ class InterviewRepository(BaseRepository[Interview]):
         if interview:
             await self.update(interview, is_deleted=True)
 
+    async def update_company_review(self, interview_id: int, content: str) -> None:
+        interview = await self.get_by_id(interview_id)
+        if interview:
+            await self.update(interview, company_review=content)
+
+    async def update_questions_to_ask(self, interview_id: int, content: str) -> None:
+        interview = await self.get_by_id(interview_id)
+        if interview:
+            await self.update(interview, questions_to_ask=content)
+
 
 class InterviewQuestionRepository(BaseRepository[InterviewQuestion]):
     def __init__(self, session: AsyncSession) -> None:

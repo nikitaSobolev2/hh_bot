@@ -601,6 +601,62 @@ def improvement_detail_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def company_review_view_keyboard(
+    interview_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-iv-regenerate", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="company_review_regenerate",
+                        interview_id=interview_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-back", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="detail", interview_id=interview_id
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
+def questions_to_ask_view_keyboard(
+    interview_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-iv-regenerate", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="questions_to_ask_regenerate",
+                        interview_id=interview_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-back", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="detail", interview_id=interview_id
+                    ).pack(),
+                )
+            ],
+        ]
+    )
+
+
 def delete_confirm_keyboard(interview_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

@@ -807,6 +807,9 @@ iv-company-review-title = Company Review
 iv-questions-to-ask-title = Questions to Ask
 iv-company-review-failed = Could not generate review. Please try later.
 iv-questions-to-ask-failed = Could not generate questions. Please try later.
+iv-company-review-empty = No data yet. Click Regenerate to generate.
+iv-questions-to-ask-empty = No data yet. Click Regenerate to generate.
+btn-iv-regenerate = 🔄 Regenerate
 
 # Progress bars
 progress-title = ⏳ Processing tasks

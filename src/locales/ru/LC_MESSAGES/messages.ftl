@@ -808,6 +808,9 @@ iv-company-review-title = Обзор компании
 iv-questions-to-ask-title = Вопросы для интервью
 iv-company-review-failed = Не удалось сгенерировать обзор. Попробуйте позже.
 iv-questions-to-ask-failed = Не удалось сгенерировать вопросы. Попробуйте позже.
+iv-company-review-empty = Данных пока нет. Нажмите «Обновить» для генерации.
+iv-questions-to-ask-empty = Данных пока нет. Нажмите «Обновить» для генерации.
+btn-iv-regenerate = 🔄 Обновить
 
 # Progress bars
 progress-title = ⏳ Обработка задач

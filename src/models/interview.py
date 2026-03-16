@@ -42,6 +42,8 @@ class Interview(Base):
     experience_level: Mapped[str | None] = mapped_column(String(50), default=None)
     hh_vacancy_url: Mapped[str | None] = mapped_column(Text, default=None)
     ai_summary: Mapped[str | None] = mapped_column(Text, default=None)
+    company_review: Mapped[str | None] = mapped_column(Text, default=None)
+    questions_to_ask: Mapped[str | None] = mapped_column(Text, default=None)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped[User] = relationship(back_populates="interviews")

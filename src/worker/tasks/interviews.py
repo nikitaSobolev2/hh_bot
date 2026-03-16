@@ -407,20 +407,15 @@ async def _generate_company_review_async(
         system_prompt = build_company_review_system_prompt()
         ai_client = AIClient()
 
-        from src.bot.modules.interviews.keyboards import interview_detail_keyboard
+        from src.bot.modules.interviews.keyboards import company_review_view_keyboard
 
-        keyboard = interview_detail_keyboard(
-            interview_id=interview_id,
-            improvements=interview.improvements,
-            locale=locale,
-            has_questions=bool(interview.questions),
-        )
+        keyboard = company_review_view_keyboard(interview_id=interview_id, locale=locale)
         header = get_text("iv-company-review-title", locale) + "\n\n"
 
         try:
             from src.services.ai.streaming import stream_to_telegram
 
-            await stream_to_telegram(
+            accumulated = await stream_to_telegram(
                 bot=bot,
                 chat_id=chat_id,
                 token_stream=ai_client.stream_text(
@@ -433,6 +428,11 @@ async def _generate_company_review_async(
                 reply_markup=keyboard,
             )
             cb.record_success()
+            async with session_factory() as session:
+                await InterviewRepository(session).update_company_review(
+                    interview_id, accumulated
+                )
+                await session.commit()
             with contextlib.suppress(Exception):
                 await bot.delete_message(chat_id=chat_id, message_id=message_id)
             return {"status": "completed", "interview_id": interview_id}
@@ -442,6 +442,11 @@ async def _generate_company_review_async(
                     prompt, system_prompt=system_prompt, max_tokens=2000
                 )
                 cb.record_success()
+                async with session_factory() as session:
+                    await InterviewRepository(session).update_company_review(
+                        interview_id, review
+                    )
+                    await session.commit()
                 text = f"*{get_text('iv-company-review-title', locale)}*\n\n{review}"
                 await task.notify_user(
                     bot,
@@ -531,20 +536,17 @@ async def _generate_questions_to_ask_async(
         system_prompt = build_questions_to_ask_system_prompt()
         ai_client = AIClient()
 
-        from src.bot.modules.interviews.keyboards import interview_detail_keyboard
+        from src.bot.modules.interviews.keyboards import questions_to_ask_view_keyboard
 
-        keyboard = interview_detail_keyboard(
-            interview_id=interview_id,
-            improvements=interview.improvements,
-            locale=locale,
-            has_questions=bool(interview.questions),
+        keyboard = questions_to_ask_view_keyboard(
+            interview_id=interview_id, locale=locale
         )
         header = get_text("iv-questions-to-ask-title", locale) + "\n\n"
 
         try:
             from src.services.ai.streaming import stream_to_telegram
 
-            await stream_to_telegram(
+            accumulated = await stream_to_telegram(
                 bot=bot,
                 chat_id=chat_id,
                 token_stream=ai_client.stream_text(
@@ -557,6 +559,11 @@ async def _generate_questions_to_ask_async(
                 reply_markup=keyboard,
             )
             cb.record_success()
+            async with session_factory() as session:
+                await InterviewRepository(session).update_questions_to_ask(
+                    interview_id, accumulated
+                )
+                await session.commit()
             with contextlib.suppress(Exception):
                 await bot.delete_message(chat_id=chat_id, message_id=message_id)
             return {"status": "completed", "interview_id": interview_id}
@@ -566,6 +573,11 @@ async def _generate_questions_to_ask_async(
                     prompt, system_prompt=system_prompt, max_tokens=2000
                 )
                 cb.record_success()
+                async with session_factory() as session:
+                    await InterviewRepository(session).update_questions_to_ask(
+                        interview_id, questions
+                    )
+                    await session.commit()
                 text = f"*{get_text('iv-questions-to-ask-title', locale)}*\n\n{questions}"
                 await task.notify_user(
                     bot,
