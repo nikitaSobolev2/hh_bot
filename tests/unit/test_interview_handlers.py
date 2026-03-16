@@ -551,6 +551,57 @@ async def test_handle_prep_extend_test_edits_and_dispatches_task():
     callback.answer.assert_called_once()
 
 
+# ── handle_notes ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_notes_shows_notes_view_with_keyboard():
+    """handle_notes shows notes view with Start noting, Edit, Delete, Back."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_notes
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="notes", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+    mock_interview.vacancy_title = "Python Dev"
+    mock_interview.company_name = "Acme"
+    mock_interview.experience_level = "3-6"
+    mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
+
+    mock_notes_repo = AsyncMock()
+    mock_notes_repo.get_by_interview = AsyncMock(return_value=[])
+    mock_interview_repo = MagicMock()
+    mock_interview_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with (
+        patch(
+            "src.repositories.interview.InterviewRepository",
+            return_value=mock_interview_repo,
+        ),
+        patch(
+            "src.repositories.interview.InterviewNoteRepository",
+            return_value=mock_notes_repo,
+        ),
+    ):
+        await handle_notes(callback, callback_data, session, i18n)
+
+    callback.message.edit_text.assert_called_once()
+    call_args = callback.message.edit_text.call_args
+    assert "Notes" in str(call_args) or "Заметки" in str(call_args)
+    assert call_args[1]["reply_markup"] is not None
+    callback.answer.assert_called_once()
+
+
 # ── handle_company_review ──────────────────────────────────────────────────────
 
 

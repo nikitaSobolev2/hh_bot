@@ -23,6 +23,8 @@ from src.bot.modules.interviews.keyboards import (
     improvement_detail_keyboard,
     interview_detail_keyboard,
     interview_list_keyboard,
+    notes_stop_noting_reply_keyboard,
+    notes_view_keyboard,
     prep_steps_keyboard,
     questions_keyboard,
     questions_to_ask_view_keyboard,
@@ -620,6 +622,340 @@ async def handle_questions_to_ask_regenerate(
         user.language_code or "ru",
     )
     await callback.answer()
+
+
+# ── Notes ────────────────────────────────────────────────────────────────────
+
+
+def _build_notes_view_text(interview, notes: list, i18n: I18nContext) -> str:
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    if not notes:
+        notes_section = i18n.get("iv-notes-empty")
+    else:
+        notes_section = "\n".join(
+            f"{idx}. {note.content[:200]}{'...' if len(note.content) > 200 else ''}"
+            for idx, note in enumerate(notes, 1)
+        )
+    return f"{header}\n\n<b>{i18n.get('iv-notes-title')}</b>\n\n{notes_section}"
+
+
+async def _show_notes_view(
+    message_or_callback,
+    interview_id: int,
+    session: AsyncSession,
+    i18n: I18nContext,
+    is_noting: bool = False,
+) -> None:
+    from src.repositories.interview import InterviewNoteRepository, InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(interview_id)
+    if not interview or interview.is_deleted:
+        return
+    notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
+    text = _build_notes_view_text(interview, notes, i18n)
+    kb = notes_view_keyboard(interview_id, i18n=i18n, is_noting=is_noting)
+    if hasattr(message_or_callback, "edit_text"):
+        await message_or_callback.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+    else:
+        await message_or_callback.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "notes"))
+async def handle_notes(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await _show_notes_view(callback.message, callback_data.interview_id, session, i18n)
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "notes_start"))
+async def handle_notes_start(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewNoteRepository, InterviewRepository
+
+    interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    await state.update_data(interview_id=callback_data.interview_id)
+    await state.set_state(InterviewForm.notes_noting)
+
+    notes = await InterviewNoteRepository(session).get_by_interview(callback_data.interview_id)
+    text = _build_notes_view_text(interview, notes, i18n)
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=notes_view_keyboard(
+            callback_data.interview_id, i18n=i18n, is_noting=True
+        ),
+        disable_web_page_preview=True,
+    )
+    await callback.message.answer(
+        i18n.get("iv-notes-noting-hint"),
+        reply_markup=notes_stop_noting_reply_keyboard(i18n=i18n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "notes_stop"))
+async def handle_notes_stop(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from aiogram.types import ReplyKeyboardRemove
+
+    await state.clear()
+    await callback.message.answer(
+        i18n.get("iv-notes-stopped"),
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await _show_notes_view(
+        callback.message, callback_data.interview_id, session, i18n
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "notes_edit"))
+async def handle_notes_edit(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from src.repositories.interview import InterviewNoteRepository
+
+    notes = await InterviewNoteRepository(session).get_by_interview(callback_data.interview_id)
+    if not notes:
+        await callback.answer(i18n.get("iv-notes-empty"), show_alert=True)
+        return
+
+    await state.update_data(interview_id=callback_data.interview_id)
+    await state.set_state(InterviewForm.notes_edit_await_number)
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=InterviewCallback(
+                    action="notes", interview_id=callback_data.interview_id
+                ).pack(),
+            )
+        ]
+    ]
+    await callback.message.edit_text(
+        i18n.get("iv-notes-enter-number-edit"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "notes_delete"))
+async def handle_notes_delete(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewNoteRepository
+
+    notes = await InterviewNoteRepository(session).get_by_interview(callback_data.interview_id)
+    if not notes:
+        await callback.answer(i18n.get("iv-notes-empty"), show_alert=True)
+        return
+
+    await state.update_data(interview_id=callback_data.interview_id)
+    await state.set_state(InterviewForm.notes_delete_await_number)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=InterviewCallback(
+                    action="notes", interview_id=callback_data.interview_id
+                ).pack(),
+            )
+        ]
+    ]
+    await callback.message.edit_text(
+        i18n.get("iv-notes-enter-number-delete"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.message(InterviewForm.notes_noting, F.text)
+async def handle_notes_noting_message(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from aiogram.types import ReplyKeyboardRemove
+
+    from src.repositories.interview import InterviewNoteRepository
+
+    if message.text and message.text.strip() == i18n.get("btn-notes-stop"):
+        data = await state.get_data()
+        interview_id = data.get("interview_id")
+        await state.clear()
+        await message.answer(
+            i18n.get("iv-notes-stopped"),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        if interview_id:
+            await _show_notes_view(message, interview_id, session, i18n)
+        return
+
+    data = await state.get_data()
+    interview_id = data.get("interview_id")
+    if not interview_id:
+        return
+
+    notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
+    sort_order = len(notes)
+    await InterviewNoteRepository(session).create_note(
+        interview_id=interview_id,
+        content=(message.text or "").strip() or "(empty)",
+        sort_order=sort_order,
+    )
+    await session.commit()
+    await message.answer(i18n.get("iv-notes-added"))
+
+
+@router.message(InterviewForm.notes_edit_await_number, F.text)
+async def handle_notes_edit_number(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewNoteRepository
+
+    data = await state.get_data()
+    interview_id = data.get("interview_id")
+    if not interview_id:
+        return
+
+    notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
+    try:
+        num = int((message.text or "").strip())
+        if num < 1 or num > len(notes):
+            raise ValueError("out of range")
+    except (ValueError, TypeError):
+        await message.answer(i18n.get("iv-notes-invalid-number"))
+        return
+
+    note = notes[num - 1]
+    await state.update_data(note_to_edit_id=note.id, note_to_edit_num=num)
+    await state.set_state(InterviewForm.notes_edit_await_text)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=InterviewCallback(
+                    action="notes", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    ]
+    await message.answer(
+        i18n.get("iv-notes-enter-new-content", n=str(num)),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@router.message(InterviewForm.notes_edit_await_text, F.text)
+async def handle_notes_edit_text(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewNoteRepository
+
+    data = await state.get_data()
+    interview_id = data.get("interview_id")
+    note_id = data.get("note_to_edit_id")
+    if not interview_id or not note_id:
+        await state.clear()
+        return
+
+    await InterviewNoteRepository(session).update_content(
+        note_id, (message.text or "").strip() or "(empty)"
+    )
+    await session.commit()
+    await state.clear()
+
+    await _show_notes_view(message, interview_id, session, i18n)
+    await message.answer(i18n.get("iv-notes-updated"))
+
+
+@router.message(InterviewForm.notes_delete_await_number, F.text)
+async def handle_notes_delete_number(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewNoteRepository
+
+    data = await state.get_data()
+    interview_id = data.get("interview_id")
+    if not interview_id:
+        return
+
+    notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
+    try:
+        num = int((message.text or "").strip())
+        if num < 1 or num > len(notes):
+            raise ValueError("out of range")
+    except (ValueError, TypeError):
+        await message.answer(i18n.get("iv-notes-invalid-number"))
+        return
+
+    note = notes[num - 1]
+    await InterviewNoteRepository(session).delete_note(note.id)
+    await session.commit()
+    await state.clear()
+
+    await _show_notes_view(message, interview_id, session, i18n)
+    await message.answer(i18n.get("iv-notes-deleted"))
 
 
 async def _save_and_show_interview(

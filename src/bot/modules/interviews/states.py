@@ -12,3 +12,7 @@ class InterviewForm(StatesGroup):
     adding_answer = State()
     user_improvement_notes = State()
     confirm = State()
+    notes_noting = State()
+    notes_edit_await_number = State()
+    notes_edit_await_text = State()
+    notes_delete_await_number = State()

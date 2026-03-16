@@ -61,9 +61,29 @@ class Interview(Base):
         cascade="all, delete-orphan",
         order_by="InterviewPreparationStep.step_number",
     )
+    notes: Mapped[list[InterviewNote]] = relationship(
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        order_by="InterviewNote.sort_order",
+    )
 
     def __repr__(self) -> str:
         return f"<Interview id={self.id} title={self.vacancy_title!r}>"
+
+
+class InterviewNote(Base):
+    __tablename__ = "interview_notes"
+
+    interview_id: Mapped[int] = mapped_column(
+        ForeignKey("interviews.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    interview: Mapped[Interview] = relationship(back_populates="notes")
+
+    def __repr__(self) -> str:
+        return f"<InterviewNote id={self.id} interview_id={self.interview_id}>"
 
 
 class InterviewQuestion(Base):

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from src.bot.callbacks.common import MenuCallback
 from src.bot.modules.interviews.callbacks import InterviewCallback, InterviewFormCallback
@@ -245,6 +250,16 @@ def interview_detail_keyboard(
                 text=_t("btn-iv-questions-to-ask", i18n, locale),
                 callback_data=InterviewCallback(
                     action="questions_to_ask", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-notes", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="notes", interview_id=interview_id
                 ).pack(),
             )
         ]
@@ -736,6 +751,82 @@ def delete_confirm_keyboard(interview_id: int, i18n: I18nContext) -> InlineKeybo
                 )
             ],
         ]
+    )
+
+
+def notes_view_keyboard(
+    interview_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+    is_noting: bool = False,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if is_noting:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-notes-stop", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="notes_stop", interview_id=interview_id
+                    ).pack(),
+                )
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-notes-start", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="notes_start", interview_id=interview_id
+                    ).pack(),
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-notes-edit", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="notes_edit", interview_id=interview_id
+                    ).pack(),
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-notes-delete", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="notes_delete", interview_id=interview_id
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-back", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="detail", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def notes_stop_noting_reply_keyboard(
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=_t("btn-notes-stop", i18n, locale)),
+            ],
+        ],
+        resize_keyboard=True,
     )
 
 

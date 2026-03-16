@@ -811,6 +811,23 @@ iv-company-review-empty = No data yet. Click Regenerate to generate.
 iv-questions-to-ask-empty = No data yet. Click Regenerate to generate.
 btn-iv-regenerate = 🔄 Regenerate
 
+btn-iv-notes = 📝 Notes
+iv-notes-title = Notes
+iv-notes-empty = No notes yet.
+btn-notes-start = Start noting
+btn-notes-stop = Stop noting
+btn-notes-edit = Edit note
+btn-notes-delete = Delete note
+iv-notes-enter-number-edit = Enter note number to edit (1, 2, 3...):
+iv-notes-enter-number-delete = Enter note number to delete (1, 2, 3...):
+iv-notes-enter-new-content = Enter new content for note { $n }:
+iv-notes-added = Note added.
+iv-notes-deleted = Note deleted.
+iv-notes-updated = Note updated.
+iv-notes-invalid-number = Invalid number. Enter 1, 2, 3...
+iv-notes-noting-hint = Send messages to add notes. Tap "Stop noting" when done.
+iv-notes-stopped = Noting stopped.
+
 # Progress bars
 progress-title = ⏳ Processing tasks
 progress-completed-title = ✅ All tasks completed!

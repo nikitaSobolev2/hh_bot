@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from src.models.interview import (
     Interview,
     InterviewImprovement,
+    InterviewNote,
     InterviewPreparationStep,
     InterviewPreparationTest,
     InterviewQuestion,
@@ -62,6 +63,7 @@ class InterviewRepository(BaseRepository[Interview]):
                 selectinload(Interview.questions),
                 selectinload(Interview.improvements),
                 selectinload(Interview.preparation_steps),
+                selectinload(Interview.notes),
             )
         )
         result = await self._session.execute(stmt)
@@ -179,6 +181,59 @@ class InterviewPreparationRepository:
         if test:
             test.user_answers_json = answers
             await self._session.flush()
+
+
+class InterviewNoteRepository(BaseRepository[InterviewNote]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, InterviewNote)
+
+    async def get_by_interview(self, interview_id: int) -> list[InterviewNote]:
+        stmt = (
+            select(InterviewNote)
+            .where(InterviewNote.interview_id == interview_id)
+            .order_by(InterviewNote.sort_order)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def create_note(
+        self, interview_id: int, content: str, sort_order: int = 0
+    ) -> InterviewNote:
+        note = InterviewNote(
+            interview_id=interview_id,
+            content=content,
+            sort_order=sort_order,
+        )
+        self._session.add(note)
+        await self._session.flush()
+        return note
+
+    async def update_content(self, note_id: int, content: str) -> bool:
+        note = await self.get_by_id(note_id)
+        if note:
+            await self.update(note, content=content)
+            await self._session.flush()
+            return True
+        return False
+
+    async def delete_note(self, note_id: int) -> bool:
+        note = await self.get_by_id(note_id)
+        if note:
+            await self._session.delete(note)
+            await self._session.flush()
+            return True
+        return False
+
+    async def get_by_id_and_interview(
+        self, note_id: int, interview_id: int
+    ) -> InterviewNote | None:
+        result = await self._session.execute(
+            select(InterviewNote).where(
+                InterviewNote.id == note_id,
+                InterviewNote.interview_id == interview_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
 
 class InterviewImprovementRepository(BaseRepository[InterviewImprovement]):

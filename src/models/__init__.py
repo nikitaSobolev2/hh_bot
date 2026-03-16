@@ -8,6 +8,7 @@ from src.models.hh import HHArea, HHEmployer
 from src.models.interview import (
     Interview,
     InterviewImprovement,
+    InterviewNote,
     InterviewPreparationStep,
     InterviewPreparationTest,
     InterviewQuestion,
@@ -60,6 +61,7 @@ __all__ = [
     "Interview",
     "InterviewQuestion",
     "InterviewImprovement",
+    "InterviewNote",
     "InterviewPreparationStep",
     "InterviewPreparationTest",
     "AchievementGeneration",
