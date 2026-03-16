@@ -650,7 +650,10 @@ async def _show_notes_view(
     session: AsyncSession,
     i18n: I18nContext,
     is_noting: bool = False,
+    *,
+    use_answer: bool = False,
 ) -> None:
+    """Show notes view. Use use_answer=True when message is from user (not editable by bot)."""
     from src.repositories.interview import InterviewNoteRepository, InterviewRepository
 
     interview = await InterviewRepository(session).get_with_relations(interview_id)
@@ -659,15 +662,15 @@ async def _show_notes_view(
     notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
     text = _build_notes_view_text(interview, notes, i18n)
     kb = notes_view_keyboard(interview_id, i18n=i18n, is_noting=is_noting)
-    if hasattr(message_or_callback, "edit_text"):
-        await message_or_callback.edit_text(
+    if use_answer or not hasattr(message_or_callback, "edit_text"):
+        await message_or_callback.answer(
             text,
             parse_mode="HTML",
             reply_markup=kb,
             disable_web_page_preview=True,
         )
     else:
-        await message_or_callback.answer(
+        await message_or_callback.edit_text(
             text,
             parse_mode="HTML",
             reply_markup=kb,
@@ -836,7 +839,9 @@ async def handle_notes_noting_message(
             reply_markup=ReplyKeyboardRemove(),
         )
         if interview_id:
-            await _show_notes_view(message, interview_id, session, i18n)
+            await _show_notes_view(
+                message, interview_id, session, i18n, use_answer=True
+            )
         return
 
     data = await state.get_data()
@@ -845,7 +850,7 @@ async def handle_notes_noting_message(
         return
 
     notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
-    sort_order = len(notes)
+    sort_order = max((n.sort_order for n in notes), default=-1) + 1
     await InterviewNoteRepository(session).create_note(
         interview_id=interview_id,
         content=(message.text or "").strip() or "(empty)",
@@ -922,7 +927,9 @@ async def handle_notes_edit_text(
     await session.commit()
     await state.clear()
 
-    await _show_notes_view(message, interview_id, session, i18n)
+    await _show_notes_view(
+        message, interview_id, session, i18n, use_answer=True
+    )
     await message.answer(i18n.get("iv-notes-updated"))
 
 
@@ -954,7 +961,9 @@ async def handle_notes_delete_number(
     await session.commit()
     await state.clear()
 
-    await _show_notes_view(message, interview_id, session, i18n)
+    await _show_notes_view(
+        message, interview_id, session, i18n, use_answer=True
+    )
     await message.answer(i18n.get("iv-notes-deleted"))
 
 
