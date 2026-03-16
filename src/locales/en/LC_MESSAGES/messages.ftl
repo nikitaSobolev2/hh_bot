@@ -799,6 +799,15 @@ btn-iv-delete-confirm = Yes, delete
 iv-deleted = Interview deleted.
 iv-not-found = Record not found.
 
+btn-iv-company-review = 📋 Company Review (AI)
+btn-iv-questions-to-ask = ❓ Questions to Ask (AI)
+iv-generating-company-review = ⏳ Generating company review...
+iv-generating-questions-to-ask = ⏳ Generating questions...
+iv-company-review-title = Company Review
+iv-questions-to-ask-title = Questions to Ask
+iv-company-review-failed = Could not generate review. Please try later.
+iv-questions-to-ask-failed = Could not generate questions. Please try later.
+
 # Progress bars
 progress-title = ⏳ Processing tasks
 progress-completed-title = ✅ All tasks completed!

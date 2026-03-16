@@ -391,6 +391,126 @@ class TestGenerateImprovementFlowTask:
         task.notify_user.assert_not_called()
 
 
+# ── generate_company_review_task ───────────────────────────────────────────────
+
+
+class TestGenerateCompanyReviewTask:
+    @pytest.mark.asyncio
+    async def test_disabled_setting_returns_disabled(self):
+        from src.worker.tasks.interviews import _generate_company_review_async
+
+        task = _make_fake_task()
+        task.check_enabled = AsyncMock(return_value=False)
+        sf = _make_session_factory(AsyncMock())
+
+        result = await _generate_company_review_async(
+            task, sf, 1, 100, 200, "ru"
+        )
+
+        assert result == {"status": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_success_notifies_user(self):
+        from src.worker.tasks.interviews import _generate_company_review_async
+
+        interview = _make_interview()
+        mock_interview_repo = AsyncMock()
+        mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+
+        task = _make_fake_task()
+        task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
+        session = AsyncMock()
+        sf = _make_session_factory(session)
+
+        with (
+            patch(
+                "src.repositories.interview.InterviewRepository",
+                MagicMock(return_value=mock_interview_repo),
+            ),
+            patch(
+                "src.services.ai.client.AIClient",
+                MagicMock(
+                    return_value=MagicMock(
+                        generate_text=AsyncMock(
+                            return_value="Company review text"
+                        )
+                    ),
+                ),
+            ),
+            patch(
+                "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
+                return_value=MagicMock(),
+            ),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+        ):
+            result = await _generate_company_review_async(
+                task, sf, 1, 100, 200, "ru"
+            )
+
+        assert result == {"status": "completed", "interview_id": 1}
+        task.notify_user.assert_called_once()
+
+
+# ── generate_questions_to_ask_task ─────────────────────────────────────────────
+
+
+class TestGenerateQuestionsToAskTask:
+    @pytest.mark.asyncio
+    async def test_disabled_setting_returns_disabled(self):
+        from src.worker.tasks.interviews import _generate_questions_to_ask_async
+
+        task = _make_fake_task()
+        task.check_enabled = AsyncMock(return_value=False)
+        sf = _make_session_factory(AsyncMock())
+
+        result = await _generate_questions_to_ask_async(
+            task, sf, 1, 100, 200, "ru"
+        )
+
+        assert result == {"status": "disabled"}
+
+    @pytest.mark.asyncio
+    async def test_success_notifies_user(self):
+        from src.worker.tasks.interviews import _generate_questions_to_ask_async
+
+        interview = _make_interview()
+        mock_interview_repo = AsyncMock()
+        mock_interview_repo.get_with_relations = AsyncMock(return_value=interview)
+
+        task = _make_fake_task()
+        task.load_circuit_breaker = AsyncMock(return_value=_make_cb_mock())
+        session = AsyncMock()
+        sf = _make_session_factory(session)
+
+        with (
+            patch(
+                "src.repositories.interview.InterviewRepository",
+                MagicMock(return_value=mock_interview_repo),
+            ),
+            patch(
+                "src.services.ai.client.AIClient",
+                MagicMock(
+                    return_value=MagicMock(
+                        generate_text=AsyncMock(
+                            return_value="**HR:** Q1\n**Tech Lead:** Q2"
+                        )
+                    ),
+                ),
+            ),
+            patch(
+                "src.bot.modules.interviews.keyboards.interview_detail_keyboard",
+                return_value=MagicMock(),
+            ),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+        ):
+            result = await _generate_questions_to_ask_async(
+                task, sf, 1, 100, 200, "ru"
+            )
+
+        assert result == {"status": "completed", "interview_id": 1}
+        task.notify_user.assert_called_once()
+
+
 # ── generate_test_task (interview_prep) ────────────────────────────────────────
 
 

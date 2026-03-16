@@ -62,8 +62,13 @@ def test_interview_detail_keyboard_prepare_me_before_results_when_no_questions()
         has_questions=False,
     )
     flat = [btn.text for row in kb.inline_keyboard for btn in row]
-    assert "Prepare" in flat[0] or "Подготовь" in flat[0]
-    assert "Results" in flat[1] or "Результаты" in flat[1]
+    prepare_idx = next(
+        i for i, t in enumerate(flat) if "Prepare" in t or "Подготовь" in t
+    )
+    results_idx = next(
+        i for i, t in enumerate(flat) if "Results" in t or "Результаты" in t
+    )
+    assert prepare_idx < results_idx
 
 
 # ── _save_and_show_interview ─────────────────────────────────────────────────
@@ -493,3 +498,111 @@ async def test_handle_prep_regenerate_plan_deletes_steps_and_dispatches_task():
     )
     session.commit.assert_called_once()
     mock_run.assert_called_once()
+
+
+# ── handle_company_review ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_company_review_dispatches_task():
+    """handle_company_review loads interview, edits to generating, dispatches task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_company_review
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.message_id = 456
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="company_review", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+    user = MagicMock()
+    user.language_code = "en"
+
+    with (
+        patch(
+            "src.repositories.interview.InterviewRepository"
+        ) as mock_repo_cls,
+        patch(
+            "src.core.celery_async.run_celery_task",
+            new_callable=AsyncMock,
+        ) as mock_run,
+    ):
+        mock_repo = MagicMock()
+        mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_company_review(
+            callback, callback_data, user, session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args[0]
+    assert call_args[1] == 1  # interview_id
+    assert call_args[2] == 123  # chat_id
+    assert call_args[4] == "en"  # locale
+    callback.answer.assert_called_once()
+
+
+# ── handle_questions_to_ask ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_questions_to_ask_dispatches_task():
+    """handle_questions_to_ask loads interview, edits to generating, dispatches task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_questions_to_ask
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.message_id = 456
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(action="questions_to_ask", interview_id=1)
+
+    mock_interview = MagicMock()
+    mock_interview.id = 1
+    mock_interview.is_deleted = False
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+    user = MagicMock()
+    user.language_code = "en"
+
+    with (
+        patch(
+            "src.repositories.interview.InterviewRepository"
+        ) as mock_repo_cls,
+        patch(
+            "src.core.celery_async.run_celery_task",
+            new_callable=AsyncMock,
+        ) as mock_run,
+    ):
+        mock_repo = MagicMock()
+        mock_repo.get_with_relations = AsyncMock(return_value=mock_interview)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_questions_to_ask(
+            callback, callback_data, user, session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args[0]
+    assert call_args[1] == 1  # interview_id
+    assert call_args[2] == 123  # chat_id
+    assert call_args[4] == "en"  # locale
+    callback.answer.assert_called_once()

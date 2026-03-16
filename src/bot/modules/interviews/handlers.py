@@ -488,6 +488,68 @@ async def handle_detail(
     await callback.answer()
 
 
+# ── Company review (AI) ─────────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "company_review"))
+async def handle_company_review(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.repositories.interview import InterviewRepository
+    from src.worker.tasks.interviews import generate_company_review_task
+
+    interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    wait_msg = await callback.message.edit_text(i18n.get("iv-generating-company-review"))
+    await run_celery_task(
+        generate_company_review_task,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
+# ── Questions to ask (AI) ───────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "questions_to_ask"))
+async def handle_questions_to_ask(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.repositories.interview import InterviewRepository
+    from src.worker.tasks.interviews import generate_questions_to_ask_task
+
+    interview = await InterviewRepository(session).get_with_relations(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    wait_msg = await callback.message.edit_text(i18n.get("iv-generating-questions-to-ask"))
+    await run_celery_task(
+        generate_questions_to_ask_task,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
 async def _save_and_show_interview(
     message_to_edit: Message,
     user: User,

@@ -660,6 +660,82 @@ def build_improvement_flow_user_content(
     )
 
 
+def build_company_review_system_prompt() -> str:
+    """Return the system prompt for company review generation."""
+    return (
+        "Ты — HR-аналитик и эксперт по оценке работодателей.\n\n"
+        "[ЗАДАЧА]\n"
+        "На основе данных вакансии и компании составь краткий обзор работодателя.\n\n"
+        "[ПРАВИЛА]\n"
+        "- Структура: обзор компании, ключевые сигналы о культуре, плюсы, минусы, красные флаги.\n"
+        "- Формат: нумерованные списки или короткие абзацы.\n"
+        "- Пиши на русском языке.\n"
+        "- Будь объективным.\n\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_company_review_prompt(
+    vacancy_title: str,
+    vacancy_description: str | None,
+    company_name: str | None,
+    experience_level: str | None,
+) -> str:
+    """Return the user content for company review generation."""
+    parts = [
+        f"[ВАКАНСИЯ]\n{vacancy_title}\n\n",
+    ]
+    if company_name:
+        parts.append(f"[КОМПАНИЯ]\n{company_name}\n\n")
+    if experience_level:
+        parts.append(f"[УРОВЕНЬ] {experience_level}\n\n")
+    if vacancy_description:
+        parts.append(f"[ОПИСАНИЕ ВАКАНСИИ]\n{vacancy_description[:3000]}\n\n")
+    parts.append("Составь обзор компании на основе этих данных.")
+    return "".join(parts)
+
+
+def build_questions_to_ask_system_prompt() -> str:
+    """Return the system prompt for questions-to-ask generation."""
+    return (
+        "Ты — эксперт по подготовке к собеседованиям.\n\n"
+        "[ЗАДАЧА]\n"
+        "Сгенерируй список вопросов, которые кандидат может задать на собеседовании.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Сгруппируй вопросы по двум разделам:\n\n"
+        "**Вопросы для HR**\n"
+        "1. ...\n"
+        "2. ...\n\n"
+        "**Вопросы для Tech Lead**\n"
+        "1. ...\n"
+        "2. ...\n\n"
+        "HR: культура, процесс найма, команда, ожидания, условия.\n"
+        "Tech Lead: стек, архитектура, процессы разработки, команда.\n"
+        "По 5–8 вопросов в каждом разделе. Пиши на русском языке.\n\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_questions_to_ask_prompt(
+    vacancy_title: str,
+    vacancy_description: str | None,
+    company_name: str | None,
+    experience_level: str | None,
+) -> str:
+    """Return the user content for questions-to-ask generation."""
+    parts = [
+        f"[ВАКАНСИЯ]\n{vacancy_title}\n\n",
+    ]
+    if company_name:
+        parts.append(f"[КОМПАНИЯ]\n{company_name}\n\n")
+    if experience_level:
+        parts.append(f"[УРОВЕНЬ] {experience_level}\n\n")
+    if vacancy_description:
+        parts.append(f"[ОПИСАНИЕ ВАКАНСИИ]\n{vacancy_description[:3000]}\n\n")
+    parts.append("Сгенерируй вопросы для HR и Tech Lead на основе этих данных.")
+    return "".join(parts)
+
+
 @dataclass(frozen=True)
 class AchievementExperienceEntry:
     company_name: str

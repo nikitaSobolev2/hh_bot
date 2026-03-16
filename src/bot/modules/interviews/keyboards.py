@@ -229,6 +229,27 @@ def interview_detail_keyboard(
         ]
     )
 
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-company-review", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="company_review", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-questions-to-ask", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="questions_to_ask", interview_id=interview_id
+                ).pack(),
+            )
+        ]
+    )
+
     if not has_questions:
         rows.append(
             [

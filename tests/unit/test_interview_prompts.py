@@ -3,10 +3,12 @@
 import pytest
 
 from src.services.ai.prompts import (
+    build_company_review_prompt,
     build_improvement_flow_system_prompt,
     build_improvement_flow_user_content,
     build_interview_analysis_system_prompt,
     build_interview_analysis_user_content,
+    build_questions_to_ask_prompt,
 )
 
 
@@ -211,3 +213,51 @@ class TestBuildImprovementFlowUserContent:
             vacancy_description=None,
         )
         assert title in content
+
+
+# ── Company review prompts ─────────────────────────────────────────────────────
+
+
+class TestBuildCompanyReviewPrompt:
+    def test_build_company_review_prompt_contains_company(self):
+        content = build_company_review_prompt(
+            vacancy_title="Backend Dev",
+            vacancy_description=None,
+            company_name="Acme Corp",
+            experience_level=None,
+        )
+        assert "Acme Corp" in content
+        assert "КОМПАНИЯ" in content
+
+    def test_includes_vacancy_title(self):
+        content = build_company_review_prompt(
+            vacancy_title="Python Developer",
+            vacancy_description=None,
+            company_name=None,
+            experience_level=None,
+        )
+        assert "Python Developer" in content
+
+
+# ── Questions to ask prompts ───────────────────────────────────────────────────
+
+
+class TestBuildQuestionsToAskPrompt:
+    def test_build_questions_to_ask_prompt_contains_vacancy(self):
+        content = build_questions_to_ask_prompt(
+            vacancy_title="Frontend Developer",
+            vacancy_description=None,
+            company_name=None,
+            experience_level=None,
+        )
+        assert "Frontend Developer" in content
+        assert "ВАКАНСИЯ" in content
+
+    def test_includes_company_when_provided(self):
+        content = build_questions_to_ask_prompt(
+            vacancy_title="Dev",
+            vacancy_description=None,
+            company_name="TechCo",
+            experience_level=None,
+        )
+        assert "TechCo" in content

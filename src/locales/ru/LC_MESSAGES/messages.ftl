@@ -800,6 +800,15 @@ btn-iv-delete-confirm = Да, удалить
 iv-deleted = Собеседование удалено.
 iv-not-found = Запись не найдена.
 
+btn-iv-company-review = 📋 Обзор компании (AI)
+btn-iv-questions-to-ask = ❓ Вопросы для интервью (AI)
+iv-generating-company-review = ⏳ Генерирую обзор компании...
+iv-generating-questions-to-ask = ⏳ Генерирую вопросы...
+iv-company-review-title = Обзор компании
+iv-questions-to-ask-title = Вопросы для интервью
+iv-company-review-failed = Не удалось сгенерировать обзор. Попробуйте позже.
+iv-questions-to-ask-failed = Не удалось сгенерировать вопросы. Попробуйте позже.
+
 # Progress bars
 progress-title = ⏳ Обработка задач
 progress-completed-title = ✅ Все задачи выполнены!
