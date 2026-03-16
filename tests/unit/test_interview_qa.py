@@ -681,6 +681,118 @@ class TestGenerateQaAsync:
 
         assert result == {"status": "already_generated"}
 
+    @pytest.mark.asyncio
+    async def test_empty_blocks_raises_and_does_not_save(self):
+        """When AI response does not match [QAStart]/[QAEnd] format, task raises."""
+        from src.worker.tasks.interview_qa import _generate_qa_async
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        sf = _make_session_factory(session)
+
+        mock_cb = MagicMock()
+        mock_cb.is_call_allowed.return_value = True
+
+        fake_experience = MagicMock(company_name="Acme", stack="Python")
+        mock_we_repo = AsyncMock()
+        mock_we_repo.get_active_by_user = AsyncMock(return_value=[fake_experience])
+
+        mock_qa_repo = AsyncMock()
+        mock_qa_repo.get_ai_generated = AsyncMock(return_value=[])
+        mock_qa_repo.upsert_answer = AsyncMock()
+
+        mock_ai_client = MagicMock()
+        mock_ai_client.generate_text = AsyncMock(
+            return_value="Some text without [QAStart]/[QAEnd] blocks"
+        )
+
+        mock_task = _make_mock_task(mock_cb=MagicMock(), mock_bot=AsyncMock())
+
+        _we_path = "src.repositories.work_experience.WorkExperienceRepository"
+        _qa_path = "src.repositories.interview_qa.StandardQuestionRepository"
+        with (
+            patch(_we_path, return_value=mock_we_repo),
+            patch(_qa_path, return_value=mock_qa_repo),
+            patch("src.services.ai.client.AIClient", return_value=mock_ai_client),
+            patch("src.config.settings", bot_token="fake"),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+            patch(
+                "src.services.ai.prompts.build_standard_qa_system_prompt",
+                return_value="system prompt",
+            ),
+            patch(
+                "src.services.ai.prompts.build_standard_qa_user_content",
+                return_value="user content",
+            ),
+        ):
+            with pytest.raises(ValueError, match="did not match"):
+                await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", "best_achievement")
+
+        mock_qa_repo.upsert_answer.assert_not_called()
+        mock_task.mark_completed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_generate_pending_uses_keys_specific_idempotency(self):
+        """Idempotency key for generate_pending includes the keys being generated."""
+        from src.worker.tasks.interview_qa import _generate_qa_async
+
+        session = AsyncMock()
+        session.commit = AsyncMock()
+        sf = _make_session_factory(session)
+
+        mock_cb = MagicMock()
+        mock_cb.is_call_allowed.return_value = True
+
+        fake_experience = MagicMock(company_name="Acme", stack="Python")
+        mock_we_repo = AsyncMock()
+        mock_we_repo.get_active_by_user = AsyncMock(return_value=[fake_experience])
+
+        all_ai_keys_except_one = [
+            "best_achievement",
+            "biggest_challenge",
+            "five_year_plan",
+            "team_conflict",
+            "learning_new_tech",
+        ]
+        mock_qa_repo = AsyncMock()
+        mock_qa_repo.get_ai_generated = AsyncMock(
+            return_value=[_make_question(k) for k in all_ai_keys_except_one]
+        )
+        mock_qa_repo.upsert_answer = AsyncMock()
+
+        raw_response = (
+            "[QAStart]:worst_achievement\nAnswer.[QAEnd]:worst_achievement"
+        )
+        mock_ai_client = MagicMock()
+        mock_ai_client.generate_text = AsyncMock(return_value=raw_response)
+
+        mock_task = _make_mock_task(mock_cb=mock_cb, mock_bot=AsyncMock())
+
+        _we_path = "src.repositories.work_experience.WorkExperienceRepository"
+        _qa_path = "src.repositories.interview_qa.StandardQuestionRepository"
+        with (
+            patch(_we_path, return_value=mock_we_repo),
+            patch(_qa_path, return_value=mock_qa_repo),
+            patch("src.services.ai.client.AIClient", return_value=mock_ai_client),
+            patch("src.config.settings", bot_token="fake"),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale, **kw: key),
+            patch(
+                "src.services.ai.prompts.build_standard_qa_system_prompt",
+                return_value="system prompt",
+            ),
+            patch(
+                "src.services.ai.prompts.build_standard_qa_user_content",
+                return_value="user content",
+            ),
+        ):
+            result = await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", None)
+
+        assert result["status"] == "completed"
+        expected_key = "interview_qa:1:worst_achievement"
+        mock_task.mark_completed.assert_called_once()
+        call_args = mock_task.mark_completed.call_args
+        assert call_args.args[0] == expected_key
+
 
 # ── Add to Interview Flow ─────────────────────────────────────────────────────
 

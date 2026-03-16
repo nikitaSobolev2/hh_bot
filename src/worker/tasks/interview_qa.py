@@ -106,11 +106,6 @@ async def _generate_qa_async(
     if not enabled:
         return {"status": "disabled"}
 
-    idempotency_key = f"interview_qa:{user_id}:{question_key or 'all'}"
-    if await task.is_already_completed(idempotency_key, session_factory):
-        await _notify_user(task, chat_id, message_id, locale)
-        return {"status": "already_completed"}
-
     cb = await task.load_circuit_breaker(
         "interview_qa",
         AppSettingKey.CB_INTERVIEW_QA_FAILURE_THRESHOLD,
@@ -137,6 +132,15 @@ async def _generate_qa_async(
     if not keys_to_generate:
         await _notify_user(task, chat_id, message_id, locale)
         return {"status": "already_generated"}
+
+    idempotency_key = (
+        f"interview_qa:{user_id}:{question_key}"
+        if question_key is not None
+        else f"interview_qa:{user_id}:{','.join(sorted(keys_to_generate))}"
+    )
+    if await task.is_already_completed(idempotency_key, session_factory):
+        await _notify_user(task, chat_id, message_id, locale)
+        return {"status": "already_completed"}
 
     experiences = [
         WorkExperienceEntry(
@@ -167,9 +171,21 @@ async def _generate_qa_async(
             temperature=0.5,
         )
         blocks = _parse_qa_blocks(raw)
+        if not blocks:
+            cb.record_failure()
+            logger.error(
+                "Interview QA: AI response did not match expected format",
+                user_id=user_id,
+                keys=keys_to_generate,
+                raw_preview=raw[:500] if raw else "",
+            )
+            raise ValueError(
+                "AI response did not match [QAStart]/[QAEnd] format; no blocks parsed"
+            )
         cb.record_success()
     except Exception as exc:
-        cb.record_failure()
+        if not isinstance(exc, ValueError):
+            cb.record_failure()
         logger.error("Interview QA generation failed", user_id=user_id, error=str(exc))
         raise
 
