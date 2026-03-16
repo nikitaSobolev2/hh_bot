@@ -292,6 +292,17 @@ def prep_steps_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=_t("prep-btn-regenerate-plan", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_regenerate_plan",
+                    interview_id=interview_id,
+                ).pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=_t("btn-back", i18n, locale),
                 callback_data=InterviewCallback(action="detail", interview_id=interview_id).pack(),
             )
@@ -397,6 +408,26 @@ def deep_summary_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=_t("prep-btn-download", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_download",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text=_t("prep-btn-regenerate", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_regenerate_deep",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                ).pack(),
+            ),
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=_t("btn-back", i18n, locale),
                 callback_data=InterviewCallback(
                     action="prep_step_detail",
@@ -407,6 +438,48 @@ def deep_summary_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def download_options_keyboard(
+    step_id: int,
+    interview_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("prep-btn-download-md", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_download_md",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("prep-btn-download-docs", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_download_docs",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-back", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="prep_download_back",
+                        interview_id=interview_id,
+                        prep_step_id=step_id,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
 
 
 def test_question_keyboard(

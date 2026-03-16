@@ -706,6 +706,7 @@ async def handle_prep_step_deep(
 
     from src.bot.modules.interviews.keyboards import deep_summary_keyboard
     from src.repositories.interview import InterviewPreparationRepository
+    from src.services.telegram.text_utils import split_text_by_break, split_text_for_telegram
 
     prep_repo = InterviewPreparationRepository(session)
     step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
@@ -713,21 +714,234 @@ async def handle_prep_step_deep(
         await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
         return
 
-    text = f"<b>{i18n.get('prep-deep-title')}: {step.title}</b>\n\n{step.deep_summary}"
+    header = f"*{i18n.get('prep-deep-title')}: {step.title}*\n\n"
+    full_text = header + step.deep_summary
     max_len = get_max_message_length(user, "default")
-    if len(text) > max_len:
-        text = text[: max_len - 10] + "\n..."
+    chunks = split_text_by_break(full_text, max_len=max_len)
+    if not chunks and full_text.strip():
+        chunks = split_text_for_telegram(full_text, max_len=max_len)
+
+    if not chunks:
+        await callback.answer()
+        return
+
+    keyboard = deep_summary_keyboard(
+        step.id,
+        callback_data.interview_id,
+        has_test=bool(step.test),
+        i18n=i18n,
+    )
+    bot = callback.message.bot
+    chat_id = callback.message.chat.id
 
     with contextlib.suppress(TelegramBadRequest):
+        if len(chunks) == 1:
+            await callback.message.edit_text(
+                chunks[0],
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+        else:
+            await callback.message.edit_text(
+                chunks[0],
+                parse_mode="Markdown",
+            )
+            for chunk in chunks[1:-1]:
+                await bot.send_message(
+                    chat_id,
+                    chunk,
+                    parse_mode="Markdown",
+                )
+            await bot.send_message(
+                chat_id,
+                chunks[-1],
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+    await callback.answer()
+
+
+# ── Download deep summary ──────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_download"))
+async def handle_prep_download(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    i18n: I18nContext,
+) -> None:
+    from src.bot.modules.interviews.keyboards import download_options_keyboard
+
+    await callback.message.edit_text(
+        i18n.get("prep-download-title"),
+        reply_markup=download_options_keyboard(
+            callback_data.prep_step_id,
+            callback_data.interview_id,
+            i18n=i18n,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_download_md"))
+async def handle_prep_download_md(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from aiogram.types import BufferedInputFile
+
+    from src.repositories.interview import InterviewPreparationRepository
+    from src.services.telegram.text_utils import BREAK_MARKER
+
+    prep_repo = InterviewPreparationRepository(session)
+    step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
+    if not step or not step.deep_summary:
+        await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
+        return
+
+    header = f"# {i18n.get('prep-deep-title')}: {step.title}\n\n"
+    full_text = header + step.deep_summary.replace(BREAK_MARKER, "")
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in step.title[:50])
+    filename = f"{safe_title}.md"
+    doc = BufferedInputFile(
+        full_text.encode("utf-8"),
+        filename=filename,
+    )
+    await callback.message.bot.send_document(
+        callback.message.chat.id,
+        doc,
+        caption=i18n.get("prep-deep-title"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_download_docs"))
+async def handle_prep_download_docs(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.interview_prep import convert_deep_summary_to_docx_task
+
+    await callback.message.edit_text(i18n.get("prep-docs-generating"))
+    await run_celery_task(
+        convert_deep_summary_to_docx_task,
+        callback_data.prep_step_id,
+        callback.message.chat.id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_download_back"))
+async def handle_prep_download_back(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest
+
+    from src.bot.modules.interviews.keyboards import deep_summary_keyboard
+    from src.repositories.interview import InterviewPreparationRepository
+    from src.services.telegram.text_utils import split_text_by_break, split_text_for_telegram
+
+    prep_repo = InterviewPreparationRepository(session)
+    step = await prep_repo.get_step_by_id(callback_data.prep_step_id)
+    if not step or not step.deep_summary:
+        await callback.answer(i18n.get("prep-deep-not-ready"), show_alert=True)
+        return
+
+    header = f"*{i18n.get('prep-deep-title')}: {step.title}*\n\n"
+    full_text = header + step.deep_summary
+    max_len = get_max_message_length(user, "default")
+    chunks = split_text_by_break(full_text, max_len=max_len)
+    if not chunks:
+        chunks = split_text_for_telegram(full_text, max_len=max_len)
+    last_chunk = chunks[-1] if chunks else full_text
+    keyboard = deep_summary_keyboard(
+        callback_data.prep_step_id,
+        callback_data.interview_id,
+        has_test=bool(step.test),
+        i18n=i18n,
+    )
+    with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
-            text,
-            reply_markup=deep_summary_keyboard(
-                step.id,
-                callback_data.interview_id,
-                has_test=bool(step.test),
-                i18n=i18n,
-            ),
+            last_chunk,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
         )
+    await callback.answer()
+
+
+# ── Regenerate deep summary ──────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_regenerate_deep"))
+async def handle_prep_regenerate_deep(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.repositories.interview import InterviewPreparationRepository
+    from src.worker.tasks.interview_prep import generate_deep_summary_task
+
+    prep_repo = InterviewPreparationRepository(session)
+    await prep_repo.update_step_deep_summary(callback_data.prep_step_id, None)
+    await session.commit()
+
+    wait_msg = await callback.message.edit_text(i18n.get("prep-generating-deep"))
+    await run_celery_task(
+        generate_deep_summary_task,
+        callback_data.prep_step_id,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
+    await callback.answer()
+
+
+# ── Regenerate whole plan ──────────────────────────────────────────────────
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "prep_regenerate_plan"))
+async def handle_prep_regenerate_plan(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.repositories.interview import InterviewPreparationRepository
+    from src.repositories.task import CeleryTaskRepository
+    from src.worker.tasks.interview_prep import generate_preparation_task
+
+    prep_repo = InterviewPreparationRepository(session)
+    await prep_repo.delete_steps_for_interview(callback_data.interview_id)
+    idempotency_key = f"interview_prep:{callback_data.interview_id}"
+    await CeleryTaskRepository(session).delete_by_idempotency_key(idempotency_key)
+    await session.commit()
+
+    wait_msg = await callback.message.edit_text(i18n.get("prep-regenerating"))
+    await run_celery_task(
+        generate_preparation_task,
+        callback_data.interview_id,
+        callback.message.chat.id,
+        wait_msg.message_id if wait_msg else callback.message.message_id,
+        user.language_code or "ru",
+    )
     await callback.answer()
 
 

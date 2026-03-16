@@ -413,6 +413,84 @@ async def _generate_test_async(
         await bot.session.close()
 
 
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="interviews.convert_deep_summary_to_docx",
+    max_retries=1,
+    default_retry_delay=10,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def convert_deep_summary_to_docx_task(
+    self,
+    step_id: int,
+    chat_id: int,
+    locale: str = "ru",
+) -> dict:
+    return run_async(
+        lambda sf: _convert_deep_summary_to_docx_async(self, sf, step_id, chat_id, locale)
+    )
+
+
+async def _convert_deep_summary_to_docx_async(
+    task: HHBotTask,
+    session_factory,
+    step_id: int,
+    chat_id: int,
+    locale: str,
+) -> dict:
+    from aiogram.types import BufferedInputFile
+
+    from src.core.i18n import get_text
+    from src.repositories.interview import InterviewPreparationRepository
+    from src.services.telegram.text_utils import BREAK_MARKER
+
+    bot = task.create_bot()
+
+    try:
+        async with session_factory() as session:
+            prep_repo = InterviewPreparationRepository(session)
+            step = await prep_repo.get_step_by_id(step_id)
+            if not step or not step.deep_summary:
+                await task.notify_user(
+                    bot, chat_id, None, get_text("prep-deep-not-ready", locale)
+                )
+                return {"status": "not_found"}
+
+            header = f"# {get_text('prep-deep-title', locale)}: {step.title}\n\n"
+            full_text = header + step.deep_summary.replace(BREAK_MARKER, "")
+            safe_title = "".join(
+                c if c.isalnum() or c in " -_" else "_" for c in step.title[:50]
+            )
+            filename = f"{safe_title}.docx"
+
+        try:
+            import pypandoc
+
+            docx_bytes = pypandoc.convert_text(full_text, "docx", format="md")
+        except Exception as exc:
+            logger.error(
+                "DOCX conversion failed",
+                step_id=step_id,
+                error=str(exc),
+            )
+            await task.notify_user(
+                bot, chat_id, None, get_text("prep-docs-failed", locale)
+            )
+            return {"status": "conversion_failed"}
+
+        doc = BufferedInputFile(docx_bytes, filename=filename)
+        await bot.send_document(
+            chat_id,
+            doc,
+            caption=get_text("prep-deep-title", locale),
+        )
+        return {"status": "completed"}
+    finally:
+        await bot.session.close()
+
+
 async def _notify_user_prep(
     task: HHBotTask,
     bot,

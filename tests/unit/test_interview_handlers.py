@@ -117,3 +117,327 @@ async def test_save_and_show_interview_creates_and_edits_message():
     edit_args = message.edit_text.call_args
     assert "Python Dev" in edit_args[0][0]
     assert edit_args[1]["reply_markup"] is not None
+
+
+# ── handle_prep_step_deep (multi-message) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_step_deep_single_chunk_edits_with_keyboard():
+    """Single chunk: edit_text with parse_mode Markdown and keyboard."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_step_deep
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.bot = MagicMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+
+    callback_data = InterviewCallback(
+        action="prep_step_deep",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    step = MagicMock()
+    step.id = 10
+    step.title = "Symfony"
+    step.deep_summary = "Short summary"
+    step.test = None
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_step_by_id = AsyncMock(return_value=step)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_prep_step_deep(
+            callback, callback_data, MagicMock(), session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    edit_kw = callback.message.edit_text.call_args.kwargs
+    assert edit_kw.get("parse_mode") == "Markdown"
+    assert edit_kw.get("reply_markup") is not None
+    assert "Symfony" in callback.message.edit_text.call_args[0][0]
+    callback.message.bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_step_deep_multiple_chunks_sends_last_with_keyboard():
+    """Multiple chunks: edit first, send rest; last has keyboard."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_step_deep
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.bot = AsyncMock()
+    callback.message.bot.send_message = AsyncMock(return_value=MagicMock())
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+
+    callback_data = InterviewCallback(
+        action="prep_step_deep",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    step = MagicMock()
+    step.id = 10
+    step.title = "Symfony"
+    step.deep_summary = ("A" * 500 + "\n\n") * 5 + ("B" * 500 + "\n\n") * 5
+    step.test = None
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_step_by_id = AsyncMock(return_value=step)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_prep_step_deep(
+            callback, callback_data, MagicMock(), session, i18n
+        )
+
+    callback.message.edit_text.assert_called_once()
+    edit_kw = callback.message.edit_text.call_args.kwargs
+    assert edit_kw.get("parse_mode") == "Markdown"
+    assert "reply_markup" not in edit_kw or edit_kw.get("reply_markup") is None
+
+    send_calls = callback.message.bot.send_message.call_args_list
+    assert len(send_calls) >= 1
+    last_send_kw = send_calls[-1].kwargs
+    assert last_send_kw.get("reply_markup") is not None
+    assert last_send_kw.get("parse_mode") == "Markdown"
+
+
+# ── handle_prep_download ───────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_download_edits_to_download_options():
+    """prep_download edits message to show download options keyboard."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_download
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+
+    callback_data = InterviewCallback(
+        action="prep_download",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    i18n = _make_i18n()
+
+    await handle_prep_download(callback, callback_data, i18n)
+
+    callback.message.edit_text.assert_called_once()
+    edit_args = callback.message.edit_text.call_args
+    assert "download" in edit_args[0][0].lower() or "скачать" in edit_args[0][0].lower()
+    assert edit_args[1]["reply_markup"] is not None
+
+
+# ── handle_prep_download_md ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_download_md_sends_md_file_when_deep_summary_exists():
+    """prep_download_md sends .md document when step has deep_summary."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_download_md
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.bot = AsyncMock()
+    callback.message.bot.send_document = AsyncMock(return_value=MagicMock())
+
+    callback_data = InterviewCallback(
+        action="prep_download_md",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    step = MagicMock()
+    step.id = 10
+    step.title = "Python Basics"
+    step.deep_summary = "Content here"
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_step_by_id = AsyncMock(return_value=step)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_prep_download_md(
+            callback, callback_data, session, i18n
+        )
+
+    callback.message.bot.send_document.assert_called_once()
+    send_args = callback.message.bot.send_document.call_args
+    assert send_args[0][0] == 123
+    assert send_args[1].get("caption") is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_download_md_answers_alert_when_no_deep_summary():
+    """prep_download_md shows alert when step has no deep_summary."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_download_md
+
+    callback = AsyncMock()
+    callback.answer = AsyncMock()
+
+    callback_data = InterviewCallback(
+        action="prep_download_md",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    step = MagicMock()
+    step.deep_summary = None
+
+    session = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.get_step_by_id = AsyncMock(return_value=step)
+        mock_repo_cls.return_value = mock_repo
+
+        await handle_prep_download_md(
+            callback, callback_data, session, i18n
+        )
+
+    callback.answer.assert_called_once_with(
+        i18n.get("prep-deep-not-ready"), show_alert=True
+    )
+
+
+# ── handle_prep_regenerate_deep ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_regenerate_deep_clears_and_dispatches_task():
+    """prep_regenerate_deep clears deep_summary and dispatches generate_deep_summary_task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_regenerate_deep
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+
+    callback_data = InterviewCallback(
+        action="prep_regenerate_deep",
+        interview_id=1,
+        prep_step_id=10,
+    )
+
+    user = MagicMock()
+    user.language_code = "en"
+
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.update_step_deep_summary = AsyncMock()
+        mock_repo_cls.return_value = mock_repo
+
+        with patch(
+            "src.core.celery_async.run_celery_task",
+            new_callable=AsyncMock,
+        ) as mock_run:
+            await handle_prep_regenerate_deep(
+                callback, callback_data, user, session, i18n
+            )
+
+    mock_repo.update_step_deep_summary.assert_called_once_with(10, None)
+    session.commit.assert_called_once()
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args
+    assert call_args[0][1] == 10  # step_id
+    assert call_args[0][2] == 1  # interview_id
+    assert call_args[0][3] == 123  # chat_id
+
+
+# ── handle_prep_regenerate_plan ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_prep_regenerate_plan_deletes_steps_and_dispatches_task():
+    """prep_regenerate_plan deletes steps, clears idempotency, dispatches task."""
+    from src.bot.modules.interviews.callbacks import InterviewCallback
+    from src.bot.modules.interviews.handlers import handle_prep_regenerate_plan
+
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat = MagicMock()
+    callback.message.chat.id = 123
+    callback.message.edit_text = AsyncMock(return_value=MagicMock())
+
+    callback_data = InterviewCallback(
+        action="prep_regenerate_plan",
+        interview_id=1,
+    )
+
+    user = MagicMock()
+    user.language_code = "en"
+
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    i18n = _make_i18n()
+
+    with patch(
+        "src.repositories.interview.InterviewPreparationRepository"
+    ) as mock_prep_repo_cls:
+        mock_prep_repo = MagicMock()
+        mock_prep_repo.delete_steps_for_interview = AsyncMock()
+        mock_prep_repo_cls.return_value = mock_prep_repo
+
+        with patch(
+            "src.repositories.task.CeleryTaskRepository"
+        ) as mock_task_repo_cls:
+            mock_task_repo = MagicMock()
+            mock_task_repo.delete_by_idempotency_key = AsyncMock()
+            mock_task_repo_cls.return_value = mock_task_repo
+
+            with patch(
+                "src.core.celery_async.run_celery_task",
+                new_callable=AsyncMock,
+            ) as mock_run:
+                await handle_prep_regenerate_plan(
+                    callback, callback_data, user, session, i18n
+                )
+
+    mock_prep_repo.delete_steps_for_interview.assert_called_once_with(1)
+    mock_task_repo.delete_by_idempotency_key.assert_called_once_with(
+        "interview_prep:1"
+    )
+    session.commit.assert_called_once()
+    mock_run.assert_called_once()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -141,11 +141,22 @@ class InterviewPreparationRepository:
             step.status = status
             await self._session.flush()
 
-    async def update_step_deep_summary(self, step_id: int, deep_summary: str) -> None:
+    async def update_step_deep_summary(
+        self, step_id: int, deep_summary: str | None
+    ) -> None:
         step = await self.get_step_by_id(step_id)
         if step:
             step.deep_summary = deep_summary
             await self._session.flush()
+
+    async def delete_steps_for_interview(self, interview_id: int) -> None:
+        """Delete all preparation steps for an interview (tests cascade-deleted)."""
+        await self._session.execute(
+            delete(InterviewPreparationStep).where(
+                InterviewPreparationStep.interview_id == interview_id
+            )
+        )
+        await self._session.flush()
 
     async def get_test_by_step(self, step_id: int) -> InterviewPreparationTest | None:
         result = await self._session.execute(

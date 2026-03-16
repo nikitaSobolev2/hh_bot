@@ -21,6 +21,7 @@ dependencies = [
     "fake-useragent>=2.0",
     "python-dotenv>=1.0",
     "fluent.runtime>=0.4",
+    "pypandoc>=1.13",
 ]
 
 [project.optional-dependencies]
