@@ -470,9 +470,25 @@ async def _convert_deep_summary_to_docx_async(
             filename = f"{safe_title}.docx"
 
         try:
+            import contextlib
+            import os
+            import tempfile
+
             import pypandoc
 
-            docx_bytes = pypandoc.convert_text(full_text, "docx", format="md")
+            with tempfile.NamedTemporaryFile(
+                suffix=".docx", delete=False
+            ) as tmp:
+                tmp_path = tmp.name
+            try:
+                pypandoc.convert_text(
+                    full_text, "docx", format="md", outputfile=tmp_path
+                )
+                with open(tmp_path, "rb") as f:
+                    docx_bytes = f.read()
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
         except Exception as exc:
             logger.error(
                 "DOCX conversion failed",
