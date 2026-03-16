@@ -262,7 +262,7 @@ async def _generate_deep_summary_async(
 
         try:
             deep_summary = await ai_client.generate_text(
-                prompt, system_prompt=system_prompt, max_tokens=2000
+                prompt, system_prompt=system_prompt, max_tokens=20000
             )
             cb.record_success()
         except Exception as exc:
