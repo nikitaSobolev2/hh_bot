@@ -121,6 +121,26 @@ def skip_attachments_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                     callback_data=SupportCallback(action="done_attach").pack(),
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=SupportCallback(action="back_to_description").pack(),
+                )
+            ],
+        ]
+    )
+
+
+def description_back_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    """Keyboard for description step when navigated back from attachments."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-continue"),
+                    callback_data=SupportCallback(action="continue_to_attachments").pack(),
+                )
+            ],
         ]
     )
 
@@ -214,6 +234,12 @@ def ticket_channel_keyboard(
                         user_id=uid,
                     ).pack(),
                 ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=TicketFilterCallback(status="", page=0).pack(),
+                )
             ],
         ]
     )

@@ -181,6 +181,12 @@ def resume_keywords_source_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                     callback_data=ResumeCallback(action="keywords_skip").pack(),
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=ResumeCallback(action="back_to_step1").pack(),
+                )
+            ],
         ]
     )
 
@@ -210,6 +216,14 @@ def resume_parsing_companies_keyboard(
             )
         ]
     )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=ResumeCallback(action="step2_keyphrases").pack(),
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -235,7 +249,13 @@ def resume_rec_letter_ask_keyboard(
                         work_exp_id=work_exp_id,
                     ).pack(),
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=ResumeCallback(action="cancel").pack(),
+                )
+            ],
         ]
     )
 
@@ -263,6 +283,17 @@ def resume_rec_character_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=ResumeCallback(
+                    action="rec_back_to_position",
+                    work_exp_id=work_exp_id,
+                ).pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=i18n.get("btn-cancel"),
                 callback_data=ResumeCallback(action="cancel").pack(),
             )
@@ -283,6 +314,15 @@ def resume_rec_focus_keyboard(
                     text=i18n.get("btn-skip"),
                     callback_data=ResumeCallback(
                         action="rec_skip_focus",
+                        work_exp_id=work_exp_id,
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=ResumeCallback(
+                        action="rec_back_to_character",
                         work_exp_id=work_exp_id,
                     ).pack(),
                 )
@@ -452,6 +492,12 @@ def resume_step3_continue_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=i18n.get("btn-skip"),
                     callback_data=ResumeCallback(action="skip_to_rec_letters").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=ResumeCallback(action="step2_keyphrases").pack(),
                 )
             ],
             [

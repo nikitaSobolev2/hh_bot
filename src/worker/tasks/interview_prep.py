@@ -383,7 +383,8 @@ async def _generate_test_async(
             raise
 
         async with session_factory() as session:
-            existing_test = await session.get(InterviewPreparationTest, {"step_id": step_id})
+            prep_repo = InterviewPreparationRepository(session)
+            existing_test = await prep_repo.get_test_by_step(step_id)
             if existing_test:
                 existing_test.questions_json = {"questions": questions}
                 existing_test.user_answers_json = None
@@ -500,11 +501,30 @@ async def _convert_deep_summary_to_docx_async(
             )
             return {"status": "conversion_failed"}
 
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        from src.bot.modules.interviews.callbacks import InterviewCallback
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=get_text("btn-back", locale),
+                        callback_data=InterviewCallback(
+                            action="prep_step_deep",
+                            interview_id=step.interview_id,
+                            prep_step_id=step.id,
+                        ).pack(),
+                    )
+                ]
+            ]
+        )
         doc = BufferedInputFile(docx_bytes, filename=filename)
         await bot.send_document(
             chat_id,
             doc,
             caption=get_text("prep-deep-title", locale),
+            reply_markup=keyboard,
         )
         return {"status": "completed"}
     finally:

@@ -325,5 +325,15 @@ def work_exp_ai_result_keyboard(
                     ).pack(),
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=WorkExpCallback(
+                        action="back_to_input",
+                        field=field,
+                        return_to=return_to,
+                    ).pack(),
+                )
+            ],
         ]
     )

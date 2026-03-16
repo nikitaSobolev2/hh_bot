@@ -315,9 +315,11 @@ async def parsing_detail(
     callback: CallbackQuery,
     callback_data: ParsingCallback,
     user: User,
+    state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    await state.clear()
     company = await parsing_service.get_company_with_details(session, callback_data.company_id)
 
     if not company or company.user_id != user.id:

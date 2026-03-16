@@ -25,71 +25,98 @@ def feed_vacancy_keyboard(
     vacancy_url: str,
     i18n: I18nContext,
     mode: str = "summary",
+    *,
+    current_index: int = 0,
 ) -> InlineKeyboardMarkup:
+    from src.bot.modules.autoparse.callbacks import AutoparseCallback
+
     next_mode = "description" if mode == "summary" else "summary"
     toggle_key = "feed-btn-show-description" if mode == "summary" else "feed-btn-show-summary"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("feed-btn-open"),
+                url=vacancy_url,
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get(toggle_key),
+                callback_data=FeedCallback(
+                    action="toggle_view",
+                    session_id=session_id,
+                    vacancy_id=vacancy_id,
+                    mode=next_mode,
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("feed-btn-fits-me"),
+                callback_data=FeedCallback(
+                    action="like", session_id=session_id, vacancy_id=vacancy_id
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("feed-btn-not-fit"),
+                callback_data=FeedCallback(
+                    action="dislike", session_id=session_id, vacancy_id=vacancy_id
+                ).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("feed-btn-create-cover-letter"),
+                callback_data=FeedCallback(
+                    action="create_cover_letter",
+                    session_id=session_id,
+                    vacancy_id=vacancy_id,
+                ).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("feed-btn-show-later"),
+                callback_data=FeedCallback(
+                    action="show_later", session_id=session_id, vacancy_id=vacancy_id
+                ).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("feed-btn-stop"),
+                callback_data=FeedCallback(action="stop", session_id=session_id).pack(),
+            )
+        ],
+    ]
+    if current_index > 0:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("feed-btn-open"),
-                    url=vacancy_url,
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get(toggle_key),
+                    text=i18n.get("btn-back"),
                     callback_data=FeedCallback(
-                        action="toggle_view",
+                        action="prev_vacancy",
                         session_id=session_id,
                         vacancy_id=vacancy_id,
-                        mode=next_mode,
                     ).pack(),
                 )
-            ],
+            ]
+        )
+    else:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("feed-btn-fits-me"),
-                    callback_data=FeedCallback(
-                        action="like", session_id=session_id, vacancy_id=vacancy_id
-                    ).pack(),
-                ),
-                InlineKeyboardButton(
-                    text=i18n.get("feed-btn-not-fit"),
-                    callback_data=FeedCallback(
-                        action="dislike", session_id=session_id, vacancy_id=vacancy_id
-                    ).pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("feed-btn-create-cover-letter"),
-                    callback_data=FeedCallback(
-                        action="create_cover_letter",
-                        session_id=session_id,
-                        vacancy_id=vacancy_id,
-                    ).pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("feed-btn-show-later"),
-                    callback_data=FeedCallback(
-                        action="show_later", session_id=session_id, vacancy_id=vacancy_id
-                    ).pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("feed-btn-stop"),
-                    callback_data=FeedCallback(action="stop", session_id=session_id).pack(),
+                    text=i18n.get("btn-back"),
+                    callback_data=AutoparseCallback(action="hub").pack(),
                 )
-            ],
-        ]
-    )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def feed_start_keyboard(session_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    from src.bot.modules.autoparse.callbacks import AutoparseCallback
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -102,6 +129,12 @@ def feed_start_keyboard(session_id: int, i18n: I18nContext) -> InlineKeyboardMar
                 InlineKeyboardButton(
                     text=i18n.get("feed-btn-stop"),
                     callback_data=FeedCallback(action="stop", session_id=session_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AutoparseCallback(action="hub").pack(),
                 )
             ],
         ]
@@ -132,7 +165,10 @@ async def handle_feed_toggle_view(
     text = feed_services.build_vacancy_card(
         vacancy, feed_session.current_index, total, i18n.locale, mode
     )
-    keyboard = feed_vacancy_keyboard(feed_session.id, vacancy.id, vacancy.url, i18n, mode)
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n, mode,
+        current_index=feed_session.current_index,
+    )
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -161,7 +197,10 @@ async def handle_feed_start(
 
     total = len(feed_session.vacancy_ids)
     text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
-    keyboard = feed_vacancy_keyboard(feed_session.id, vacancy.id, vacancy.url, i18n)
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=feed_session.current_index,
+    )
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -197,7 +236,10 @@ async def handle_feed_react(
         return
 
     text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
-    keyboard = feed_vacancy_keyboard(feed_session.id, vacancy.id, vacancy.url, i18n)
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=feed_session.current_index,
+    )
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -232,7 +274,10 @@ async def handle_feed_show_later(
         return
 
     text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
-    keyboard = feed_vacancy_keyboard(feed_session.id, vacancy.id, vacancy.url, i18n)
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=feed_session.current_index,
+    )
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -362,7 +407,59 @@ async def handle_feed_back_to_vacancy(
         vacancy, current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
-        feed_session.id, vacancy.id, vacancy.url, i18n
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=current_index,
+    )
+
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(FeedCallback.filter(F.action == "prev_vacancy"))
+async def handle_feed_prev_vacancy(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed:
+        await callback.answer()
+        return
+
+    vacancy_ids = feed_session.vacancy_ids
+    try:
+        current_idx = vacancy_ids.index(callback_data.vacancy_id)
+    except ValueError:
+        await callback.answer()
+        return
+    if current_idx <= 0:
+        await callback.answer()
+        return
+
+    prev_vacancy_id = vacancy_ids[current_idx - 1]
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    feed_repo = VacancyFeedSessionRepository(session)
+    await feed_repo.update(feed_session, current_index=current_idx - 1)
+    await session.commit()
+    feed_session.current_index = current_idx - 1
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(prev_vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    total = len(vacancy_ids)
+    text = feed_services.build_vacancy_card(
+        vacancy, feed_session.current_index, total, i18n.locale
+    )
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=feed_session.current_index,
     )
 
     with contextlib.suppress(TelegramBadRequest):

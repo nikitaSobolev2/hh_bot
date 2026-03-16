@@ -141,13 +141,21 @@ def vacancy_summary_detail_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def skip_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+def skip_keyboard(i18n: I18nContext, *, step: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-skip"),
                     callback_data=VacancySummaryCallback(action="skip_step").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=VacancySummaryCallback(
+                        action="back_step", step=step
+                    ).pack(),
                 )
             ],
             [

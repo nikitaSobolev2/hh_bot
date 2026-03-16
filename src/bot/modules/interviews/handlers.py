@@ -861,7 +861,7 @@ async def handle_prep_download_md(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from aiogram.types import BufferedInputFile
+    from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
     from src.repositories.interview import InterviewPreparationRepository
     from src.services.telegram.text_utils import BREAK_MARKER
@@ -880,10 +880,25 @@ async def handle_prep_download_md(
         full_text.encode("utf-8"),
         filename=filename,
     )
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=InterviewCallback(
+                        action="prep_step_deep",
+                        interview_id=step.interview_id,
+                        prep_step_id=step.id,
+                    ).pack(),
+                )
+            ]
+        ]
+    )
     await callback.message.bot.send_document(
         callback.message.chat.id,
         doc,
         caption=i18n.get("prep-deep-title"),
+        reply_markup=keyboard,
     )
     await callback.answer()
 

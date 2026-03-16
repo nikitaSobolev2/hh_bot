@@ -436,6 +436,36 @@ async def handle_generate_ai(
 
 
 @router.callback_query(
+    WorkExpCallback.filter(F.action == "back_to_input"),
+    StateFilter(WorkExpForm.achievements, WorkExpForm.duties),
+)
+async def handle_back_to_input(
+    callback: CallbackQuery,
+    callback_data: WorkExpCallback,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    company_name: str = data.get("we_company_name", "")
+    field = callback_data.field
+    prompt_key = (
+        "work-exp-enter-achievements" if field == _FIELD_ACHIEVEMENTS else "work-exp-enter-duties"
+    )
+    state_to_set = (
+        WorkExpForm.achievements if field == _FIELD_ACHIEVEMENTS else WorkExpForm.duties
+    )
+    await state.set_state(state_to_set)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get(prompt_key, company=company_name),
+            reply_markup=work_exp_ai_input_keyboard(
+                callback_data.return_to, field, i18n
+            ),
+        )
+    await callback.answer()
+
+
+@router.callback_query(
     WorkExpCallback.filter(F.action == "accept_draft"),
     StateFilter(WorkExpForm.achievements, WorkExpForm.duties),
 )

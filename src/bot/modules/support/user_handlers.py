@@ -10,6 +10,7 @@ from src.bot.modules.support import services as support_svc
 from src.bot.modules.support.callbacks import SupportCallback
 from src.bot.modules.support.keyboards import (
     REMOVE_KEYBOARD,
+    description_back_keyboard,
     skip_attachments_keyboard,
     ticket_detail_keyboard,
     user_conversation_keyboard,
@@ -216,6 +217,53 @@ async def ticket_attachment_text(
         i18n.get("support-attachment-invalid"),
         reply_markup=skip_attachments_keyboard(i18n),
     )
+
+
+@router.callback_query(
+    TicketForm.attachments,
+    SupportCallback.filter(F.action == "back_to_description"),
+)
+async def ticket_back_to_description(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    title = data.get("title", "")
+    if not title:
+        await state.clear()
+        await callback.message.edit_text(i18n.get("support-session-expired"))
+        await callback.answer()
+        return
+    await state.set_state(TicketForm.description)
+    await callback.message.edit_text(
+        i18n.get("support-enter-description", title=title[:255]),
+        reply_markup=description_back_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(
+    TicketForm.description,
+    SupportCallback.filter(F.action == "continue_to_attachments"),
+)
+async def ticket_continue_to_attachments(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    description = data.get("description", "")
+    if not description:
+        await callback.answer(i18n.get("support-desc-empty"), show_alert=True)
+        return
+    await state.set_state(TicketForm.attachments)
+    await state.update_data(attachment_count=0)
+    await callback.message.edit_text(
+        i18n.get("support-enter-attachments"),
+        reply_markup=skip_attachments_keyboard(i18n),
+    )
+    await callback.answer()
 
 
 @router.callback_query(

@@ -304,6 +304,14 @@ def retry_count_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=ParsingCallback(
+                        action="detail", company_id=company_id
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-cancel"),
                     callback_data=ParsingCallback(
                         action="retry_cancel", company_id=company_id
@@ -484,30 +492,32 @@ def work_experience_keyboard(
 
 
 def cancel_add_company_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    cancel_data = WorkExperienceCallback(
+        action="cancel_add", company_id=company_id
+    ).pack()
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-cancel"),
-                    callback_data=WorkExperienceCallback(
-                        action="cancel_add", company_id=company_id
-                    ).pack(),
-                )
+                InlineKeyboardButton(text=i18n.get("btn-back"), callback_data=cancel_data),
+            ],
+            [
+                InlineKeyboardButton(text=i18n.get("btn-cancel"), callback_data=cancel_data),
             ],
         ]
     )
 
 
 def per_company_count_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    cancel_data = WorkExperienceCallback(
+        action="cancel_add", company_id=company_id
+    ).pack()
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-cancel"),
-                    callback_data=WorkExperienceCallback(
-                        action="cancel_add", company_id=company_id
-                    ).pack(),
-                )
+                InlineKeyboardButton(text=i18n.get("btn-back"), callback_data=cancel_data),
+            ],
+            [
+                InlineKeyboardButton(text=i18n.get("btn-cancel"), callback_data=cancel_data),
             ],
         ]
     )

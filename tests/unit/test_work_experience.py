@@ -129,23 +129,28 @@ class TestWorkExperienceKeyboard:
 
 
 class TestCancelAddCompanyKeyboard:
-    def test_has_cancel_button(self):
+    def test_has_back_and_cancel_buttons(self):
         i18n = _make_i18n()
         kb = cancel_add_company_keyboard(company_id=1, i18n=i18n)
 
-        assert len(kb.inline_keyboard) == 1
-        btn = kb.inline_keyboard[0][0]
-        parsed = WorkExperienceCallback.unpack(btn.callback_data)
-        assert parsed.action == "cancel_add"
+        assert len(kb.inline_keyboard) == 2
+        back_btn = kb.inline_keyboard[0][0]
+        cancel_btn = kb.inline_keyboard[1][0]
+        for btn in (back_btn, cancel_btn):
+            parsed = WorkExperienceCallback.unpack(btn.callback_data)
+            assert parsed.action == "cancel_add"
+            assert parsed.company_id == 1
 
 
 class TestPerCompanyCountKeyboard:
-    def test_has_cancel_button(self):
+    def test_has_back_and_cancel_buttons(self):
         i18n = _make_i18n()
         kb = per_company_count_keyboard(company_id=3, i18n=i18n)
 
-        assert len(kb.inline_keyboard) == 1
-        btn = kb.inline_keyboard[0][0]
-        parsed = WorkExperienceCallback.unpack(btn.callback_data)
-        assert parsed.action == "cancel_add"
-        assert parsed.company_id == 3
+        assert len(kb.inline_keyboard) == 2
+        back_btn = kb.inline_keyboard[0][0]
+        cancel_btn = kb.inline_keyboard[1][0]
+        for btn in (back_btn, cancel_btn):
+            parsed = WorkExperienceCallback.unpack(btn.callback_data)
+            assert parsed.action == "cancel_add"
+            assert parsed.company_id == 3

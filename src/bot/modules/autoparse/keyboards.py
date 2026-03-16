@@ -502,9 +502,15 @@ def cancel_add_work_exp_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AutoparseWorkExpCallback(action="cancel_add").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-cancel"),
                     callback_data=AutoparseWorkExpCallback(action="cancel_add").pack(),
                 )
-            ]
+            ],
         ]
     )

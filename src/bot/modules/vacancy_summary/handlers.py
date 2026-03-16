@@ -105,7 +105,7 @@ async def handle_generate_new(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             i18n.get("vs-enter-excluded-industries"),
-            reply_markup=skip_keyboard(i18n),
+            reply_markup=skip_keyboard(i18n, step=0),
         )
     await callback.answer()
 
@@ -114,21 +114,21 @@ async def handle_generate_new(
 async def fsm_excluded_industries(message: Message, state: FSMContext, i18n: I18nContext) -> None:
     await state.update_data(vs_excluded_industries=(message.text or "").strip() or None)
     await state.set_state(VacancySummaryForm.location)
-    await message.answer(i18n.get("vs-enter-location"), reply_markup=skip_keyboard(i18n))
+    await message.answer(i18n.get("vs-enter-location"), reply_markup=skip_keyboard(i18n, step=1))
 
 
 @router.message(VacancySummaryForm.location)
 async def fsm_location(message: Message, state: FSMContext, i18n: I18nContext) -> None:
     await state.update_data(vs_location=(message.text or "").strip() or None)
     await state.set_state(VacancySummaryForm.remote_preference)
-    await message.answer(i18n.get("vs-enter-remote"), reply_markup=skip_keyboard(i18n))
+    await message.answer(i18n.get("vs-enter-remote"), reply_markup=skip_keyboard(i18n, step=2))
 
 
 @router.message(VacancySummaryForm.remote_preference)
 async def fsm_remote_preference(message: Message, state: FSMContext, i18n: I18nContext) -> None:
     await state.update_data(vs_remote_preference=(message.text or "").strip() or None)
     await state.set_state(VacancySummaryForm.additional_notes)
-    await message.answer(i18n.get("vs-enter-additional"), reply_markup=skip_keyboard(i18n))
+    await message.answer(i18n.get("vs-enter-additional"), reply_markup=skip_keyboard(i18n, step=3))
 
 
 @router.message(VacancySummaryForm.additional_notes)
@@ -141,6 +141,50 @@ async def fsm_additional_notes(
 ) -> None:
     await state.update_data(vs_additional_notes=(message.text or "").strip() or None)
     await _dispatch_generation(message, user, state, session, i18n)
+
+
+@router.callback_query(VacancySummaryCallback.filter(F.action == "back_step"))
+async def handle_back_step(
+    callback: CallbackQuery,
+    callback_data: VacancySummaryCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    step = callback_data.step
+    if step <= 0:
+        await state.clear()
+        await show_vacancy_summary_list(callback, user, session, i18n, state=state)
+    elif step == 1:
+        await state.set_state(VacancySummaryForm.excluded_industries)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("vs-enter-excluded-industries"),
+                reply_markup=skip_keyboard(i18n, step=0),
+            )
+    elif step == 2:
+        await state.set_state(VacancySummaryForm.location)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("vs-enter-location"),
+                reply_markup=skip_keyboard(i18n, step=1),
+            )
+    elif step == 3:
+        await state.set_state(VacancySummaryForm.remote_preference)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("vs-enter-remote"),
+                reply_markup=skip_keyboard(i18n, step=2),
+            )
+    else:
+        await state.set_state(VacancySummaryForm.additional_notes)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("vs-enter-additional"),
+                reply_markup=skip_keyboard(i18n, step=3),
+            )
+    await callback.answer()
 
 
 @router.callback_query(VacancySummaryCallback.filter(F.action == "skip_step"))
@@ -156,19 +200,19 @@ async def handle_skip_step(
         await state.set_state(VacancySummaryForm.location)
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
-                i18n.get("vs-enter-location"), reply_markup=skip_keyboard(i18n)
+                i18n.get("vs-enter-location"), reply_markup=skip_keyboard(i18n, step=1)
             )
     elif current_state == VacancySummaryForm.location:
         await state.set_state(VacancySummaryForm.remote_preference)
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
-                i18n.get("vs-enter-remote"), reply_markup=skip_keyboard(i18n)
+                i18n.get("vs-enter-remote"), reply_markup=skip_keyboard(i18n, step=2)
             )
     elif current_state == VacancySummaryForm.remote_preference:
         await state.set_state(VacancySummaryForm.additional_notes)
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
-                i18n.get("vs-enter-additional"), reply_markup=skip_keyboard(i18n)
+                i18n.get("vs-enter-additional"), reply_markup=skip_keyboard(i18n, step=3)
             )
     elif current_state == VacancySummaryForm.additional_notes:
         await _dispatch_generation(callback.message, user, state, session, i18n, edit=True)
@@ -349,7 +393,7 @@ async def handle_regenerate(
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("vs-enter-excluded-industries"),
-                reply_markup=skip_keyboard(i18n),
+                reply_markup=skip_keyboard(i18n, step=0),
             )
         return
 

@@ -506,6 +506,18 @@ def test_question_keyboard(
                 )
             ]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=_t("btn-back", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="prep_step_detail",
+                    interview_id=interview_id,
+                    prep_step_id=step_id,
+                ).pack(),
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

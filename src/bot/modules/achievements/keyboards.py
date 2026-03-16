@@ -122,6 +122,12 @@ def achievement_input_keyboard(
             ],
             [
                 InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AchievementCallback(action="list").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=i18n.get("btn-cancel"),
                     callback_data=AchievementCallback(action="cancel").pack(),
                 )
@@ -137,6 +143,12 @@ def achievement_proceed_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=i18n.get("ach-btn-proceed"),
                     callback_data=AchievementCallback(action="proceed").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AchievementCallback(action="list").pack(),
                 )
             ],
             [

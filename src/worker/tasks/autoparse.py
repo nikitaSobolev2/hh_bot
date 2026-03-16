@@ -670,7 +670,7 @@ async def _send_feed_stats_card(
     from aiogram.enums import ParseMode
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    from src.bot.modules.autoparse.callbacks import FeedCallback
+    from src.bot.modules.autoparse.callbacks import AutoparseCallback, FeedCallback
     from src.bot.modules.autoparse.feed_services import build_stats_message
 
     compat_scores = [v.compatibility_score for v in vacancies if v.compatibility_score is not None]
@@ -689,6 +689,12 @@ async def _send_feed_stats_card(
                 InlineKeyboardButton(
                     text=get_text("feed-btn-stop", locale),
                     callback_data=FeedCallback(action="stop", session_id=feed_session_id).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=get_text("btn-back", locale),
+                    callback_data=AutoparseCallback(action="hub").pack(),
                 )
             ],
         ]

@@ -277,6 +277,19 @@ async def handle_toggle_exp(
 # ── Step 3: keyphrases ────────────────────────────────────────────────────────
 
 
+@router.callback_query(ResumeCallback.filter(F.action == "back_to_step1"))
+async def handle_back_to_step1(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    """Back from keywords source to work experience list."""
+    await _show_work_experience_step(callback, user, state, session, i18n)
+    await callback.answer()
+
+
 @router.callback_query(ResumeCallback.filter(F.action == "step2_keyphrases"))
 async def handle_step2_keyphrases(
     callback: CallbackQuery,
@@ -751,6 +764,47 @@ async def handle_rec_skip_position(
     i18n: I18nContext,
 ) -> None:
     await state.update_data(res_rec_speaker_position=None)
+    work_exp_id = callback_data.work_exp_id
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("res-rec-pick-character"),
+            reply_markup=resume_rec_character_keyboard(
+                work_exp_id, user.language_code or "ru", i18n
+            ),
+        )
+    await callback.answer()
+
+
+@router.callback_query(ResumeCallback.filter(F.action == "rec_back_to_position"))
+async def handle_rec_back_to_position(
+    callback: CallbackQuery,
+    callback_data: ResumeCallback,
+    state: FSMContext,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    """Back from character selection to speaker position."""
+    await state.set_state(ResumeForm.rec_speaker_position)
+    work_exp_id = callback_data.work_exp_id
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("res-rec-enter-speaker-position"),
+            reply_markup=_rec_skip_position_keyboard(work_exp_id, i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(ResumeCallback.filter(F.action == "rec_back_to_character"))
+async def handle_rec_back_to_character(
+    callback: CallbackQuery,
+    callback_data: ResumeCallback,
+    state: FSMContext,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    """Back from focus step to character selection."""
+    await state.update_data(res_rec_character=None, res_rec_focus=None)
+    await state.set_state(ResumeForm.rec_speaker_position)
     work_exp_id = callback_data.work_exp_id
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
