@@ -416,7 +416,7 @@ async def test_handle_feed_regenerate_cover_letter_deletes_task_and_reruns(
             i18n=_make_i18n(),
         )
 
-    task_repo_delete.assert_called_once_with("cover_letter:1:10")
+    task_repo_delete.assert_called_once_with("cover_letter:1:autoparse:10")
     run_celery_mock.assert_called_once()
     callback.answer.assert_called_once()
 

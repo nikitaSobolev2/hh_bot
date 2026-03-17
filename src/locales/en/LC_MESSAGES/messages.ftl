@@ -19,6 +19,7 @@ btn-achievements = 🏆 Achievements
 btn-interview-qa = 💬 Interview Q&A
 btn-vacancy-summary = 📄 About Me Summary
 btn-resume = 📋 Resume Generator
+btn-cover-letter = ✉️ Cover Letter
 btn-support-user = 🆘 Support
 btn-skip = ⏩ Skip
 btn-continue = ▶️ Continue
@@ -689,6 +690,27 @@ feed-btn-stop = ⏹ Stop
 feed-cover-letter-generating = ⏳ Generating cover letter...
 feed-cover-letter-generated = Cover letter generated.
 feed-results-header = 📊 Feed Results
+
+# ── Cover letter (main menu) ──────────────────────────────
+cl-hub-title = <b>✉️ Cover Letter</b>
+
+    Generate a cover letter for a vacancy from an HH.ru link.
+cl-btn-generate-new = ✉️ Create New
+cl-btn-my-letters = 📋 My Letters
+cl-enter-url = Enter HH.ru vacancy link:
+    (e.g. https://hh.ru/vacancy/12345678)
+cl-invalid-url = Please enter a valid HH.ru vacancy link.
+cl-fetch-failed = Failed to load vacancy. Check the link and try again.
+cl-fetching = ⏳ Loading vacancy...
+cl-generating = ⏳ Generating cover letter...
+cl-list-title = <b>📋 Your Cover Letters</b>
+cl-list-empty = <b>📋 Your Cover Letters</b>
+
+    No cover letters generated yet.
+cl-unknown-vacancy = Vacancy
+cl-not-found = Record not found.
+cl-btn-view-vacancy = 🔗 Open vacancy on HH.ru
+cl-btn-regenerate = 🔄 Regenerate
 feed-results-seen = Viewed: { $seen } of { $total }
 feed-results-liked = 👍 Liked: { $liked }
 feed-results-disliked = 👎 Disliked: { $disliked }

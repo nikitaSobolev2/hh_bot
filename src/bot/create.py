@@ -37,6 +37,7 @@ def _register_routers(dp: Dispatcher) -> None:
     from src.bot.modules.achievements.handlers import router as achievements_router
     from src.bot.modules.admin.handlers import router as admin_router
     from src.bot.modules.autoparse.handlers import router as autoparse_router
+    from src.bot.modules.cover_letter.handlers import router as cover_letter_router
     from src.bot.modules.interview_qa.handlers import router as interview_qa_router
     from src.bot.modules.interviews.handlers import router as interviews_router
     from src.bot.modules.parsing.handlers import router as parsing_router
@@ -57,6 +58,7 @@ def _register_routers(dp: Dispatcher) -> None:
     dp.include_router(work_experience_router)
     dp.include_router(autoparse_router)
     dp.include_router(parsing_router)
+    dp.include_router(cover_letter_router)
     dp.include_router(interviews_router)
     dp.include_router(achievements_router)
     dp.include_router(interview_qa_router)

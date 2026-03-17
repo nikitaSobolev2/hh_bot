@@ -723,10 +723,9 @@ class TestGenerateQaAsync:
             patch(
                 "src.services.ai.prompts.build_standard_qa_user_content",
                 return_value="user content",
-            ),
+            ),pytest.raises(ValueError, match="did not match")
         ):
-            with pytest.raises(ValueError, match="did not match"):
-                await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", "best_achievement")
+            await _generate_qa_async(mock_task, sf, 1, 100, 200, "en", "best_achievement")
 
         mock_qa_repo.upsert_answer.assert_not_called()
         mock_task.mark_completed.assert_not_called()

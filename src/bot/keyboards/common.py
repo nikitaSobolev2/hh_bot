@@ -57,6 +57,10 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         text=i18n.get("btn-resume"),
         callback_data=MenuCallback(action="resume").pack(),
     )
+    builder.button(
+        text=i18n.get("btn-cover-letter"),
+        callback_data=MenuCallback(action="cover_letter").pack(),
+    )
 
     builder.button(
         text=i18n.get("btn-profile"),
@@ -71,7 +75,7 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         callback_data=MenuCallback(action="support").pack(),
     )
 
-    builder.adjust(2, 1, 2, 2, 1, 2, 1)
+    builder.adjust(2, 1, 2, 2, 1, 2, 2, 1)
     return builder.as_markup()
 
 

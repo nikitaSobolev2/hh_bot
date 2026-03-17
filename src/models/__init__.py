@@ -4,6 +4,7 @@ from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.models.balance import BalanceTransaction
 from src.models.ban import UserBan
 from src.models.blacklist import VacancyBlacklist
+from src.models.cover_letter_vacancy import CoverLetterVacancy
 from src.models.hh import HHArea, HHEmployer
 from src.models.interview import (
     Interview,
@@ -40,6 +41,7 @@ __all__ = [
     "User",
     "AutoparseCompany",
     "AutoparsedVacancy",
+    "CoverLetterVacancy",
     "UserWorkExperience",
     "UserWorkExperienceAiDraft",
     "VacancyFeedSession",

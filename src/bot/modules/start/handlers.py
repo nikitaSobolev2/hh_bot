@@ -25,6 +25,7 @@ _HANDLED_IN_START = {
     "interview_qa",
     "vacancy_summary",
     "resume",
+    "cover_letter",
 }
 
 
@@ -170,6 +171,14 @@ async def _handle_resume(
     await show_resume_list(callback, user, session, i18n)
 
 
+async def _handle_cover_letter(
+    callback: CallbackQuery, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
+    from src.bot.modules.cover_letter.handlers import show_cover_letter_hub
+
+    await show_cover_letter_hub(callback, i18n)
+
+
 _MENU_DISPATCH = {
     "main": _handle_main,
     "profile": _handle_profile,
@@ -184,4 +193,5 @@ _MENU_DISPATCH = {
     "interview_qa": _handle_interview_qa,
     "vacancy_summary": _handle_vacancy_summary,
     "resume": _handle_resume,
+    "cover_letter": _handle_cover_letter,
 }

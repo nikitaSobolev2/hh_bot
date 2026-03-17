@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from src.models.balance import BalanceTransaction
     from src.models.ban import UserBan
     from src.models.blacklist import VacancyBlacklist
+    from src.models.cover_letter_vacancy import CoverLetterVacancy
     from src.models.interview import Interview
     from src.models.interview_qa import StandardQuestion
     from src.models.parsing import ParsingCompany
@@ -93,6 +94,10 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     resumes: Mapped[list[Resume]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    cover_letter_vacancies: Mapped[list[CoverLetterVacancy]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )

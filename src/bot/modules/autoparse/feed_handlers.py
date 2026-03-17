@@ -351,7 +351,7 @@ async def handle_feed_regenerate_cover_letter(
     from src.repositories.task import CeleryTaskRepository
     from src.worker.tasks.cover_letter import generate_cover_letter_task
 
-    idempotency_key = f"cover_letter:{user.id}:{vacancy.id}"
+    idempotency_key = f"cover_letter:{user.id}:autoparse:{vacancy.id}"
     await CeleryTaskRepository(session).delete_by_idempotency_key(idempotency_key)
     await session.commit()
 

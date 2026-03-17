@@ -19,6 +19,7 @@ btn-achievements = 🏆 Достижения
 btn-interview-qa = 💬 Вопросы собеседования
 btn-vacancy-summary = 📄 Резюме "О себе"
 btn-resume = 📋 Генератор резюме
+btn-cover-letter = ✉️ Сопроводительное письмо
 btn-support-user = 🆘 Поддержка
 btn-skip = ⏩ Пропустить
 btn-continue = ▶️ Продолжить
@@ -690,6 +691,27 @@ feed-btn-stop = ⏹ Остановить
 feed-cover-letter-generating = ⏳ Генерирую сопроводительное письмо...
 feed-cover-letter-generated = Сопроводительное письмо сгенерировано.
 feed-results-header = 📊 Результаты просмотра
+
+# ── Cover letter (main menu) ──────────────────────────────
+cl-hub-title = <b>✉️ Сопроводительное письмо</b>
+
+    Сгенерируйте сопроводительное письмо для вакансии по ссылке HH.ru.
+cl-btn-generate-new = ✉️ Создать новое
+cl-btn-my-letters = 📋 Мои письма
+cl-enter-url = Введите ссылку на вакансию HH.ru:
+    (например: https://hh.ru/vacancy/12345678)
+cl-invalid-url = Введите корректную ссылку на вакансию HH.ru.
+cl-fetch-failed = Не удалось загрузить вакансию. Проверьте ссылку и попробуйте снова.
+cl-fetching = ⏳ Загружаю вакансию...
+cl-generating = ⏳ Генерирую сопроводительное письмо...
+cl-list-title = <b>📋 Ваши сопроводительные письма</b>
+cl-list-empty = <b>📋 Ваши сопроводительные письма</b>
+
+    Пока нет сгенерированных писем.
+cl-unknown-vacancy = Вакансия
+cl-not-found = Запись не найдена.
+cl-btn-view-vacancy = 🔗 Открыть вакансию на HH.ru
+cl-btn-regenerate = 🔄 Перегенерировать
 feed-results-seen = Просмотрено: { $seen } из { $total }
 feed-results-liked = 👍 Понравилось: { $liked }
 feed-results-disliked = 👎 Не понравилось: { $disliked }

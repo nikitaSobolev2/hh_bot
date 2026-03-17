@@ -80,6 +80,7 @@ def generate_cover_letter_task(
     locale: str = "ru",
     cover_letter_style: str = "professional",
     session_id: int = 0,
+    source: str = "autoparse",
 ) -> dict:
     return run_async(
         lambda sf: _generate_cover_letter_async(
@@ -92,6 +93,7 @@ def generate_cover_letter_task(
             locale,
             cover_letter_style,
             session_id,
+            source,
         )
     )
 
@@ -104,13 +106,46 @@ def _truncate_for_display(text: str) -> str:
 
 
 def _build_cover_letter_keyboard(
-    session_id: int, vacancy_id: int, locale: str
+    session_id: int,
+    vacancy_id: int,
+    locale: str,
+    *,
+    standalone: bool = False,
 ):
-    """Build keyboard for cover letter view: fits/not-fit, show later, regenerate, back."""
+    """Build keyboard for cover letter view.
+
+    When standalone: back to list, regenerate.
+    When in feed: fits/not-fit, show later, regenerate, back to vacancy.
+    """
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    from src.bot.modules.autoparse.callbacks import FeedCallback
     from src.core.i18n import get_text
+
+    if standalone:
+        from src.bot.modules.cover_letter.callbacks import CoverLetterCallback
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=get_text("feed-btn-regenerate-cover-letter", locale),
+                        callback_data=CoverLetterCallback(
+                            action="regenerate",
+                            vacancy_id=vacancy_id,
+                            source="standalone",
+                        ).pack(),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=get_text("btn-back", locale),
+                        callback_data=CoverLetterCallback(action="list").pack(),
+                    )
+                ],
+            ]
+        )
+
+    from src.bot.modules.autoparse.callbacks import FeedCallback
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -174,8 +209,10 @@ async def _generate_cover_letter_async(
     locale: str,
     cover_letter_style: str,
     session_id: int,
+    source: str = "autoparse",
 ) -> dict:
     from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.repositories.cover_letter_vacancy import CoverLetterVacancyRepository
     from src.repositories.task import CeleryTaskRepository
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
@@ -198,7 +235,8 @@ async def _generate_cover_letter_async(
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
-    idempotency_key = f"cover_letter:{user_id}:{vacancy_id}"
+    source = source or "autoparse"
+    idempotency_key = f"cover_letter:{user_id}:{source}:{vacancy_id}"
     async with session_factory() as session:
         existing = await CeleryTaskRepository(session).get_by_idempotency_key(idempotency_key)
         if existing and existing.status == "completed":
@@ -209,7 +247,9 @@ async def _generate_cover_letter_async(
                 if not display_text:
                     from src.core.i18n import get_text
                     display_text = get_text("feed-cover-letter-generated", locale)
-                keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
+                keyboard = _build_cover_letter_keyboard(
+                    session_id, vacancy_id, locale, standalone=(source == "standalone")
+                )
                 bot = task.create_bot()
                 try:
                     await task.notify_user(
@@ -227,7 +267,10 @@ async def _generate_cover_letter_async(
     async with session_factory() as session:
         we_repo = WorkExperienceRepository(session)
         raw_experiences = await we_repo.get_active_by_user(user_id)
-        vacancy_repo = AutoparsedVacancyRepository(session)
+        if source == "standalone":
+            vacancy_repo = CoverLetterVacancyRepository(session)
+        else:
+            vacancy_repo = AutoparsedVacancyRepository(session)
         vacancy = await vacancy_repo.get_by_id(vacancy_id)
 
     if not vacancy:
@@ -299,7 +342,9 @@ async def _generate_cover_letter_async(
     if not display_text:
         from src.core.i18n import get_text
         display_text = get_text("feed-cover-letter-generated", locale)
-    keyboard = _build_cover_letter_keyboard(session_id, vacancy_id, locale)
+    keyboard = _build_cover_letter_keyboard(
+        session_id, vacancy_id, locale, standalone=(source == "standalone")
+    )
 
     bot = task.create_bot()
     try:

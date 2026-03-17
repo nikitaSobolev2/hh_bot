@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.task import (
@@ -47,6 +47,40 @@ class CeleryTaskRepository(BaseRepository[BaseCeleryTask]):
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_cover_letter_tasks_by_user(
+        self,
+        user_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[BaseCeleryTask]:
+        stmt = (
+            select(BaseCeleryTask)
+            .where(
+                BaseCeleryTask.user_id == user_id,
+                BaseCeleryTask.task_type == "cover_letter",
+                BaseCeleryTask.status == "completed",
+            )
+            .order_by(BaseCeleryTask.updated_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_cover_letter_tasks_by_user(self, user_id: int) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(BaseCeleryTask)
+            .where(
+                BaseCeleryTask.user_id == user_id,
+                BaseCeleryTask.task_type == "cover_letter",
+                BaseCeleryTask.status == "completed",
+            )
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
 
 
 class ParseKeywordsTaskRepository(BaseRepository[CompanyParseKeywordsFromDescriptionTask]):
