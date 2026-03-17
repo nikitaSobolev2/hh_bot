@@ -385,6 +385,8 @@ admin-setting-edit =
     Enter new value:
 admin-setting-updated = <b>⚙️ { $label }</b> updated.
 admin-setting-unknown = Unknown setting
+admin-setting-select-use-buttons = Use the buttons below to select a value.
+admin-autoparse-target-all = All available
 admin-user-not-found-short = User not found.
 admin-balance-description = Adjusted by admin #{ $admin_id }
 admin-not-set = (not set)

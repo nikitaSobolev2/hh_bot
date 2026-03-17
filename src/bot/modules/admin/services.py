@@ -15,10 +15,12 @@ USERS_PER_PAGE = 10
 _SENSITIVE_KEYS = {"openai_api_key"}
 
 
-def find_setting_meta(key: str) -> tuple[str, str, str] | None:
-    for k, label, stype in MANAGED_SETTINGS:
+def find_setting_meta(key: str) -> tuple[str, str, str, list | None] | None:
+    for item in MANAGED_SETTINGS:
+        k, label, stype = item[0], item[1], item[2]
+        choices = item[3] if len(item) > 3 else None
         if k == key:
-            return k, label, stype
+            return k, label, stype, choices
     return None
 
 

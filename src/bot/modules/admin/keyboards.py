@@ -25,8 +25,15 @@ MANAGED_SETTINGS = [
     ("cb_keyphrase_recovery_timeout", "CB Key Phrases Recovery Timeout (s)", "text"),
     ("task_autoparse_enabled", "Autoparse Task Enabled", "toggle"),
     ("autoparse_interval_hours", "Autoparse Interval (hours)", "text"),
-    ("autoparse_target_count", "Autoparse Target Count per Run", "text"),
+    (
+        "autoparse_target_count",
+        "Autoparse Target Count per Run",
+        "select",
+        [(10, "10"), (30, "30"), (50, "50"), (5000, "admin-autoparse-target-all")],
+    ),
 ]
+
+AUTOPARSE_TARGET_VALID = {10, 30, 50, 5000}
 
 
 def admin_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
@@ -134,7 +141,8 @@ def user_detail_keyboard(target_user: User, i18n: I18nContext) -> InlineKeyboard
 
 def settings_list_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for key, label, _stype in MANAGED_SETTINGS:
+    for item in MANAGED_SETTINGS:
+        key, label, _stype = item[0], item[1], item[2]
         rows.append(
             [
                 InlineKeyboardButton(
@@ -167,7 +175,9 @@ def back_to_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     )
 
 
-def setting_detail_keyboard(key: str, stype: str, i18n: I18nContext) -> InlineKeyboardMarkup:
+def setting_detail_keyboard(
+    key: str, stype: str, i18n: I18nContext, choices: list[tuple[int, str]] | None = None
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if stype == "toggle":
         rows.append(
@@ -178,6 +188,19 @@ def setting_detail_keyboard(key: str, stype: str, i18n: I18nContext) -> InlineKe
                 )
             ]
         )
+    elif stype == "select" and choices:
+        for val, label in choices:
+            btn_text = i18n.get(label) if label.startswith("admin-") else label
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=btn_text,
+                        callback_data=AdminSettingCallback(
+                            action="select_value", key=key, value=str(val)
+                        ).pack(),
+                    )
+                ]
+            )
     else:
         rows.append(
             [

@@ -15,3 +15,4 @@ class AdminUserCallback(CallbackData, prefix="adm_user"):
 class AdminSettingCallback(CallbackData, prefix="adm_set"):
     action: str
     key: str = ""
+    value: str = ""

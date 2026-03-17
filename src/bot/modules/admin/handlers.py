@@ -8,6 +8,7 @@ from src.bot.keyboards.common import back_to_menu_keyboard
 from src.bot.modules.admin import services as admin_service
 from src.bot.modules.admin.callbacks import AdminCallback, AdminSettingCallback, AdminUserCallback
 from src.bot.modules.admin.keyboards import (
+    AUTOPARSE_TARGET_VALID,
     admin_menu_keyboard,
     back_to_settings_keyboard,
     setting_detail_keyboard,
@@ -284,13 +285,41 @@ async def admin_setting_actions(
             await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
             return
 
-        key, label, stype = meta
+        key, label, stype, choices = meta[0], meta[1], meta[2], meta[3]
         current = await admin_service.get_setting_value(session, key, locale=locale)
         display = admin_service.mask_if_sensitive(key, str(current))
         await callback.message.edit_text(
             i18n.get("admin-setting-current", label=label, value=display),
-            reply_markup=setting_detail_keyboard(key, stype, i18n),
+            reply_markup=setting_detail_keyboard(key, stype, i18n, choices=choices),
         )
+
+    elif action == "select_value":
+        key = callback_data.key
+        if key != "autoparse_target_count":
+            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+            return
+        try:
+            val = int(callback_data.value)
+        except ValueError:
+            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+            return
+        if val not in AUTOPARSE_TARGET_VALID:
+            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+            return
+        await admin_service.update_setting(session, key, str(val), user.id)
+        msg = i18n.get("admin-setting-set", value=callback_data.value)
+        await callback.answer(msg, show_alert=True)
+        meta = admin_service.find_setting_meta(key)
+        if meta:
+            current = await admin_service.get_setting_value(session, key, locale=locale)
+            display = str(current)
+            await callback.message.edit_text(
+                i18n.get("admin-setting-current", label=meta[1], value=display),
+                reply_markup=setting_detail_keyboard(
+                    meta[0], meta[2], i18n, choices=meta[3]
+                ),
+            )
+        return
 
     elif action == "toggle":
         new_val = await admin_service.toggle_setting(session, callback_data.key, user.id)
@@ -300,11 +329,17 @@ async def admin_setting_actions(
         if meta:
             await callback.message.edit_text(
                 i18n.get("admin-setting-current", label=meta[1], value=str(new_val)),
-                reply_markup=setting_detail_keyboard(meta[0], meta[2], i18n),
+                reply_markup=setting_detail_keyboard(
+                    meta[0], meta[2], i18n, choices=meta[3]
+                ),
             )
         return
 
     elif action == "edit":
+        meta = admin_service.find_setting_meta(callback_data.key)
+        if meta and meta[2] == "select":
+            await callback.answer(i18n.get("admin-setting-select-use-buttons"), show_alert=True)
+            return
         await state.update_data(setting_key=callback_data.key)
         await state.set_state(AdminSettingForm.waiting_value)
         meta = admin_service.find_setting_meta(callback_data.key)
