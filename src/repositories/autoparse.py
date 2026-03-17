@@ -203,3 +203,54 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_unseen_for_user(
+        self,
+        user_id: int,
+        exclude_vacancy_ids: set[int],
+        *,
+        limit: int = 200,
+    ) -> list[AutoparsedVacancy]:
+        """Return vacancies from all user's autoparse companies not in exclude_vacancy_ids."""
+        stmt = (
+            select(AutoparsedVacancy)
+            .join(AutoparseCompany, AutoparsedVacancy.autoparse_company_id == AutoparseCompany.id)
+            .where(
+                AutoparseCompany.user_id == user_id,
+                AutoparseCompany.is_deleted.is_(False),
+            )
+            .order_by(AutoparsedVacancy.created_at.desc())
+            .limit(limit)
+        )
+        if exclude_vacancy_ids:
+            stmt = stmt.where(AutoparsedVacancy.id.notin_(exclude_vacancy_ids))
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_below_min_compat_for_user(
+        self,
+        user_id: int,
+        min_compat: float,
+        exclude_vacancy_ids: set[int],
+        *,
+        limit: int = 100,
+    ) -> list[AutoparsedVacancy]:
+        """Return vacancies below min_compat or with null score for user's companies."""
+        stmt = (
+            select(AutoparsedVacancy)
+            .join(AutoparseCompany, AutoparsedVacancy.autoparse_company_id == AutoparseCompany.id)
+            .where(
+                AutoparseCompany.user_id == user_id,
+                AutoparseCompany.is_deleted.is_(False),
+                or_(
+                    AutoparsedVacancy.compatibility_score.is_(None),
+                    AutoparsedVacancy.compatibility_score < min_compat,
+                ),
+            )
+            .order_by(AutoparsedVacancy.created_at.desc())
+            .limit(limit)
+        )
+        if exclude_vacancy_ids:
+            stmt = stmt.where(AutoparsedVacancy.id.notin_(exclude_vacancy_ids))
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())

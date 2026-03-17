@@ -27,6 +27,18 @@ class TestAutoparseCallbacks:
         assert parsed.company_id == 5
         assert parsed.format == "links_txt"
 
+    def test_update_compat_unseen_callback(self):
+        cb = AutoparseCallback(action="update_compat_unseen")
+        packed = cb.pack()
+        parsed = AutoparseCallback.unpack(packed)
+        assert parsed.action == "update_compat_unseen"
+
+    def test_view_feed_below_compat_callback(self):
+        cb = AutoparseCallback(action="view_feed_below_compat")
+        packed = cb.pack()
+        parsed = AutoparseCallback.unpack(packed)
+        assert parsed.action == "view_feed_below_compat"
+
 
 class TestFormatCompanyDetail:
     def test_enabled_company(self):

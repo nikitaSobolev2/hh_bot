@@ -7,6 +7,7 @@ from src.bot.modules.autoparse.services import (
     generate_full_md,
     generate_links_txt,
     generate_summary_txt,
+    get_reacted_vacancy_ids_for_user,
 )
 from src.models.autoparse import AutoparsedVacancy
 
@@ -133,3 +134,24 @@ class TestCreateAutoparseCompany:
 
             call_kwargs = mock_repo.create.call_args.kwargs
             assert call_kwargs.get("include_reacted_in_feed", False) is False
+
+
+class TestGetReactedVacancyIdsForUser:
+    @pytest.mark.asyncio
+    async def test_returns_union_of_liked_and_disliked(self):
+        mock_feed_repo = MagicMock()
+        mock_feed_repo.get_all_liked_vacancy_ids_for_user = AsyncMock(
+            return_value={1, 2, 3}
+        )
+        mock_feed_repo.get_all_disliked_vacancy_ids_for_user = AsyncMock(
+            return_value={2, 4, 5}
+        )
+        mock_session = MagicMock()
+
+        with patch(
+            "src.bot.modules.autoparse.services.VacancyFeedSessionRepository",
+            return_value=mock_feed_repo,
+        ):
+            result = await get_reacted_vacancy_ids_for_user(mock_session, user_id=42)
+
+        assert result == {1, 2, 3, 4, 5}

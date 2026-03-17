@@ -11,6 +11,7 @@ from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.models.work_experience import UserWorkExperience
 from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
 from src.repositories.user import UserRepository
+from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
@@ -93,6 +94,14 @@ async def _revoke_scheduled_delivery_async(company_id: int, user_id: int) -> Non
             await redis.delete(task_key)
     finally:
         await redis.aclose()
+
+
+async def get_reacted_vacancy_ids_for_user(session: AsyncSession, user_id: int) -> set[int]:
+    """Return vacancy IDs the user has liked or disliked across all autoparse companies."""
+    feed_repo = VacancyFeedSessionRepository(session)
+    liked = await feed_repo.get_all_liked_vacancy_ids_for_user(user_id)
+    disliked = await feed_repo.get_all_disliked_vacancy_ids_for_user(user_id)
+    return liked | disliked
 
 
 async def get_autoparse_detail(session: AsyncSession, company_id: int) -> AutoparseCompany | None:

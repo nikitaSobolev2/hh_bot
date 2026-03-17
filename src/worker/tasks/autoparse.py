@@ -522,6 +522,147 @@ async def _run_autoparse_company_async(
 _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
 
 
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="autoparse.update_compat_unseen",
+    max_retries=2,
+    default_retry_delay=60,
+    soft_time_limit=600,
+    time_limit=660,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def update_compatibility_unseen_vacancies(self, user_id: int) -> dict:
+    return run_async(lambda sf: _update_compat_unseen_async(sf, self, user_id))
+
+
+async def _update_compat_unseen_async(
+    session_factory, task, user_id: int
+) -> dict:
+    from src.repositories.app_settings import AppSettingRepository
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.repositories.user import UserRepository
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.schemas.vacancy import build_vacancy_api_context_from_orm
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import VacancyCompatInput
+    from src.worker.circuit_breaker import CircuitBreaker
+
+    acquired = await task.acquire_user_task_lock(user_id, "update_compat_unseen", ttl=3600)
+    if not acquired:
+        logger.info("Update compat unseen already running", user_id=user_id)
+        return {"status": "already_running", "user_id": user_id}
+
+    try:
+        async with session_factory() as session:
+            settings_repo = AppSettingRepository(session)
+            enabled = await settings_repo.get_value("task_autoparse_enabled", default=True)
+            if not enabled:
+                return {"status": "disabled"}
+
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_id(user_id)
+            if not user:
+                return {"status": "user_not_found"}
+
+            ap_settings = (user.autoparse_settings or {}) if user.autoparse_settings else {}
+            we_repo = WorkExperienceRepository(session)
+            work_experiences = await we_repo.get_active_by_user(user_id)
+            user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
+
+            if not user_stack and not user_exp:
+                return {"status": "no_tech_stack"}
+
+            feed_repo = VacancyFeedSessionRepository(session)
+            liked = await feed_repo.get_all_liked_vacancy_ids_for_user(user_id)
+            disliked = await feed_repo.get_all_disliked_vacancy_ids_for_user(user_id)
+            reacted_ids = liked | disliked
+
+            vacancy_repo = AutoparsedVacancyRepository(session)
+            vacancies = await vacancy_repo.get_unseen_for_user(user_id, reacted_ids)
+
+        if not vacancies:
+            return {"status": "no_vacancies", "updated_count": 0}
+
+        cb = CircuitBreaker("autoparse")
+        if not cb.is_call_allowed():
+            return {"status": "circuit_open"}
+
+        ai_client = AIClient()
+        updated_count = 0
+
+        for batch_start in range(0, len(vacancies), _ANALYSIS_BATCH_SIZE):
+            batch = vacancies[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
+            compat_inputs = [
+                VacancyCompatInput(
+                    hh_vacancy_id=v.hh_vacancy_id,
+                    title=v.title or "",
+                    skills=v.raw_skills or [],
+                    description=v.description or "",
+                    vacancy_api_context=build_vacancy_api_context_from_orm(v),
+                )
+                for v in batch
+            ]
+
+            try:
+                analyses = await ai_client.analyze_vacancies_batch(
+                    compat_inputs,
+                    user_tech_stack=user_stack,
+                    user_work_experience=user_exp,
+                )
+                cb.record_success()
+            except Exception as exc:
+                cb.record_failure()
+                logger.error("Update compat batch failed", error=str(exc))
+                raise
+
+            async with session_factory() as session:
+                vacancy_repo = AutoparsedVacancyRepository(session)
+                for vac, compat_input in zip(batch, compat_inputs, strict=True):
+                    analysis = analyses.get(compat_input.hh_vacancy_id)
+                    if analysis is None:
+                        continue
+                    existing = await vacancy_repo.get_by_id(vac.id)
+                    if existing:
+                        await vacancy_repo.update(
+                            existing,
+                            compatibility_score=analysis.compatibility_score,
+                            ai_summary=analysis.summary or None,
+                            ai_stack=analysis.stack or None,
+                        )
+                        updated_count += 1
+                await session.commit()
+
+        if user:
+            locale = user.language_code or "ru"
+            from aiogram import Bot
+            from aiogram.client.default import DefaultBotProperties
+            from aiogram.enums import ParseMode
+
+            bot = Bot(
+                token=settings.bot_token,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            )
+            try:
+                await bot.send_message(
+                    user.telegram_id,
+                    get_text("autoparse-update-compat-completed", locale, count=updated_count),
+                )
+            finally:
+                await bot.session.close()
+
+        logger.info(
+            "Update compat unseen completed",
+            user_id=user_id,
+            updated_count=updated_count,
+        )
+        return {"status": "completed", "updated_count": updated_count}
+    finally:
+        await task.release_user_task_lock(user_id, "update_compat_unseen")
+
+
 @celery_app.task(bind=True, base=HHBotTask, name="autoparse.deliver_results", max_retries=3)
 def deliver_autoparse_results(self, company_id: int, user_id: int, force_now: bool = False) -> dict:
     return run_async(lambda sf: _deliver_results_async(sf, self, company_id, user_id, force_now))

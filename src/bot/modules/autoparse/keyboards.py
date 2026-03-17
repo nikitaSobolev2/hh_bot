@@ -161,6 +161,22 @@ def autoparse_list_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-update-compat-unseen"),
+                callback_data=AutoparseCallback(action="update_compat_unseen").pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-view-feed-below-compat"),
+                callback_data=AutoparseCallback(action="view_feed_below_compat").pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=i18n.get("btn-back"),
                 callback_data=AutoparseCallback(action="hub").pack(),
             )

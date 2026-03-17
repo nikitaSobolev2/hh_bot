@@ -394,6 +394,129 @@ async def show_disliked_vacancies(
         )
 
 
+@router.callback_query(AutoparseCallback.filter(F.action == "update_compat_unseen"))
+async def handle_update_compat_unseen(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    settings = await ap_service.get_user_autoparse_settings(session, user.id)
+    experiences = await parsing_service.get_active_work_experiences(session, user.id)
+    has_tech_stack = bool(settings.get("tech_stack")) or bool(experiences)
+    if not has_tech_stack:
+        await callback.answer(
+            i18n.get("autoparse-update-compat-no-tech-stack"),
+            show_alert=True,
+        )
+        return
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.autoparse import update_compatibility_unseen_vacancies
+
+    await run_celery_task(update_compatibility_unseen_vacancies, user.id)
+    await callback.answer(i18n.get("autoparse-update-compat-started"), show_alert=True)
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "view_feed_below_compat"))
+async def handle_view_feed_below_compat(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await callback.answer()
+    settings = await ap_service.get_user_autoparse_settings(session, user.id)
+    min_compat = float(settings.get("min_compatibility_percent", 50))
+    reacted_ids = await ap_service.get_reacted_vacancy_ids_for_user(session, user.id)
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancies = await vacancy_repo.get_below_min_compat_for_user(
+        user.id, min_compat, reacted_ids
+    )
+    companies, total = await ap_service.get_user_autoparse_companies(
+        session, user.id, page=0, per_page=_PER_PAGE
+    )
+    has_more = total > _PER_PAGE
+
+    if not vacancies:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-feed-below-compat-empty"),
+                reply_markup=autoparse_list_keyboard(companies, 0, has_more, i18n),
+            )
+        return
+
+    companies_for_feed, _ = await ap_service.get_user_autoparse_companies(
+        session, user.id, page=0, per_page=1
+    )
+    first_company_id = companies_for_feed[0].id if companies_for_feed else 0
+    if first_company_id == 0:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-feed-below-compat-empty"),
+                reply_markup=autoparse_hub_keyboard(i18n),
+            )
+        return
+
+    from src.bot.modules.autoparse.callbacks import FeedCallback
+    from src.bot.modules.autoparse.feed_services import build_stats_message
+    from src.core.i18n import get_text
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    feed_repo = VacancyFeedSessionRepository(session)
+    feed_session = await feed_repo.create(
+        user_id=user.id,
+        autoparse_company_id=first_company_id,
+        chat_id=user.telegram_id,
+        vacancy_ids=[v.id for v in vacancies],
+        current_index=0,
+        liked_ids=[],
+        disliked_ids=[],
+        is_completed=False,
+    )
+    await session.commit()
+
+    compat_scores = [v.compatibility_score for v in vacancies if v.compatibility_score is not None]
+    avg_compat = sum(compat_scores) / len(compat_scores) if compat_scores else None
+    title = i18n.get("autoparse-feed-below-compat-title")
+    text = build_stats_message(title, len(vacancies), avg_compat, i18n.locale)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=get_text("feed-btn-start", i18n.locale),
+                    callback_data=FeedCallback(
+                        action="start", session_id=feed_session.id
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=get_text("feed-btn-stop", i18n.locale),
+                    callback_data=FeedCallback(
+                        action="stop", session_id=feed_session.id
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AutoparseCallback(action="list").pack(),
+                )
+            ],
+        ]
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+
+
 # ── Detail ──────────────────────────────────────────────────────────
 
 
