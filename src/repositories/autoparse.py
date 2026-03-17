@@ -214,6 +214,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         """Return vacancies from all user's autoparse companies not in exclude_vacancy_ids."""
         stmt = (
             select(AutoparsedVacancy)
+            .options(selectinload(AutoparsedVacancy.employer))
             .join(AutoparseCompany, AutoparsedVacancy.autoparse_company_id == AutoparseCompany.id)
             .where(
                 AutoparseCompany.user_id == user_id,
