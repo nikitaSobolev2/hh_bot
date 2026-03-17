@@ -135,7 +135,7 @@ def format_company_detail(
         "",
         f"<b>{company.vacancy_title}</b>",
         f"{i18n.get('autoparse-detail-status')}: {status}",
-        f"{i18n.get('autoparse-detail-url')}: <code>{company.search_url[:80]}...</code>",
+        f"{i18n.get('autoparse-detail-url')}: <a href='{company.search_url}'>{i18n.get('autoparse-detail-url')}</a>",
         f"{i18n.get('autoparse-detail-keywords')}: {company.keyword_filter or '—'}",
         f"{i18n.get('autoparse-detail-skills')}: {company.skills or '—'}",
         "",
