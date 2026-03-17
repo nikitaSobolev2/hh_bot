@@ -567,6 +567,9 @@ async def test_handle_notes_shows_notes_view_with_keyboard():
 
     callback_data = InterviewCallback(action="notes", interview_id=1)
 
+    user = MagicMock()
+    user.is_admin = False
+
     mock_interview = MagicMock()
     mock_interview.id = 1
     mock_interview.is_deleted = False
@@ -593,7 +596,7 @@ async def test_handle_notes_shows_notes_view_with_keyboard():
             return_value=mock_notes_repo,
         ),
     ):
-        await handle_notes(callback, callback_data, session, i18n)
+        await handle_notes(callback, callback_data, user, session, i18n)
 
     callback.message.edit_text.assert_called_once()
     call_args = callback.message.edit_text.call_args
@@ -904,6 +907,9 @@ async def test_handle_notes_start_from_questions_stores_return_to_and_enters_not
         action="notes_start_from_questions", interview_id=1
     )
 
+    user = MagicMock()
+    user.is_admin = False
+
     mock_interview = MagicMock()
     mock_interview.id = 1
     mock_interview.is_deleted = False
@@ -935,7 +941,7 @@ async def test_handle_notes_start_from_questions_stores_return_to_and_enters_not
         ),
     ):
         await handle_notes_start_from_questions(
-            callback, callback_data, state, session, i18n
+            callback, callback_data, user, state, session, i18n
         )
 
     state.update_data.assert_called_once()
@@ -964,6 +970,9 @@ async def test_handle_notes_stop_returns_to_questions_view_when_return_to_questi
 
     callback_data = InterviewCallback(action="notes_stop", interview_id=1)
 
+    user = MagicMock()
+    user.is_admin = False
+
     state = AsyncMock()
     state.get_data = AsyncMock(
         return_value={"interview_id": 1, "return_to": "questions_to_ask"}
@@ -990,7 +999,7 @@ async def test_handle_notes_stop_returns_to_questions_view_when_return_to_questi
         return_value=mock_interview_repo,
     ):
         await handle_notes_stop(
-            callback, callback_data, state, session, i18n
+            callback, callback_data, user, state, session, i18n
         )
 
     state.clear.assert_called_once()

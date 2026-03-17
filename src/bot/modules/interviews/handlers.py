@@ -652,7 +652,76 @@ async def handle_questions_to_ask_regenerate(
 # ── Notes ────────────────────────────────────────────────────────────────────
 
 
+def _paginate_notes(
+    header: str,
+    notes: list,
+    i18n: I18nContext,
+    max_len: int,
+    full_content: bool,
+) -> list[str]:
+    """Split notes into pages that fit within max_len. Each page has header + notes section."""
+    notes_title = f"\n\n<b>{i18n.get('iv-notes-title')}</b>\n\n"
+    header_block = header + notes_title
+    header_len = len(header_block)
+
+    if not notes:
+        return [header_block + i18n.get("iv-notes-empty")]
+
+    pages: list[str] = []
+    current_lines: list[str] = []
+    current_len = header_len
+
+    for idx, note in enumerate(notes, 1):
+        if full_content:
+            content = note.content
+        else:
+            content = (
+                f"{note.content[:200]}{'...' if len(note.content) > 200 else ''}"
+            )
+        line = f"{idx}. {content}"
+        max_note_len = max_len - header_len - 50
+        if len(line) > max_note_len:
+            line = line[: max_note_len - 3] + "..."
+        line_len = len(line) + 1  # +1 for newline
+
+        if current_len + line_len > max_len and current_lines:
+            pages.append(header_block + "\n".join(current_lines))
+            current_lines = []
+            current_len = header_len
+
+        current_lines.append(line)
+        current_len += line_len
+
+    if current_lines:
+        pages.append(header_block + "\n".join(current_lines))
+
+    return pages
+
+
+def _build_notes_page(
+    interview,
+    notes: list,
+    i18n: I18nContext,
+    page: int,
+    max_len: int,
+    full_content: bool,
+) -> tuple[str, int]:
+    """Build a single page of notes. Returns (page_text, total_pages)."""
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    pages = _paginate_notes(header, notes, i18n, max_len, full_content)
+    total_pages = len(pages)
+    page_index = max(0, min(page, total_pages - 1)) if total_pages else 0
+    text = pages[page_index] if pages else header + "\n\n" + i18n.get("iv-notes-empty")
+    return text, total_pages
+
+
 def _build_notes_view_text(interview, notes: list, i18n: I18nContext) -> str:
+    """Legacy: single-page summary view (truncated notes). Used for noting flow."""
     header = interview_service.format_vacancy_header(
         interview.vacancy_title,
         interview.company_name,
@@ -674,8 +743,11 @@ async def _show_notes_view(
     interview_id: int,
     session: AsyncSession,
     i18n: I18nContext,
-    is_noting: bool = False,
+    user: User | None = None,
     *,
+    page: int = 0,
+    full_mode: bool = False,
+    is_noting: bool = False,
     use_answer: bool = False,
 ) -> None:
     """Show notes view. Use use_answer=True when message is from user (not editable by bot)."""
@@ -685,8 +757,34 @@ async def _show_notes_view(
     if not interview or interview.is_deleted:
         return
     notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
-    text = _build_notes_view_text(interview, notes, i18n)
-    kb = notes_view_keyboard(interview_id, i18n=i18n, is_noting=is_noting)
+    max_len = get_max_message_length(user, "default") if user else 4000
+
+    if full_mode and notes:
+        text, total_pages = _build_notes_page(
+            interview, notes, i18n, page, max_len, full_content=True
+        )
+        kb = notes_view_keyboard(
+            interview_id,
+            i18n=i18n,
+            is_noting=is_noting,
+            page=page,
+            total_pages=total_pages,
+            full_mode=True,
+        )
+    else:
+        text, total_pages = _build_notes_page(
+            interview, notes, i18n, page, max_len, full_content=False
+        )
+        kb = notes_view_keyboard(
+            interview_id,
+            i18n=i18n,
+            is_noting=is_noting,
+            page=page,
+            total_pages=total_pages,
+            full_mode=False,
+            notes_count=len(notes),
+        )
+
     if use_answer or not hasattr(message_or_callback, "edit_text"):
         await message_or_callback.answer(
             text,
@@ -707,10 +805,38 @@ async def _show_notes_view(
 async def handle_notes(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    await _show_notes_view(callback.message, callback_data.interview_id, session, i18n)
+    await _show_notes_view(
+        callback.message,
+        callback_data.interview_id,
+        session,
+        i18n,
+        user=user,
+        page=callback_data.page,
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "notes_full"))
+async def handle_notes_full(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await _show_notes_view(
+        callback.message,
+        callback_data.interview_id,
+        session,
+        i18n,
+        user=user,
+        page=callback_data.page,
+        full_mode=True,
+    )
     await callback.answer()
 
 
@@ -721,6 +847,7 @@ async def _start_noting_flow(
     session: AsyncSession,
     i18n: I18nContext,
     return_to: str,
+    user: User,
 ) -> None:
     """Shared logic for starting the noting flow from notes or questions view."""
     from src.repositories.interview import InterviewNoteRepository, InterviewRepository
@@ -731,11 +858,23 @@ async def _start_noting_flow(
     await state.update_data(interview_id=interview_id, return_to=return_to)
     await state.set_state(InterviewForm.notes_noting)
     notes = await InterviewNoteRepository(session).get_by_interview(interview_id)
-    text = _build_notes_view_text(interview, notes, i18n)
+    max_len = get_max_message_length(user, "default")
+    text, total_pages = _build_notes_page(
+        interview, notes, i18n, 0, max_len, full_content=False
+    )
+    kb = notes_view_keyboard(
+        interview_id,
+        i18n=i18n,
+        is_noting=True,
+        page=0,
+        total_pages=total_pages,
+        full_mode=False,
+        notes_count=len(notes),
+    )
     await callback.message.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=notes_view_keyboard(interview_id, i18n=i18n, is_noting=True),
+        reply_markup=kb,
         disable_web_page_preview=True,
     )
     await callback.message.answer(
@@ -748,6 +887,7 @@ async def _start_noting_flow(
 async def handle_notes_start(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -760,7 +900,13 @@ async def handle_notes_start(
         return
 
     await _start_noting_flow(
-        callback, callback_data.interview_id, state, session, i18n, return_to="notes"
+        callback,
+        callback_data.interview_id,
+        state,
+        session,
+        i18n,
+        return_to="notes",
+        user=user,
     )
     await callback.answer()
 
@@ -771,6 +917,7 @@ async def handle_notes_start(
 async def handle_notes_start_from_questions(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -789,6 +936,7 @@ async def handle_notes_start_from_questions(
         session,
         i18n,
         return_to="questions_to_ask",
+        user=user,
     )
     await callback.answer()
 
@@ -797,6 +945,7 @@ async def handle_notes_start_from_questions(
 async def handle_notes_stop(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -816,7 +965,11 @@ async def handle_notes_stop(
         )
     else:
         await _show_notes_view(
-            callback.message, callback_data.interview_id, session, i18n
+            callback.message,
+            callback_data.interview_id,
+            session,
+            i18n,
+            user=user,
         )
     await callback.answer()
 
@@ -898,6 +1051,7 @@ async def handle_notes_delete(
 @router.message(InterviewForm.notes_noting, Command("stop_notes"))
 async def handle_stop_notes_command(
     message: Message,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -920,13 +1074,19 @@ async def handle_stop_notes_command(
             )
         else:
             await _show_notes_view(
-                message, interview_id, session, i18n, use_answer=True
+                message,
+                interview_id,
+                session,
+                i18n,
+                user=user,
+                use_answer=True,
             )
 
 
 @router.message(InterviewForm.notes_noting, F.text)
 async def handle_notes_noting_message(
     message: Message,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -951,7 +1111,12 @@ async def handle_notes_noting_message(
                 )
             else:
                 await _show_notes_view(
-                    message, interview_id, session, i18n, use_answer=True
+                    message,
+                    interview_id,
+                    session,
+                    i18n,
+                    user=user,
+                    use_answer=True,
                 )
         return
 
@@ -1019,6 +1184,7 @@ async def handle_notes_edit_number(
 @router.message(InterviewForm.notes_edit_await_text, F.text)
 async def handle_notes_edit_text(
     message: Message,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -1039,7 +1205,12 @@ async def handle_notes_edit_text(
     await state.clear()
 
     await _show_notes_view(
-        message, interview_id, session, i18n, use_answer=True
+        message,
+        interview_id,
+        session,
+        i18n,
+        user=user,
+        use_answer=True,
     )
     await message.answer(i18n.get("iv-notes-updated"))
 
@@ -1047,6 +1218,7 @@ async def handle_notes_edit_text(
 @router.message(InterviewForm.notes_delete_await_number, F.text)
 async def handle_notes_delete_number(
     message: Message,
+    user: User,
     state: FSMContext,
     session: AsyncSession,
     i18n: I18nContext,
@@ -1073,7 +1245,12 @@ async def handle_notes_delete_number(
     await state.clear()
 
     await _show_notes_view(
-        message, interview_id, session, i18n, use_answer=True
+        message,
+        interview_id,
+        session,
+        i18n,
+        user=user,
+        use_answer=True,
     )
     await message.answer(i18n.get("iv-notes-deleted"))
 

@@ -768,8 +768,15 @@ def notes_view_keyboard(
     i18n: I18nContext | None = None,
     locale: str = "ru",
     is_noting: bool = False,
+    *,
+    page: int = 0,
+    total_pages: int = 1,
+    full_mode: bool = False,
+    notes_count: int = 0,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    page_action = "notes_full" if full_mode else "notes"
+
     if is_noting:
         rows.append(
             [
@@ -812,6 +819,62 @@ def notes_view_keyboard(
                 )
             ]
         )
+        if not full_mode and notes_count > 0:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=_t("btn-notes-output-all", i18n, locale),
+                        callback_data=InterviewCallback(
+                            action="notes_full",
+                            interview_id=interview_id,
+                            page=0,
+                        ).pack(),
+                    )
+                ]
+            )
+
+    if total_pages > 1:
+        nav_buttons: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    text=_t("btn-notes-prev", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action=page_action,
+                        interview_id=interview_id,
+                        page=page - 1,
+                    ).pack(),
+                )
+            )
+        page_label = (
+            i18n.get("iv-notes-page", current=page + 1, total=total_pages)
+            if i18n
+            else f"{page + 1}/{total_pages}"
+        )
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text=page_label,
+                callback_data=InterviewCallback(
+                    action=page_action,
+                    interview_id=interview_id,
+                    page=page,
+                ).pack(),
+            )
+        )
+        if page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    text=_t("btn-notes-next", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action=page_action,
+                        interview_id=interview_id,
+                        page=page + 1,
+                    ).pack(),
+                )
+            )
+        if nav_buttons:
+            rows.append(nav_buttons)
+
     rows.append(
         [
             InlineKeyboardButton(
