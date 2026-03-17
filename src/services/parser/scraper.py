@@ -473,7 +473,6 @@ class HHScraper:
         seen_urls: set[str] = set()
         new_collected_count = 0
         page = 0
-        zero_pages = 0
 
         async with httpx.AsyncClient() as client:
             while new_collected_count < target_count:
@@ -506,7 +505,6 @@ class HHScraper:
                 )
                 new_collected_count += new_count
 
-                zero_pages = zero_pages + 1 if new_count == 0 else 0
                 logger.info(
                     "Search page scraped",
                     page=page + 1,
@@ -518,10 +516,6 @@ class HHScraper:
                     total=len(collected),
                     target=target_count,
                 )
-
-                if zero_pages >= 3:
-                    logger.warning("3 pages with no new vacancies — stopping")
-                    break
 
                 page += 1
 
@@ -548,13 +542,12 @@ class HHScraper:
             (urls, next_page, has_more) where:
             - urls: up to batch_size new URLs (excluding blacklisted and exclude_ids)
             - next_page: page index to use for the next call
-            - has_more: False when no more pages (exhausted, max pages, or 3 empty)
+            - has_more: False when no more pages (exhausted or max pages)
         """
         skip_ids = (blacklisted_ids or set()) | (exclude_ids or set())
         collected: list[dict[str, str]] = []
         seen_urls: set[str] = set()
         page = start_page
-        zero_pages = 0
 
         async with httpx.AsyncClient() as client:
             while len(collected) < batch_size:
@@ -587,7 +580,6 @@ class HHScraper:
                     batch_size,
                 )
 
-                zero_pages = zero_pages + 1 if new_count == 0 else 0
                 logger.info(
                     "Search page scraped",
                     page=page + 1,
@@ -600,13 +592,9 @@ class HHScraper:
                     target=batch_size,
                 )
 
-                if zero_pages >= 3:
-                    logger.warning("3 pages with no new vacancies — stopping")
-                    return collected[:batch_size], page + 1, False
-
                 page += 1
 
-        has_more = page < _MAX_PAGES and zero_pages < 3
+        has_more = page < _MAX_PAGES
         return collected[:batch_size], page, has_more
 
     async def parse_vacancy_page(

@@ -650,6 +650,7 @@ autoparse-update-compat-no-tech-stack = Add tech stack in Autoparse Settings fir
 autoparse-feed-below-compat-empty = No vacancies below your compatibility threshold.
 autoparse-feed-below-compat-title = 📋 Vacancies below compatibility threshold
 autoparse-update-compat-completed = ✅ Updated compatibility for { $count } vacancies.
+autoparse-update-compat-timeout = Task timed out. Updated { $count } vacancies. Run again to continue.
 autoparse-liked-empty = You have no liked vacancies yet.
 autoparse-disliked-empty = You have no disliked vacancies yet.
 autoparse-include-reacted-prompt = Include previously reacted vacancies in the feed again?

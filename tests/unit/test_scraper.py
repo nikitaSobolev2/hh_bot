@@ -99,8 +99,8 @@ class TestCollectNewFromPage:
         assert new_count == 3
         assert len(collected) == 3
 
-    def test_zero_pages_increments_when_all_blacklisted(self):
-        """When all keyword matches are blacklisted, new_count=0 so zero_pages increments."""
+    def test_zero_new_count_when_all_blacklisted(self):
+        """All blacklisted: new_count=0, blacklisted_skipped reflects them."""
         collected: list = []
         seen: set = set()
         items = [self._make_item("1"), self._make_item("2")]
@@ -148,24 +148,23 @@ class TestCollectVacancyUrls:
     """Tests for collect_vacancy_urls pagination and stop conditions."""
 
     @pytest.mark.asyncio
-    async def test_stops_after_three_pages_all_blacklisted(
+    async def test_stops_when_api_returns_empty_items(
         self, sample_vacancy_api_response: dict
     ) -> None:
-        """Stops after 3 consecutive pages that add nothing (e.g. all blacklisted)."""
+        """Stops when the API returns a page with no vacancy items."""
         scraper = HHScraper()
-        blacklisted = {"12345", "67890"}  # all IDs from sample_vacancy_api_response
-        mock_fetch = AsyncMock(return_value=sample_vacancy_api_response)
+        empty_response = {**sample_vacancy_api_response, "items": []}
+        mock_fetch = AsyncMock(side_effect=[sample_vacancy_api_response, empty_response])
 
         with patch.object(scraper, "_fetch_api_page", mock_fetch):
             result = await scraper.collect_vacancy_urls(
                 "https://hh.ru/search/vacancy?text=python",
                 keyword="",
                 target_count=10,
-                blacklisted_ids=blacklisted,
             )
 
-        assert result == []
-        assert mock_fetch.call_count == 3
+        assert len(result) == 2
+        assert mock_fetch.call_count == 2
 
 
 class TestCollectVacancyUrlsBatch:

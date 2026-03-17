@@ -528,8 +528,8 @@ _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
     name="autoparse.update_compat_unseen",
     max_retries=2,
     default_retry_delay=60,
-    soft_time_limit=600,
-    time_limit=660,
+    soft_time_limit=1200,
+    time_limit=1260,
     acks_late=True,
     reject_on_worker_lost=True,
 )
@@ -540,6 +540,8 @@ def update_compatibility_unseen_vacancies(self, user_id: int) -> dict:
 async def _update_compat_unseen_async(
     session_factory, task, user_id: int
 ) -> dict:
+    from celery.exceptions import SoftTimeLimitExceeded
+
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.user import UserRepository
@@ -593,65 +595,86 @@ async def _update_compat_unseen_async(
         ai_client = AIClient()
         updated_count = 0
 
-        for batch_start in range(0, len(vacancies), _ANALYSIS_BATCH_SIZE):
-            batch = vacancies[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
-            compat_inputs = [
-                VacancyCompatInput(
-                    hh_vacancy_id=v.hh_vacancy_id,
-                    title=v.title or "",
-                    skills=v.raw_skills or [],
-                    description=v.description or "",
-                    vacancy_api_context=build_vacancy_api_context_from_orm(v),
+        try:
+            for batch_start in range(0, len(vacancies), _ANALYSIS_BATCH_SIZE):
+                batch = vacancies[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
+                compat_inputs = [
+                    VacancyCompatInput(
+                        hh_vacancy_id=v.hh_vacancy_id,
+                        title=v.title or "",
+                        skills=v.raw_skills or [],
+                        description=v.description or "",
+                        vacancy_api_context=build_vacancy_api_context_from_orm(v),
+                    )
+                    for v in batch
+                ]
+
+                try:
+                    analyses = await ai_client.analyze_vacancies_batch(
+                        compat_inputs,
+                        user_tech_stack=user_stack,
+                        user_work_experience=user_exp,
+                    )
+                    cb.record_success()
+                except Exception as exc:
+                    cb.record_failure()
+                    logger.error("Update compat batch failed", error=str(exc))
+                    raise
+
+                async with session_factory() as session:
+                    vacancy_repo = AutoparsedVacancyRepository(session)
+                    for vac, compat_input in zip(batch, compat_inputs, strict=True):
+                        analysis = analyses.get(compat_input.hh_vacancy_id)
+                        if analysis is None:
+                            continue
+                        existing = await vacancy_repo.get_by_id(vac.id)
+                        if existing:
+                            await vacancy_repo.update(
+                                existing,
+                                compatibility_score=analysis.compatibility_score,
+                                ai_summary=analysis.summary or None,
+                                ai_stack=analysis.stack or None,
+                            )
+                            updated_count += 1
+                    await session.commit()
+
+            if user:
+                locale = user.language_code or "ru"
+                from aiogram import Bot
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                bot = Bot(
+                    token=settings.bot_token,
+                    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
                 )
-                for v in batch
-            ]
+                try:
+                    await bot.send_message(
+                        user.telegram_id,
+                        get_text("autoparse-update-compat-completed", locale, count=updated_count),
+                    )
+                finally:
+                    await bot.session.close()
 
-            try:
-                analyses = await ai_client.analyze_vacancies_batch(
-                    compat_inputs,
-                    user_tech_stack=user_stack,
-                    user_work_experience=user_exp,
+        except SoftTimeLimitExceeded:
+            if user:
+                locale = user.language_code or "ru"
+                from aiogram import Bot
+                from aiogram.client.default import DefaultBotProperties
+                from aiogram.enums import ParseMode
+
+                bot = Bot(
+                    token=settings.bot_token,
+                    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
                 )
-                cb.record_success()
-            except Exception as exc:
-                cb.record_failure()
-                logger.error("Update compat batch failed", error=str(exc))
-                raise
-
-            async with session_factory() as session:
-                vacancy_repo = AutoparsedVacancyRepository(session)
-                for vac, compat_input in zip(batch, compat_inputs, strict=True):
-                    analysis = analyses.get(compat_input.hh_vacancy_id)
-                    if analysis is None:
-                        continue
-                    existing = await vacancy_repo.get_by_id(vac.id)
-                    if existing:
-                        await vacancy_repo.update(
-                            existing,
-                            compatibility_score=analysis.compatibility_score,
-                            ai_summary=analysis.summary or None,
-                            ai_stack=analysis.stack or None,
-                        )
-                        updated_count += 1
-                await session.commit()
-
-        if user:
-            locale = user.language_code or "ru"
-            from aiogram import Bot
-            from aiogram.client.default import DefaultBotProperties
-            from aiogram.enums import ParseMode
-
-            bot = Bot(
-                token=settings.bot_token,
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-            )
-            try:
-                await bot.send_message(
-                    user.telegram_id,
-                    get_text("autoparse-update-compat-completed", locale, count=updated_count),
-                )
-            finally:
-                await bot.session.close()
+                try:
+                    await bot.send_message(
+                        user.telegram_id,
+                        get_text("autoparse-update-compat-timeout", locale, count=updated_count),
+                    )
+                finally:
+                    await bot.session.close()
+            raise
 
         logger.info(
             "Update compat unseen completed",
