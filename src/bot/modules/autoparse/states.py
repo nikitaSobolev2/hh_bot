@@ -10,6 +10,10 @@ class AutoparseForm(StatesGroup):
     include_reacted = State()
 
 
+class AutoparseEditForm(StatesGroup):
+    edit_keywords = State()
+
+
 class AutoparseSettingsForm(StatesGroup):
     work_exp_company_name = State()
     work_exp_stack = State()

@@ -369,7 +369,12 @@ class HHScraper:
                 logger.debug("API item skipped — missing id or alternate_url")
                 continue
 
-            keyword_matched = matches_keyword_expression(name, keyword)
+            snippet = item.get("snippet") or {}
+            snippet_text = " ".join(
+                filter(None, [snippet.get("requirement"), snippet.get("responsibility")])
+            )
+            text_to_match = f"{name} {snippet_text}".strip()
+            keyword_matched = matches_keyword_expression(text_to_match, keyword)
             logger.debug(
                 "Vacancy candidate",
                 title=name,

@@ -265,6 +265,14 @@ def autoparse_detail_keyboard(
         ],
         [
             InlineKeyboardButton(
+                text=i18n.get("autoparse-edit-keywords"),
+                callback_data=AutoparseCallback(
+                    action="edit_keywords", company_id=company.id
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 text=i18n.get("autoparse-download-title"),
                 callback_data=AutoparseCallback(action="download", company_id=company.id).pack(),
             )

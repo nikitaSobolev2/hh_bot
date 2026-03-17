@@ -29,7 +29,7 @@ from src.bot.modules.autoparse.keyboards import (
     liked_disliked_list_keyboard,
     template_list_keyboard,
 )
-from src.bot.modules.autoparse.states import AutoparseForm, AutoparseSettingsForm
+from src.bot.modules.autoparse.states import AutoparseEditForm, AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
 from src.bot.utils.limits import get_min_compat_range
 from src.core.i18n import I18nContext
@@ -544,6 +544,79 @@ async def company_detail(
             ),
         )
     await callback.answer()
+
+
+# ── Edit keywords ───────────────────────────────────────────────────
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "edit_keywords"))
+async def edit_keywords_start(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    await state.set_state(AutoparseEditForm.edit_keywords)
+    await state.update_data(
+        edit_keywords_company_id=company.id,
+        edit_keywords_message_id=callback.message.message_id,
+    )
+    current = company.keyword_filter or i18n.get("detail-filter-none")
+    await callback.message.answer(
+        i18n.get("autoparse-edit-keywords-prompt", current=current),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(AutoparseEditForm.edit_keywords, F.text)
+async def edit_keywords_receive(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    company_id = data.get("edit_keywords_company_id")
+    detail_message_id = data.get("edit_keywords_message_id")
+    await state.clear()
+
+    if not company_id:
+        await message.answer(i18n.get("autoparse-not-found"))
+        return
+
+    from src.repositories.autoparse import AutoparseCompanyRepository
+
+    repo = AutoparseCompanyRepository(session)
+    company = await repo.get_by_id(company_id)
+    if not company or company.user_id != user.id:
+        await message.answer(i18n.get("autoparse-not-found"))
+        return
+
+    await repo.update(company, keyword_filter=message.text.strip())
+    await session.commit()
+
+    count = await ap_service.get_vacancy_count(session, company.id)
+    show_run_now = await _should_show_run_now(session, company, user)
+    text = ap_service.format_company_detail(company, count, i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await message.bot.edit_message_text(
+            text,
+            chat_id=message.chat.id,
+            message_id=detail_message_id,
+            reply_markup=autoparse_detail_keyboard(
+                company, i18n, show_run_now=show_run_now, show_show_now=(count > 0)
+            ),
+        )
+    await message.answer(i18n.get("autoparse-edit-keywords-saved"))
 
 
 # ── Toggle ──────────────────────────────────────────────────────────

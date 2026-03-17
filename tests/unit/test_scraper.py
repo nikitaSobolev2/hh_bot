@@ -320,6 +320,32 @@ class TestExtractVacanciesFromApiResponse:
         )
         assert "?" not in results[0]["url"]
 
+    def test_matches_keyword_in_snippet_when_not_in_title(self):
+        """Vacancy with keyword in snippet but not in name is included."""
+        api_response = {
+            "items": [
+                {
+                    "id": "131299561",
+                    "name": "PHP-разработчик",
+                    "alternate_url": "https://hh.ru/vacancy/131299561",
+                    "employer": {"name": "SHEVEREV", "alternate_url": "https://hh.ru/employer/5362384"},
+                    "snippet": {
+                        "requirement": "Коммерческий опыт backend-разработки на PHP от 3 лет.",
+                        "responsibility": "Разработка backend-сервисов на PHP/Laravel.",
+                    },
+                },
+            ],
+            "found": 1,
+            "pages": 1,
+            "page": 0,
+            "per_page": 50,
+        }
+        scraper = HHScraper()
+        results = scraper._extract_vacancies_from_api_response(api_response, "Backend")
+        assert len(results) == 1
+        assert results[0]["hh_vacancy_id"] == "131299561"
+        assert results[0]["title"] == "PHP-разработчик"
+
 
 class TestExtractVacancyId:
     def test_extracts_id_from_url(self):
