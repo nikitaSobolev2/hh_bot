@@ -711,6 +711,7 @@ cl-unknown-vacancy = Vacancy
 cl-not-found = Record not found.
 cl-btn-view-vacancy = 🔗 Open vacancy on HH.ru
 cl-btn-regenerate = 🔄 Regenerate
+cl-btn-generate-one-more = ✉️ Generate one more
 feed-results-seen = Viewed: { $seen } of { $total }
 feed-results-liked = 👍 Liked: { $liked }
 feed-results-disliked = 👎 Disliked: { $disliked }

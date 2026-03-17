@@ -712,6 +712,7 @@ cl-unknown-vacancy = Вакансия
 cl-not-found = Запись не найдена.
 cl-btn-view-vacancy = 🔗 Открыть вакансию на HH.ru
 cl-btn-regenerate = 🔄 Перегенерировать
+cl-btn-generate-one-more = ✉️ Создать ещё одно
 feed-results-seen = Просмотрено: { $seen } из { $total }
 feed-results-liked = 👍 Понравилось: { $liked }
 feed-results-disliked = 👎 Не понравилось: { $disliked }

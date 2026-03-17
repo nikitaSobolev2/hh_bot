@@ -138,6 +138,12 @@ def _build_cover_letter_keyboard(
                 ],
                 [
                     InlineKeyboardButton(
+                        text=get_text("cl-btn-generate-one-more", locale),
+                        callback_data=CoverLetterCallback(action="generate_new").pack(),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
                         text=get_text("btn-back", locale),
                         callback_data=CoverLetterCallback(action="list").pack(),
                     )

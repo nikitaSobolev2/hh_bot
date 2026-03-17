@@ -109,7 +109,7 @@ def cover_letter_detail_keyboard(
     vacancy_url: str,
     i18n: I18nContext,
 ) -> InlineKeyboardMarkup:
-    """Detail view: view vacancy (URL), regenerate, back to list."""
+    """Detail view: view vacancy (URL), regenerate, generate one more, back to list."""
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
@@ -126,6 +126,12 @@ def cover_letter_detail_keyboard(
                     vacancy_id=vacancy_id,
                     source=source,
                 ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("cl-btn-generate-one-more"),
+                callback_data=CoverLetterCallback(action="generate_new").pack(),
             )
         ],
         [
