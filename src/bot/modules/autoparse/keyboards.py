@@ -371,45 +371,56 @@ def confirm_delete_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboar
     )
 
 
-def autoparse_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def autoparse_settings_keyboard(i18n: I18nContext, is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-settings-work-exp"),
+                callback_data=AutoparseSettingsCallback(action="work_exp").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-settings-send-time"),
+                callback_data=AutoparseSettingsCallback(action="send_time").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-settings-tech-stack"),
+                callback_data=AutoparseSettingsCallback(action="tech_stack").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-settings-min-compat"),
+                callback_data=AutoparseSettingsCallback(action="min_compat").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-settings-user-name"),
+                callback_data=AutoparseSettingsCallback(action="user_name").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-settings-about-me"),
+                callback_data=AutoparseSettingsCallback(action="about_me").pack(),
+            )
+        ],
+    ]
+    if is_admin:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=i18n.get("autoparse-settings-work-exp"),
-                    callback_data=AutoparseSettingsCallback(action="work_exp").pack(),
+                    text=i18n.get("autoparse-settings-target-count"),
+                    callback_data=AutoparseSettingsCallback(action="target_count").pack(),
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-settings-send-time"),
-                    callback_data=AutoparseSettingsCallback(action="send_time").pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-settings-tech-stack"),
-                    callback_data=AutoparseSettingsCallback(action="tech_stack").pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-settings-min-compat"),
-                    callback_data=AutoparseSettingsCallback(action="min_compat").pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-settings-user-name"),
-                    callback_data=AutoparseSettingsCallback(action="user_name").pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-settings-about-me"),
-                    callback_data=AutoparseSettingsCallback(action="about_me").pack(),
-                )
-            ],
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text=i18n.get("autoparse-settings-cover-letter-style"),
@@ -424,6 +435,37 @@ def autoparse_settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             ],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def target_count_select_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    """Keyboard for admin target count selection: 10, 30, 50, All + back."""
+    choices = [
+        (10, "target_count_10", "10"),
+        (30, "target_count_30", "30"),
+        (50, "target_count_50", "50"),
+        (5000, "target_count_5000", "admin-autoparse-target-all"),
+    ]
+    rows: list[list[InlineKeyboardButton]] = []
+    for _val, action, label in choices:
+        btn_text = i18n.get(label) if label.startswith("admin-") else label
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=btn_text,
+                    callback_data=AutoparseSettingsCallback(action=action).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action="settings").pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cover_letter_style_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:

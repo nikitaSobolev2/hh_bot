@@ -260,11 +260,16 @@ async def _run_autoparse_company_async(
             global_ids |= await parsed_repo.get_all_hh_ids()
 
             settings_repo = AppSettingRepository(session)
-            target_count = int(await settings_repo.get_value("autoparse_target_count", default=50))
-
             user_repo = UserRepository(session)
             user = await user_repo.get_by_id(company.user_id)
             ap_settings = (user.autoparse_settings or {}) if user else {}
+            _valid_target = {10, 30, 50, 5000}
+            if user and user.is_admin and ap_settings.get("target_count") in _valid_target:
+                target_count = ap_settings["target_count"]
+            else:
+                target_count = int(
+                    await settings_repo.get_value("autoparse_target_count", default=50)
+                )
 
             we_repo = WorkExperienceRepository(session)
             work_experiences = await we_repo.get_active_by_user(company.user_id)

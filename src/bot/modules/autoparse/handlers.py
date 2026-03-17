@@ -27,6 +27,7 @@ from src.bot.modules.autoparse.keyboards import (
     download_format_keyboard,
     include_reacted_keyboard,
     liked_disliked_list_keyboard,
+    target_count_select_keyboard,
     template_list_keyboard,
 )
 from src.bot.modules.autoparse.states import AutoparseEditForm, AutoparseForm, AutoparseSettingsForm
@@ -852,18 +853,25 @@ async def settings_hub(
         user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
     about_me = (current.get("about_me") or "").strip()
     about_me_display = (about_me[:60] + "…") if len(about_me) > 60 else (about_me or "—")
-    text = (
-        f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
-        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
-        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
-        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
-        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
-        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n"
-        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n"
-        f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
-    )
+    lines = [
+        f"<b>{i18n.get('autoparse-settings-title')}</b>\n",
+        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n",
+        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n",
+        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n",
+        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n",
+        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n",
+        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n",
+    ]
+    if user.is_admin:
+        tc = current.get("target_count")
+        tc_display = str(tc) if tc is not None else "—"
+        lines.append(f"{i18n.get('autoparse-settings-target-count')}: {tc_display}\n")
+    lines.append(f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}")
+    text = "".join(lines)
     with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(text, reply_markup=autoparse_settings_keyboard(i18n))
+        await callback.message.edit_text(
+            text, reply_markup=autoparse_settings_keyboard(i18n, is_admin=user.is_admin)
+        )
     await callback.answer()
 
 
@@ -1025,6 +1033,97 @@ async def receive_about_me(
     )
 
 
+@router.callback_query(AutoparseSettingsCallback.filter(F.action == "target_count"))
+async def settings_target_count(
+    callback: CallbackQuery,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await callback.answer()
+        return
+    text = (
+        f"{i18n.get('autoparse-settings-target-count')}\n\n"
+        f"{i18n.get('autoparse-settings-target-count-choose')}"
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=target_count_select_keyboard(i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(
+    AutoparseSettingsCallback.filter(
+        F.action.in_(
+            {"target_count_10", "target_count_30", "target_count_50", "target_count_5000"}
+        )
+    )
+)
+async def settings_target_count_select(
+    callback: CallbackQuery,
+    callback_data: AutoparseSettingsCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    if not user.is_admin:
+        await callback.answer()
+        return
+    mapping = {
+        "target_count_10": 10,
+        "target_count_30": 30,
+        "target_count_50": 50,
+        "target_count_5000": 5000,
+    }
+    val = mapping.get(callback_data.action)
+    if val is None:
+        await callback.answer()
+        return
+    await ap_service.update_user_autoparse_settings(session, user.id, target_count=val)
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    experiences = await parsing_service.get_active_work_experiences(session, user.id)
+    if experiences:
+        exp_lines = [f"  • <b>{e.company_name}</b> — {e.stack}" for e in experiences]
+        exp_display = "\n" + "\n".join(exp_lines)
+    else:
+        exp_display = " —"
+    custom_stack = current.get("tech_stack", [])
+    if custom_stack:
+        stack_display = ", ".join(custom_stack)
+    elif experiences:
+        derived = ap_service.derive_tech_stack_from_experiences(experiences)
+        stack_display = f"{', '.join(derived)} ({i18n.get('autoparse-settings-stack-auto')})"
+    else:
+        stack_display = "—"
+    min_compat = current.get("min_compatibility_percent", 50)
+    cover_style = current.get("cover_letter_style", ap_service.DEFAULT_COVER_LETTER_STYLE)
+    user_name = current.get("user_name", "").strip()
+    if not user_name:
+        user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
+    about_me = (current.get("about_me") or "").strip()
+    about_me_display = (about_me[:60] + "…") if len(about_me) > 60 else (about_me or "—")
+    lines = [
+        f"<b>{i18n.get('autoparse-settings-title')}</b>\n",
+        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n",
+        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n",
+        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n",
+        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n",
+        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n",
+        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n",
+        f"{i18n.get('autoparse-settings-target-count')}: {current.get('target_count') or '—'}\n",
+        f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}",
+    ]
+    text = "".join(lines)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            text,
+            reply_markup=autoparse_settings_keyboard(i18n, is_admin=user.is_admin),
+        )
+    await callback.answer(i18n.get("autoparse-settings-saved"), show_alert=True)
+
+
 @router.callback_query(AutoparseSettingsCallback.filter(F.action == "cover_letter_style"))
 async def settings_cover_letter_style(
     callback: CallbackQuery,
@@ -1096,20 +1195,25 @@ async def settings_cover_letter_style_select(
         user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
     about_me = (current.get("about_me") or "").strip()
     about_me_display = (about_me[:60] + "…") if len(about_me) > 60 else (about_me or "—")
-    text = (
-        f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n"
-        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n"
-        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n"
-        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n"
-        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n"
-        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n"
-        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n"
-        f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}"
-    )
+    lines = [
+        f"<b>{i18n.get('autoparse-settings-title')}</b>\n\n",
+        f"{i18n.get('autoparse-settings-work-exp')}:{exp_display}\n\n",
+        f"{i18n.get('autoparse-settings-tech-stack')}: {stack_display}\n",
+        f"{i18n.get('autoparse-settings-send-time')}: {current.get('send_time', '12:00')}\n",
+        f"{i18n.get('autoparse-settings-min-compat')}: {min_compat}%\n",
+        f"{i18n.get('autoparse-settings-user-name')}: {user_name}\n",
+        f"{i18n.get('autoparse-settings-about-me')}: {about_me_display}\n",
+    ]
+    if user.is_admin:
+        tc = current.get("target_count")
+        tc_display = str(tc) if tc is not None else "—"
+        lines.append(f"{i18n.get('autoparse-settings-target-count')}: {tc_display}\n")
+    lines.append(f"{i18n.get('autoparse-settings-cover-letter-style')}: {cover_style}")
+    text = "".join(lines)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=autoparse_settings_keyboard(i18n),
+            reply_markup=autoparse_settings_keyboard(i18n, is_admin=user.is_admin),
         )
     await callback.answer()
 
