@@ -13,7 +13,8 @@ async def _load_db_settings() -> None:
 
     async with async_session_factory() as session:
         repo = AppSettingRepository(session)
-        for key, _, _ in MANAGED_SETTINGS:
+        for item in MANAGED_SETTINGS:
+            key = item[0]
             val = await repo.get_value(key)
             if val is not None:
                 sync_setting_to_runtime(key, val)
