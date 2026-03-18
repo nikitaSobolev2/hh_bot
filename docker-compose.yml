@@ -19,10 +19,12 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis-standalone.conf
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+      - ./config/redis-standalone.conf:/usr/local/etc/redis/redis-standalone.conf:ro
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
