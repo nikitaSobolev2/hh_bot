@@ -687,6 +687,7 @@ feed-btn-create-cover-letter = ✉️ Create Cover Letter
 feed-btn-regenerate-cover-letter = 🔄 Regenerate
 feed-btn-show-later = 🔄 Show later
 feed-btn-stop = ⏹ Stop
+feed-content-truncated = <i>… truncated</i>
 feed-cover-letter-generating = ⏳ Generating cover letter...
 feed-cover-letter-generated = Cover letter generated.
 feed-results-header = 📊 Feed Results

@@ -768,6 +768,8 @@ async def test_handle_questions_to_ask_shows_view_with_existing_content():
     mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
     mock_interview.questions_to_ask = "Q1: Tell me about yourself"
 
+    user = MagicMock()
+    user.is_admin = False
     session = AsyncMock()
     i18n = _make_i18n()
 
@@ -779,7 +781,7 @@ async def test_handle_questions_to_ask_shows_view_with_existing_content():
         mock_repo_cls.return_value = mock_repo
 
         await handle_questions_to_ask(
-            callback, callback_data, session, i18n
+            callback, callback_data, user, session, i18n
         )
 
     callback.message.edit_text.assert_called_once()
@@ -810,6 +812,8 @@ async def test_handle_questions_to_ask_shows_placeholder_when_empty():
     mock_interview.hh_vacancy_url = "https://hh.ru/vacancy/1"
     mock_interview.questions_to_ask = None
 
+    user = MagicMock()
+    user.is_admin = False
     session = AsyncMock()
     i18n = _make_i18n()
 
@@ -821,7 +825,7 @@ async def test_handle_questions_to_ask_shows_placeholder_when_empty():
         mock_repo_cls.return_value = mock_repo
 
         await handle_questions_to_ask(
-            callback, callback_data, session, i18n
+            callback, callback_data, user, session, i18n
         )
 
     callback.message.edit_text.assert_called_once()

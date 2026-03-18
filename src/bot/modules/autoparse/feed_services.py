@@ -218,7 +218,13 @@ def build_vacancy_card(
                 raw = raw[:limit] + _DESCRIPTION_TRUNCATION_SUFFIX
             lines.append(f"\n{html.escape(raw)}")
     elif vacancy.ai_summary:
-        lines.append(f"\n{html.escape(vacancy.ai_summary)}")
+        header_block = "\n".join(lines)
+        available = _TELEGRAM_MESSAGE_LIMIT - len(header_block) - 80
+        truncation_suffix = get_text("feed-content-truncated", locale)
+        raw = html.escape(vacancy.ai_summary)
+        if len(raw) > available:
+            raw = raw[: available - len(truncation_suffix)] + truncation_suffix
+        lines.append(f"\n{raw}")
     elif vacancy.description:
         truncated = vacancy.description[:_MAX_DESCRIPTION_LENGTH]
         lines.append(f"\n{html.escape(truncated)}")

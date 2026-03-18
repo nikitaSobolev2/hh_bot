@@ -229,6 +229,21 @@ def test_build_vacancy_card_falls_back_to_description_when_ai_summary_is_none(ma
     assert "Fallback raw description" in card
 
 
+def test_build_vacancy_card_truncates_long_ai_summary_to_fit_telegram_limit(make_vacancy):
+    """When ai_summary exceeds Telegram limit, it is truncated with a suffix."""
+    long_summary = "A" * 5000
+    vacancy = make_vacancy(
+        title="Dev",
+        company_name="Acme",
+        ai_summary=long_summary,
+    )
+
+    card = build_vacancy_card(vacancy, index=0, total=1, locale="en")
+
+    assert len(card) <= 4096
+    assert "truncated" in card or "обрезано" in card
+
+
 def test_build_stats_message_escapes_html_in_vacancy_title():
     text = build_stats_message("Frontend & Backend <Dev>", 5, avg_compat=None)
 

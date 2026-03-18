@@ -569,9 +569,12 @@ async def _show_questions_to_ask_view(
     i18n: I18nContext,
     *,
     use_answer: bool = False,
+    user: User | None = None,
+    page: int = 0,
 ) -> None:
     """Show questions-to-ask view. Use use_answer=True when message is from user."""
     from src.repositories.interview import InterviewRepository
+    from src.services.telegram.text_utils import split_text_for_telegram
 
     interview = await InterviewRepository(session).get_with_relations(interview_id)
     if not interview or interview.is_deleted:
@@ -583,8 +586,18 @@ async def _show_questions_to_ask_view(
         interview.hh_vacancy_url,
     )
     content = interview.questions_to_ask or i18n.get("iv-questions-to-ask-empty")
-    text = f"{header}\n\n<b>{i18n.get('iv-questions-to-ask-title')}</b>\n\n{content}"
-    kb = questions_to_ask_view_keyboard(interview_id, i18n=i18n)
+    max_len = get_max_message_length(user, "default") if user else 4000
+    title_block = f"{header}\n\n<b>{i18n.get('iv-questions-to-ask-title')}</b>\n\n"
+    full_text = title_block + content
+    chunks = split_text_for_telegram(full_text, max_len=max_len)
+    if not chunks:
+        chunks = [title_block + content[:max_len - 20] + "\n..."]
+    total_pages = len(chunks)
+    page_index = max(0, min(page, total_pages - 1)) if total_pages else 0
+    text = chunks[page_index] if chunks else title_block + i18n.get("iv-questions-to-ask-empty")
+    kb = questions_to_ask_view_keyboard(
+        interview_id, i18n=i18n, page=page_index, total_pages=total_pages
+    )
     if use_answer or not hasattr(message_or_callback, "edit_text"):
         await message_or_callback.answer(
             text,
@@ -605,6 +618,7 @@ async def _show_questions_to_ask_view(
 async def handle_questions_to_ask(
     callback: CallbackQuery,
     callback_data: InterviewCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
@@ -616,7 +630,12 @@ async def handle_questions_to_ask(
         return
 
     await _show_questions_to_ask_view(
-        callback.message, callback_data.interview_id, session, i18n
+        callback.message,
+        callback_data.interview_id,
+        session,
+        i18n,
+        user=user,
+        page=callback_data.page,
     )
     await callback.answer()
 
@@ -671,13 +690,13 @@ def _paginate_notes(
     current_lines: list[str] = []
     current_len = header_len
 
+    note_preview_len = 500
     for idx, note in enumerate(notes, 1):
         if full_content:
             content = note.content
         else:
-            content = (
-                f"{note.content[:200]}{'...' if len(note.content) > 200 else ''}"
-            )
+            truncated = note.content[:note_preview_len]
+            content = f"{truncated}{'...' if len(note.content) > note_preview_len else ''}"
         line = f"{idx}. {content}"
         max_note_len = max_len - header_len - 50
         if len(line) > max_note_len:
@@ -728,11 +747,13 @@ def _build_notes_view_text(interview, notes: list, i18n: I18nContext) -> str:
         interview.experience_level,
         interview.hh_vacancy_url,
     )
+    note_preview_len = 500
     if not notes:
         notes_section = i18n.get("iv-notes-empty")
     else:
         notes_section = "\n".join(
-            f"{idx}. {note.content[:200]}{'...' if len(note.content) > 200 else ''}"
+            f"{idx}. {note.content[:note_preview_len]}"
+            f"{'...' if len(note.content) > note_preview_len else ''}"
             for idx, note in enumerate(notes, 1)
         )
     return f"{header}\n\n<b>{i18n.get('iv-notes-title')}</b>\n\n{notes_section}"
@@ -961,7 +982,11 @@ async def handle_notes_stop(
     )
     if return_to == "questions_to_ask":
         await _show_questions_to_ask_view(
-            callback.message, callback_data.interview_id, session, i18n
+            callback.message,
+            callback_data.interview_id,
+            session,
+            i18n,
+            user=user,
         )
     else:
         await _show_notes_view(
@@ -1070,7 +1095,12 @@ async def handle_stop_notes_command(
     if interview_id:
         if return_to == "questions_to_ask":
             await _show_questions_to_ask_view(
-                message, interview_id, session, i18n, use_answer=True
+                message,
+                interview_id,
+                session,
+                i18n,
+                user=user,
+                use_answer=True,
             )
         else:
             await _show_notes_view(
@@ -1107,7 +1137,12 @@ async def handle_notes_noting_message(
         if interview_id:
             if return_to == "questions_to_ask":
                 await _show_questions_to_ask_view(
-                    message, interview_id, session, i18n, use_answer=True
+                    message,
+                    interview_id,
+                    session,
+                    i18n,
+                    user=user,
+                    use_answer=True,
                 )
             else:
                 await _show_notes_view(

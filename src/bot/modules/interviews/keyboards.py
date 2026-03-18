@@ -707,9 +707,53 @@ def questions_to_ask_view_keyboard(
     interview_id: int,
     i18n: I18nContext | None = None,
     locale: str = "ru",
+    *,
+    page: int = 0,
+    total_pages: int = 1,
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text=_t("btn-notes-prev", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="questions_to_ask",
+                        interview_id=interview_id,
+                        page=page - 1,
+                    ).pack(),
+                )
+            )
+        from src.core.i18n import get_text
+
+        page_label = (
+            i18n.get("iv-notes-page", current=page + 1, total=total_pages)
+            if i18n is not None
+            else get_text("iv-notes-page", locale, current=page + 1, total=total_pages)
+        )
+        nav.append(
+            InlineKeyboardButton(
+                text=page_label,
+                callback_data=InterviewCallback(
+                    action="questions_to_ask", interview_id=interview_id, page=page
+                ).pack(),
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text=_t("btn-notes-next", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="questions_to_ask",
+                        interview_id=interview_id,
+                        page=page + 1,
+                    ).pack(),
+                )
+            )
+        rows.append(nav)
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text=_t("btn-iv-regenerate", i18n, locale),
@@ -738,6 +782,7 @@ def questions_to_ask_view_keyboard(
             ],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def delete_confirm_keyboard(interview_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
