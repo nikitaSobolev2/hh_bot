@@ -10,6 +10,7 @@ btn-my-parsings = 📋 My Parsings
 btn-profile = 👤 Profile
 btn-settings = ⚙️ Settings
 btn-admin = 🛠 Admin Panel
+btn-admin-generate-vacancy-prep-query = 📥 Vacancy prep query
 btn-back = ◀️ Back
 btn-back-menu = ◀️ Back to Menu
 btn-my-interviews = 🎤 My Interviews
@@ -391,6 +392,7 @@ admin-autoparse-target-all = All available
 admin-user-not-found-short = User not found.
 admin-balance-description = Adjusted by admin #{ $admin_id }
 admin-not-set = (not set)
+admin-vacancy-prep-query-sent = File sent.
 
 # ── Admin buttons ────────────────────────────────────────
 btn-search = 🔍 Search

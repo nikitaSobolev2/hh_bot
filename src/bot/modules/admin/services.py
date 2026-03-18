@@ -112,6 +112,78 @@ async def toggle_setting(session: AsyncSession, key: str, user_id: int) -> bool:
     return new_val
 
 
+def _format_profile_section(user: User) -> str:
+    lines = [
+        f"first_name: {user.first_name or ''}",
+        f"last_name: {user.last_name or ''}",
+        f"username: {user.username or ''}",
+    ]
+    return "[ПРОФИЛЬ / PROFILE]\n" + "\n".join(lines)
+
+
+def _format_autoparse_section(ap_settings: dict) -> str:
+    lines = [
+        f"user_name: {ap_settings.get('user_name') or ''}",
+        f"about_me: {ap_settings.get('about_me') or ''}",
+        f"work_experience: {ap_settings.get('work_experience') or ''}",
+        f"tech_stack: {', '.join(ap_settings.get('tech_stack') or [])}",
+    ]
+    return "[НАСТРОЙКИ АВТОПАРСИНГА / AUTOPARSE SETTINGS]\n" + "\n".join(lines)
+
+
+def _format_work_experience_section(experiences: list) -> str:
+    if not experiences:
+        return "[ОПЫТ РАБОТЫ / WORK EXPERIENCE]\n(нет данных)"
+    sections = []
+    for i, exp in enumerate(experiences, 1):
+        lines = [
+            f"{i}. {exp.company_name}",
+            f"   title: {exp.title or ''}",
+            f"   period: {exp.period or ''}",
+            f"   stack: {exp.stack or ''}",
+            f"   achievements: {exp.achievements or ''}",
+            f"   duties: {exp.duties or ''}",
+        ]
+        sections.append("\n".join(lines))
+    return "[ОПЫТ РАБОТЫ / WORK EXPERIENCE]\n" + "\n\n".join(sections)
+
+
+def _format_vacancy_summary_section(summaries: list) -> str:
+    if not summaries:
+        return "[О СЕБЕ / VACANCY SUMMARY]\n(нет данных)"
+    s = summaries[0]
+    lines = [
+        f"excluded_industries: {s.excluded_industries or ''}",
+        f"location: {s.location or ''}",
+        f"remote_preference: {s.remote_preference or ''}",
+        f"additional_notes: {s.additional_notes or ''}",
+        "",
+        f"generated_text:\n{s.generated_text or ''}",
+    ]
+    return "[О СЕБЕ / VACANCY SUMMARY]\n" + "\n".join(lines)
+
+
+async def build_vacancy_prep_query(session: AsyncSession, user: User) -> str:
+    """Build a structured text query with all user data for vacancy preparation prompts."""
+    from src.bot.modules.autoparse import services as ap_service
+    from src.repositories.vacancy_summary import VacancySummaryRepository
+    from src.repositories.work_experience import WorkExperienceRepository
+
+    ap_settings = await ap_service.get_user_autoparse_settings(session, user.id)
+    we_repo = WorkExperienceRepository(session)
+    experiences = await we_repo.get_active_by_user(user.id)
+    vs_repo = VacancySummaryRepository(session)
+    summaries, _ = await vs_repo.get_by_user_paginated(user.id, page=0)
+
+    parts = [
+        _format_profile_section(user),
+        "\n" + _format_autoparse_section(ap_settings),
+        "\n" + _format_work_experience_section(experiences),
+        "\n" + _format_vacancy_summary_section(summaries),
+    ]
+    return "\n".join(parts)
+
+
 async def update_setting(session: AsyncSession, key: str, raw_value: str, user_id: int) -> None:
     parsed_value: str | int | float
     try:

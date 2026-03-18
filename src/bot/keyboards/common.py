@@ -87,7 +87,11 @@ def main_menu_admin_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=i18n.get("btn-admin"),
                 callback_data=MenuCallback(action="admin").pack(),
-            )
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("btn-admin-generate-vacancy-prep-query"),
+                callback_data=MenuCallback(action="generate_vacancy_prep_query").pack(),
+            ),
         ]
     )
     return kb

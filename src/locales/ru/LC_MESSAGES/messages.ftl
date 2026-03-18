@@ -10,6 +10,7 @@ btn-my-parsings = 📋 Мои парсинги
 btn-profile = 👤 Профиль
 btn-settings = ⚙️ Настройки
 btn-admin = 🛠 Админ панель
+btn-admin-generate-vacancy-prep-query = 📥 Запрос для подготовки к вакансии
 btn-back = ◀️ Назад
 btn-back-menu = ◀️ В меню
 btn-my-interviews = 🎤 Мои собеседования
@@ -391,6 +392,7 @@ admin-autoparse-target-all = Все доступные
 admin-user-not-found-short = Пользователь не найден.
 admin-balance-description = Изменено администратором #{ $admin_id }
 admin-not-set = (не задано)
+admin-vacancy-prep-query-sent = Файл отправлен.
 
 # ── Admin buttons ────────────────────────────────────────
 btn-search = 🔍 Поиск

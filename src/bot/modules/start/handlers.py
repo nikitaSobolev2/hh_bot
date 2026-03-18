@@ -1,6 +1,8 @@
+from datetime import datetime
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.callbacks.common import MenuCallback
@@ -19,6 +21,7 @@ _HANDLED_IN_START = {
     "my_interviews",
     "autoparse",
     "admin",
+    "generate_vacancy_prep_query",
     "support",
     "work_experience",
     "achievements",
@@ -115,6 +118,21 @@ async def _handle_admin(
     await show_admin_panel(callback, i18n)
 
 
+async def _handle_generate_vacancy_prep_query(
+    callback: CallbackQuery, user: User, session: AsyncSession, i18n: I18nContext
+) -> None:
+    if not user.is_admin:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+    from src.bot.modules.admin.services import build_vacancy_prep_query
+
+    query_text = await build_vacancy_prep_query(session, user)
+    filename = f"vacancy_prep_query_{user.id}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+    doc = BufferedInputFile(query_text.encode("utf-8"), filename=filename)
+    await callback.message.answer_document(doc)
+    await callback.answer(i18n.get("admin-vacancy-prep-query-sent"))
+
+
 async def _handle_my_interviews(
     callback: CallbackQuery, user: User, session: AsyncSession, i18n: I18nContext
 ) -> None:
@@ -186,6 +204,7 @@ _MENU_DISPATCH = {
     "my_parsings": _handle_my_parsings,
     "autoparse": _handle_autoparse,
     "admin": _handle_admin,
+    "generate_vacancy_prep_query": _handle_generate_vacancy_prep_query,
     "my_interviews": _handle_my_interviews,
     "support": _handle_support,
     "work_experience": _handle_work_experience,
