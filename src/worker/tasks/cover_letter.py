@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import html
 from collections.abc import AsyncGenerator
 
 from src.core.constants import AppSettingKey
@@ -19,6 +20,11 @@ TELEGRAM_MESSAGE_MAX = 4096
 
 # Long dash chars (em dash, en dash, etc.) to replace with regular hyphen
 _LONG_DASH_CHARS = ("—", "–", "―", "‒", "−")
+
+
+def _cover_letter_telegram_pre_html(plain: str) -> str:
+    """Wrap cover letter in Telegram HTML ``<pre>`` so the client shows copy-friendly text."""
+    return f"<pre>{html.escape(plain, quote=False)}</pre>"
 
 
 def _sanitize_for_telegram(text: str) -> str:
@@ -263,7 +269,9 @@ async def _generate_cover_letter_async(
                 display_text = _sanitize_for_telegram(raw)
                 if not display_text:
                     from src.core.i18n import get_text
+
                     display_text = get_text("feed-cover-letter-generated", locale)
+                display_text = _cover_letter_telegram_pre_html(display_text)
                 keyboard = _build_cover_letter_keyboard(
                     session_id, vacancy_id, locale, standalone=(source == "standalone")
                 )
@@ -275,7 +283,7 @@ async def _generate_cover_letter_async(
                         message_id,
                         display_text,
                         reply_markup=keyboard,
-                        parse_mode=None,
+                        parse_mode="HTML",
                     )
                 finally:
                     await bot.session.close()
@@ -354,8 +362,8 @@ async def _generate_cover_letter_async(
                     )
                 ),
                 initial_text="",
-                parse_mode=None,
                 reply_markup=keyboard,
+                html_pre_wrap=True,
             )
             generated_text = _normalize_dashes(_strip_agent_wrapper(accumulated))
             if generated_text.strip():
@@ -393,13 +401,14 @@ async def _generate_cover_letter_async(
                 from src.core.i18n import get_text
 
                 display_text = get_text("feed-cover-letter-generated", locale)
+            display_text = _cover_letter_telegram_pre_html(display_text)
             await task.notify_user(
                 bot,
                 chat_id,
                 message_id,
                 display_text,
                 reply_markup=keyboard,
-                parse_mode=None,
+                parse_mode="HTML",
             )
         else:
             with contextlib.suppress(Exception):

@@ -50,6 +50,20 @@ class TestStreamToTelegram:
         bot.send_message_draft.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_single_chunk_html_pre_wrap_sends_pre_with_html_mode(self) -> None:
+        bot = _make_bot()
+        await stream_to_telegram(
+            bot,
+            123,
+            _async_gen("line1"),
+            html_pre_wrap=True,
+        )
+
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs["parse_mode"] == "HTML"
+        assert call_kwargs["text"] == "<pre>line1</pre>"
+
+    @pytest.mark.asyncio
     async def test_multiple_chunks_streams_via_drafts(self):
         bot = _make_bot()
 
@@ -174,6 +188,12 @@ class TestBuildFinalText:
     def test_plain_header_unchanged(self):
         result = _build_final_text("Title: ", "body")
         assert result == "Title: body"
+
+    def test_html_pre_wrap_escapes_and_wraps_pre(self) -> None:
+        result = _build_final_text("", "a < b & c", html_pre_wrap=True)
+        assert result.startswith("<pre>")
+        assert result.endswith("</pre>")
+        assert "a &lt; b &amp; c" in result
 
 
 class TestTruncate:

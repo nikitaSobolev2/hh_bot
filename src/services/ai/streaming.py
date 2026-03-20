@@ -5,6 +5,7 @@ Streams progressively via drafts when the response arrives in multiple chunks.
 """
 
 import asyncio
+import html
 import random
 import time
 from collections.abc import AsyncGenerator
@@ -24,6 +25,11 @@ _MAX_MESSAGE_LENGTH = TELEGRAM_MESSAGE_LIMIT
 _TRUNCATED_LENGTH = TELEGRAM_TRUNCATE_LIMIT
 
 
+def _html_pre_copy_block(plain: str) -> str:
+    """Wrap plain text in ``<pre>`` (Telegram HTML) so the client offers copy/tap-to-copy."""
+    return f"<pre>{html.escape(plain, quote=False)}</pre>"
+
+
 async def stream_to_telegram(
     bot: Bot,
     chat_id: int,
@@ -33,14 +39,21 @@ async def stream_to_telegram(
     suffix: str = "",
     parse_mode: str | None = None,
     reply_markup: InlineKeyboardMarkup | None = None,
+    html_pre_wrap: bool = False,
 ) -> str:
     """Stream an OpenAI response to a Telegram chat.
 
     If the response arrives as a single chunk, sends it as a complete message.
     If multiple chunks arrive, streams progressively via ``sendMessageDraft``.
 
+    If *html_pre_wrap* is True, the streamed body is sent as ``<pre>…</pre>`` with HTML
+    escaping; *parse_mode* is forced to ``HTML``.
+
     Returns the accumulated AI-generated text (without *initial_text*) plus *suffix*.
     """
+    if html_pre_wrap:
+        parse_mode = "HTML"
+
     first_chunk = await anext(token_stream, None)
     if not first_chunk:
         return suffix
@@ -49,13 +62,26 @@ async def stream_to_telegram(
     if not second_chunk:
         content = first_chunk + suffix
         await _send_complete_response(
-            bot, chat_id, initial_text, content, parse_mode, reply_markup
+            bot,
+            chat_id,
+            initial_text,
+            content,
+            parse_mode,
+            reply_markup,
+            html_pre_wrap=html_pre_wrap,
         )
         return content
 
     remaining = _prepend_chunks([first_chunk, second_chunk], token_stream)
     return await _stream_via_drafts(
-        bot, chat_id, remaining, initial_text, suffix, parse_mode, reply_markup
+        bot,
+        chat_id,
+        remaining,
+        initial_text,
+        suffix,
+        parse_mode,
+        reply_markup,
+        html_pre_wrap=html_pre_wrap,
     )
 
 
@@ -66,8 +92,10 @@ async def _send_complete_response(
     content: str,
     parse_mode: str | None,
     reply_markup: InlineKeyboardMarkup | None = None,
+    *,
+    html_pre_wrap: bool = False,
 ) -> None:
-    text = _build_final_text(header, content)
+    text = _build_final_text(header, content, html_pre_wrap=html_pre_wrap)
     await _send_with_retry(
         bot, chat_id, text=text, parse_mode=parse_mode, reply_markup=reply_markup
     )
@@ -81,6 +109,8 @@ async def _stream_via_drafts(
     suffix: str,
     parse_mode: str | None,
     reply_markup: InlineKeyboardMarkup | None = None,
+    *,
+    html_pre_wrap: bool = False,
 ) -> str:
     draft_id = random.randint(1, 2**31 - 1)
     accumulated = ""
@@ -93,12 +123,15 @@ async def _stream_via_drafts(
         if not _should_update_draft(last_update):
             continue
 
-        await _update_draft(bot, chat_id, draft_id, initial_text + accumulated, parse_mode)
+        draft_body = (
+            _html_pre_copy_block(accumulated) if html_pre_wrap else accumulated
+        )
+        await _update_draft(bot, chat_id, draft_id, initial_text + draft_body, parse_mode)
         draft_calls += 1
         last_update = time.monotonic()
 
     content = accumulated + suffix
-    final_text = _build_final_text(initial_text, content)
+    final_text = _build_final_text(initial_text, content, html_pre_wrap=html_pre_wrap)
     await _send_with_retry(
         bot, chat_id, text=final_text, parse_mode=parse_mode, reply_markup=reply_markup
     )
@@ -134,9 +167,10 @@ async def _update_draft(
         logger.warning("sendMessageDraft failed", error=str(exc))
 
 
-def _build_final_text(header: str, content: str) -> str:
+def _build_final_text(header: str, content: str, *, html_pre_wrap: bool = False) -> str:
     clean_header = header.replace("\u23f3", "\u2705").replace("...", "")
-    return _truncate(clean_header + content)
+    body = _html_pre_copy_block(content) if html_pre_wrap else content
+    return _truncate(clean_header + body)
 
 
 def _truncate(text: str) -> str:
