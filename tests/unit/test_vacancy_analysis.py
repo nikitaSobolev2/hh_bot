@@ -159,6 +159,16 @@ def test_build_vacancy_analysis_system_prompt_handles_empty_stack_and_experience
     assert "не указан" in prompt
 
 
+def test_build_vacancy_analysis_system_prompt_includes_compatibility_scoring_guide():
+    prompt = build_vacancy_analysis_system_prompt(
+        user_tech_stack=["Python"],
+        user_work_experience="5 лет",
+    )
+
+    assert "как правило не выше 40" in prompt
+    assert "81–100" in prompt
+
+
 # ── build_vacancy_analysis_user_content ─────────────────────────────
 
 

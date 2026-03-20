@@ -148,8 +148,13 @@ class TestCompatibilityPrompt:
 
     def test_system_prompt_contains_scale(self):
         prompt = build_compatibility_system_prompt()
-        assert "0-20" in prompt
-        assert "76-100" in prompt
+        assert "0–20" in prompt
+        assert "81–100" in prompt
+
+    def test_system_prompt_includes_role_first_scoring_rule(self):
+        prompt = build_compatibility_system_prompt()
+        assert "как правило не выше 40" in prompt
+        assert "ITSM, BPMN" in prompt
 
     def test_user_content_includes_all_fields(self):
         content = build_compatibility_user_content(
