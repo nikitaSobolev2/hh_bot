@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import AsyncGenerator
 
 from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
@@ -40,6 +41,14 @@ def _normalize_dashes(text: str) -> str:
     for char in _LONG_DASH_CHARS:
         result = result.replace(char, "-")
     return result
+
+
+async def _normalize_dashes_in_token_stream(
+    raw_stream: AsyncGenerator[str, None],
+) -> AsyncGenerator[str, None]:
+    """Normalize long dashes per chunk so streamed Telegram text uses ASCII hyphen."""
+    async for chunk in raw_stream:
+        yield _normalize_dashes(chunk)
 
 
 def _strip_agent_wrapper(text: str) -> str:
@@ -336,11 +345,13 @@ async def _generate_cover_letter_async(
             accumulated = await stream_to_telegram(
                 bot=bot,
                 chat_id=chat_id,
-                token_stream=ai_client.stream_text(
-                    user_content,
-                    system_prompt=system_prompt,
-                    max_tokens=400,
-                    temperature=0.6,
+                token_stream=_normalize_dashes_in_token_stream(
+                    ai_client.stream_text(
+                        user_content,
+                        system_prompt=system_prompt,
+                        max_tokens=400,
+                        temperature=0.6,
+                    )
                 ),
                 initial_text="",
                 parse_mode=None,
