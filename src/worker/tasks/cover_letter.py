@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
 from src.worker.app import celery_app
@@ -320,56 +322,85 @@ async def _generate_cover_letter_async(
         user_name=user_name,
         about_me=about_me,
     )
-
-    try:
-        generated_text = await ai_client.generate_text(
-            user_content,
-            system_prompt=system_prompt,
-            timeout=180,
-            max_tokens=400,
-            temperature=0.6,
-        )
-        cb.record_success()
-    except Exception as exc:
-        cb.record_failure()
-        logger.error(
-            "Cover letter generation failed",
-            user_id=user_id,
-            vacancy_id=vacancy_id,
-            error=str(exc),
-        )
-        raise
-
-    generated_text = _normalize_dashes(generated_text)
-    generated_text = _strip_agent_wrapper(generated_text)
-    display_text = _sanitize_for_telegram(
-        _truncate_for_display(generated_text)
-    )
-    if not display_text:
-        from src.core.i18n import get_text
-        display_text = get_text("feed-cover-letter-generated", locale)
     keyboard = _build_cover_letter_keyboard(
         session_id, vacancy_id, locale, standalone=(source == "standalone")
     )
 
     bot = task.create_bot()
     try:
-        await task.notify_user(
-            bot,
-            chat_id,
-            message_id,
-            display_text,
-            reply_markup=keyboard,
-            parse_mode=None,
+        stream_ok = False
+        generated_text = ""
+        try:
+            from src.services.ai.streaming import stream_to_telegram
+
+            accumulated = await stream_to_telegram(
+                bot=bot,
+                chat_id=chat_id,
+                token_stream=ai_client.stream_text(
+                    user_content,
+                    system_prompt=system_prompt,
+                    max_tokens=400,
+                    temperature=0.6,
+                ),
+                initial_text="",
+                parse_mode=None,
+                reply_markup=keyboard,
+            )
+            generated_text = _normalize_dashes(_strip_agent_wrapper(accumulated))
+            if generated_text.strip():
+                stream_ok = True
+                cb.record_success()
+        except Exception:
+            logger.warning(
+                "Cover letter streaming failed, falling back to non-streaming API",
+            )
+
+        if not stream_ok:
+            try:
+                generated_text = await ai_client.generate_text(
+                    user_content,
+                    system_prompt=system_prompt,
+                    timeout=180,
+                    max_tokens=400,
+                    temperature=0.6,
+                )
+                cb.record_success()
+            except Exception as exc:
+                cb.record_failure()
+                logger.error(
+                    "Cover letter generation failed",
+                    user_id=user_id,
+                    vacancy_id=vacancy_id,
+                    error=str(exc),
+                )
+                raise
+            generated_text = _normalize_dashes(_strip_agent_wrapper(generated_text))
+            display_text = _sanitize_for_telegram(
+                _truncate_for_display(generated_text)
+            )
+            if not display_text:
+                from src.core.i18n import get_text
+
+                display_text = get_text("feed-cover-letter-generated", locale)
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                display_text,
+                reply_markup=keyboard,
+                parse_mode=None,
+            )
+        else:
+            with contextlib.suppress(Exception):
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+
+        await task.mark_completed(
+            idempotency_key,
+            "cover_letter",
+            user_id,
+            session_factory,
+            result_data={"generated_text": generated_text},
         )
+        return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}
     finally:
         await bot.session.close()
-
-    await task.mark_completed(
-        idempotency_key,
-        "cover_letter",
-        user_id,
-        session_factory,
-        result_data={"generated_text": generated_text},
-    )
-    return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}

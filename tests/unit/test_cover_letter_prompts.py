@@ -22,27 +22,28 @@ class TestBuildCoverLetterSystemPrompt:
         prompt = build_cover_letter_system_prompt("concise")
         assert "лаконичный" in prompt.lower()
 
-    def test_detailed_style_includes_style_guidance(self) -> None:
+    def test_detailed_style_mentions_single_paragraph(self) -> None:
         prompt = build_cover_letter_system_prompt("detailed")
-        assert "подробнее" in prompt.lower() or "достижения" in prompt.lower()
+        assert "одного абзаца" in prompt or "абзац" in prompt.lower()
 
     def test_custom_style_uses_fallback(self) -> None:
         prompt = build_cover_letter_system_prompt("formal")
         assert "formal" in prompt or "Стиль:" in prompt
 
-    def test_includes_two_paragraph_structure(self) -> None:
+    def test_requires_single_paragraph_not_two(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
-        assert "2 абзаца" in prompt or "два абзаца" in prompt
-        assert "100" in prompt or "150" in prompt
+        assert "один абзац" in prompt.lower() or "одно связное" in prompt.lower()
+        assert "2 абзаца" not in prompt
 
-    def test_includes_stack_mapping_and_company_relevance_guidance(self) -> None:
+    def test_forbids_metrics_and_raw_numbers(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
-        assert "В вашем стеке" in prompt or "сопоставь стек" in prompt
-        assert (
-            "релевантно" in prompt
-            or "релевантен" in prompt
-            or "компании" in prompt
-        )
+        assert "процент" in prompt.lower()
+        assert "ЗАПРЕТ НА МЕТРИКИ" in prompt or "метрик" in prompt.lower()
+
+    def test_requires_verbatim_vacancy_title(self) -> None:
+        prompt = build_cover_letter_system_prompt("professional")
+        assert "дословно" in prompt.lower()
+        assert "Должность" in prompt
 
     def test_forbids_formal_greeting_and_closing(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
@@ -105,18 +106,20 @@ class TestBuildCoverLetterUserContent:
             vacancy_description="Full description of the vacancy.",
         )
         assert "Senior Python Developer" in content
+        assert "Название вакансии для текста письма (дословно): Senior Python Developer" in content
         assert "Tech Corp" in content
         assert "Full description" in content
 
-    def test_instructs_two_paragraphs_no_greeting(self) -> None:
+    def test_instructs_single_paragraph_no_metrics(self) -> None:
         content = build_cover_letter_user_content(
             work_experiences=[],
             vacancy_title="Dev",
             company_name="Corp",
             vacancy_description="Desc",
         )
-        assert "2 абзаца" in content or "100" in content
-        assert "Без обращения" in content or "без обращения" in content
+        assert "один абзац" in content.lower()
+        assert "процент" in content.lower() or "цифр" in content.lower()
+        assert "дословно" in content.lower()
 
     def test_includes_about_me_when_provided(self) -> None:
         content = build_cover_letter_user_content(

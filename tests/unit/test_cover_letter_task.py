@@ -207,3 +207,187 @@ async def test_cover_letter_task_vacancy_not_found_returns_early() -> None:
         )
 
     assert result == {"status": "vacancy_not_found"}
+
+
+def _cover_letter_bot_mock() -> MagicMock:
+    bot = MagicMock()
+    bot.delete_message = AsyncMock()
+    bot.session = MagicMock()
+    bot.session.close = AsyncMock()
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_cover_letter_task_streaming_success_deletes_placeholder() -> None:
+    task = MagicMock()
+    task.check_enabled = AsyncMock(return_value=True)
+    cb = MagicMock()
+    cb.is_call_allowed.return_value = True
+    task.load_circuit_breaker = AsyncMock(return_value=cb)
+    task_bot = _cover_letter_bot_mock()
+    task.create_bot = MagicMock(return_value=task_bot)
+    task.notify_user = AsyncMock()
+    task.mark_completed = AsyncMock()
+
+    vacancy = MagicMock()
+    vacancy.title = "Lead Python Developer"
+    vacancy.description = "Python, FastAPI."
+    vacancy.company_name = "Acme"
+
+    session = AsyncMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    session_factory = MagicMock(return_value=ctx)
+
+    mock_user = MagicMock()
+    mock_user.first_name = "Иван"
+    mock_user.last_name = ""
+
+    with (
+        patch("src.repositories.task.CeleryTaskRepository") as mock_task_repo_cls,
+        patch("src.repositories.work_experience.WorkExperienceRepository") as mock_we_repo_cls,
+        patch("src.repositories.autoparse.AutoparsedVacancyRepository") as mock_vac_repo_cls,
+        patch(
+            "src.bot.modules.autoparse.services.get_user_autoparse_settings",
+            new_callable=AsyncMock,
+        ) as mock_settings,
+        patch("src.repositories.user.UserRepository") as mock_user_repo_cls,
+        patch(
+            "src.services.ai.streaming.stream_to_telegram",
+            new_callable=AsyncMock,
+        ) as mock_stream,
+        patch("src.services.ai.client.AIClient") as mock_ai_cls,
+    ):
+        mock_task_repo = AsyncMock()
+        mock_task_repo.get_by_idempotency_key = AsyncMock(return_value=None)
+        mock_task_repo_cls.return_value = mock_task_repo
+
+        mock_we_repo = AsyncMock()
+        mock_we_repo.get_active_by_user = AsyncMock(return_value=[])
+        mock_we_repo_cls.return_value = mock_we_repo
+
+        mock_vac_repo = AsyncMock()
+        mock_vac_repo.get_by_id = AsyncMock(return_value=vacancy)
+        mock_vac_repo_cls.return_value = mock_vac_repo
+
+        mock_settings.return_value = {"user_name": "Иван", "about_me": ""}
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=mock_user)
+        mock_user_repo_cls.return_value = mock_user_repo
+
+        mock_stream.return_value = "Иван - разработчик. Релевантен для вакансии."
+        mock_ai_cls.return_value = MagicMock()
+
+        result = await _generate_cover_letter_async(
+            task,
+            session_factory,
+            user_id=1,
+            vacancy_id=10,
+            chat_id=123,
+            message_id=456,
+            locale="ru",
+            cover_letter_style="professional",
+            session_id=1,
+        )
+
+    assert result == {"status": "completed", "vacancy_id": 10, "locale": "ru"}
+    mock_stream.assert_awaited_once()
+    task.notify_user.assert_not_called()
+    task_bot.delete_message.assert_awaited_once_with(chat_id=123, message_id=456)
+    task.mark_completed.assert_awaited_once()
+    call_kw = task.mark_completed.await_args.kwargs
+    assert call_kw["result_data"]["generated_text"] == (
+        "Иван - разработчик. Релевантен для вакансии."
+    )
+    cb.record_success.assert_called_once()
+    task_bot.session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cover_letter_task_fallback_when_stream_raises() -> None:
+    task = MagicMock()
+    task.check_enabled = AsyncMock(return_value=True)
+    cb = MagicMock()
+    cb.is_call_allowed.return_value = True
+    task.load_circuit_breaker = AsyncMock(return_value=cb)
+    task_bot = _cover_letter_bot_mock()
+    task.create_bot = MagicMock(return_value=task_bot)
+    task.notify_user = AsyncMock()
+    task.mark_completed = AsyncMock()
+
+    vacancy = MagicMock()
+    vacancy.title = "Python Developer"
+    vacancy.description = "Desc"
+    vacancy.company_name = "Corp"
+
+    session = AsyncMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    session_factory = MagicMock(return_value=ctx)
+
+    mock_user = MagicMock()
+    mock_user.first_name = None
+    mock_user.last_name = None
+
+    ai_instance = MagicMock()
+    ai_instance.generate_text = AsyncMock(return_value="Fallback письмо.")
+
+    with (
+        patch("src.repositories.task.CeleryTaskRepository") as mock_task_repo_cls,
+        patch("src.repositories.work_experience.WorkExperienceRepository") as mock_we_repo_cls,
+        patch("src.repositories.autoparse.AutoparsedVacancyRepository") as mock_vac_repo_cls,
+        patch(
+            "src.bot.modules.autoparse.services.get_user_autoparse_settings",
+            new_callable=AsyncMock,
+        ) as mock_settings,
+        patch("src.repositories.user.UserRepository") as mock_user_repo_cls,
+        patch(
+            "src.services.ai.streaming.stream_to_telegram",
+            new_callable=AsyncMock,
+        ) as mock_stream,
+        patch("src.services.ai.client.AIClient") as mock_ai_cls,
+    ):
+        mock_task_repo = AsyncMock()
+        mock_task_repo.get_by_idempotency_key = AsyncMock(return_value=None)
+        mock_task_repo_cls.return_value = mock_task_repo
+
+        mock_we_repo = AsyncMock()
+        mock_we_repo.get_active_by_user = AsyncMock(return_value=[])
+        mock_we_repo_cls.return_value = mock_we_repo
+
+        mock_vac_repo = AsyncMock()
+        mock_vac_repo.get_by_id = AsyncMock(return_value=vacancy)
+        mock_vac_repo_cls.return_value = mock_vac_repo
+
+        mock_settings.return_value = {"user_name": "", "about_me": ""}
+
+        mock_user_repo = AsyncMock()
+        mock_user_repo.get_by_id = AsyncMock(return_value=mock_user)
+        mock_user_repo_cls.return_value = mock_user_repo
+
+        mock_stream.side_effect = RuntimeError("draft API unavailable")
+        mock_ai_cls.return_value = ai_instance
+
+        result = await _generate_cover_letter_async(
+            task,
+            session_factory,
+            user_id=1,
+            vacancy_id=10,
+            chat_id=123,
+            message_id=456,
+            locale="ru",
+            cover_letter_style="professional",
+            session_id=0,
+        )
+
+    assert result == {"status": "completed", "vacancy_id": 10, "locale": "ru"}
+    ai_instance.generate_text.assert_awaited_once()
+    task.notify_user.assert_awaited_once()
+    task_bot.delete_message.assert_not_called()
+    stored = task.mark_completed.await_args.kwargs["result_data"]["generated_text"]
+    assert stored == "Fallback письмо."
+    assert cb.record_success.call_count == 1
+    task_bot.session.close.assert_awaited_once()
