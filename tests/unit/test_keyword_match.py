@@ -4,8 +4,8 @@ from src.services.parser.keyword_match import matches_keyword_expression, strip_
 
 
 class TestStripSymbols:
-    def test_removes_special_characters(self):
-        assert strip_symbols("hello-world!") == "helloworld"
+    def test_replaces_special_characters_with_spaces(self):
+        assert strip_symbols("hello-world!") == "hello world"
 
     def test_keeps_letters_numbers_spaces(self):
         assert strip_symbols("Frontend 2024") == "Frontend 2024"
@@ -74,3 +74,52 @@ class TestMatchesKeywordExpression:
     )
     def test_parametrized_cases(self, title: str, expr: str, expected: bool):
         assert matches_keyword_expression(title, expr) == expected
+
+    def test_go_not_inside_category(self):
+        assert not matches_keyword_expression(
+            "Product owner for category management",
+            "go",
+        )
+
+    def test_go_not_inside_google(self):
+        assert not matches_keyword_expression(
+            "Integration with Google Workspace",
+            "go",
+        )
+
+    def test_go_matches_standalone(self):
+        assert matches_keyword_expression(
+            "Backend developer Go microservices",
+            "go",
+        )
+
+    def test_java_not_inside_javascript(self):
+        assert not matches_keyword_expression(
+            "javascript developer frontend",
+            "java",
+        )
+
+    def test_java_matches_standalone(self):
+        assert matches_keyword_expression(
+            "Java developer backend",
+            "java",
+        )
+
+    def test_python_whole_word_in_snippet_style_text(self):
+        assert matches_keyword_expression(
+            "Аналитик требований. Знание Python приветствуется.",
+            "python",
+        )
+
+    def test_react_whole_word_in_react_native(self):
+        assert matches_keyword_expression(
+            "Mobile React Native analyst",
+            "react",
+        )
+
+    def test_backend_hyphen_compound_snippet(self):
+        """Hyphens become spaces so backend is its own token (HH snippet style)."""
+        assert matches_keyword_expression(
+            "Коммерческий опыт backend-разработки на PHP",
+            "backend",
+        )
