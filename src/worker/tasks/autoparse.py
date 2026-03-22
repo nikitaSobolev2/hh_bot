@@ -701,7 +701,11 @@ async def _deliver_results_async(
 ) -> dict:
     from zoneinfo import ZoneInfo
 
-    from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
+    from src.repositories.autoparse import (
+        AutoparseCompanyRepository,
+        AutoparsedVacancyRepository,
+        feed_vacancy_newest_first_key,
+    )
     from src.repositories.user import UserRepository
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
@@ -768,6 +772,9 @@ async def _deliver_results_async(
             for v in unreviewed:
                 if v.id not in already_included:
                     new_vacancies.append(v)
+
+        # Newest on HH first (published_at); missing date falls back to id.
+        new_vacancies.sort(key=feed_vacancy_newest_first_key)
 
     if not new_vacancies:
         return {"status": "no_new_vacancies"}

@@ -9,6 +9,21 @@ from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
 from src.repositories.base import BaseRepository
 
 
+def feed_vacancy_newest_first_key(v: AutoparsedVacancy) -> tuple:
+    """Sort key: newest HH published_at first; missing date last, then id desc."""
+    if v.published_at is not None:
+        return (0, -v.published_at.timestamp(), -v.id)
+    return (1, -v.id)
+
+
+def _feed_order_by_clause() -> tuple:
+    """SQL ``ORDER BY``: HH publication time (newest first), then primary key."""
+    return (
+        AutoparsedVacancy.published_at.desc().nulls_last(),
+        AutoparsedVacancy.id.desc(),
+    )
+
+
 class AutoparseCompanyRepository(BaseRepository[AutoparseCompany]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, AutoparseCompany)
@@ -92,7 +107,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         stmt = (
             select(AutoparsedVacancy)
             .where(AutoparsedVacancy.autoparse_company_id == company_id)
-            .order_by(AutoparsedVacancy.created_at.desc())
+            .order_by(*_feed_order_by_clause())
             .offset(offset)
             .limit(limit)
         )
@@ -112,7 +127,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         stmt = (
             select(AutoparsedVacancy)
             .where(AutoparsedVacancy.autoparse_company_id == company_id)
-            .order_by(AutoparsedVacancy.created_at.desc())
+            .order_by(*_feed_order_by_clause())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -160,12 +175,16 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         """Fetch vacancies by primary-key list, keeping those meeting min_compat."""
         if not ids:
             return []
-        stmt = select(AutoparsedVacancy).where(
-            AutoparsedVacancy.id.in_(ids),
-            or_(
-                AutoparsedVacancy.compatibility_score.is_(None),
-                AutoparsedVacancy.compatibility_score >= min_compat,
-            ),
+        stmt = (
+            select(AutoparsedVacancy)
+            .where(
+                AutoparsedVacancy.id.in_(ids),
+                or_(
+                    AutoparsedVacancy.compatibility_score.is_(None),
+                    AutoparsedVacancy.compatibility_score >= min_compat,
+                ),
+            )
+            .order_by(*_feed_order_by_clause())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -176,7 +195,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
             return []
         stmt = select(AutoparsedVacancy).where(
             AutoparsedVacancy.id.in_(ids),
-        ).order_by(AutoparsedVacancy.created_at.desc())
+        ).order_by(*_feed_order_by_clause())
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
@@ -198,7 +217,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
                     AutoparsedVacancy.compatibility_score >= min_compat,
                 ),
             )
-            .order_by(AutoparsedVacancy.created_at.desc())
+            .order_by(*_feed_order_by_clause())
             .limit(limit)
         )
         result = await self._session.execute(stmt)
@@ -220,7 +239,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
                 AutoparseCompany.user_id == user_id,
                 AutoparseCompany.is_deleted.is_(False),
             )
-            .order_by(AutoparsedVacancy.created_at.desc())
+            .order_by(*_feed_order_by_clause())
             .limit(limit)
         )
         if exclude_vacancy_ids:
@@ -248,7 +267,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
                     AutoparsedVacancy.compatibility_score < min_compat,
                 ),
             )
-            .order_by(AutoparsedVacancy.created_at.desc())
+            .order_by(*_feed_order_by_clause())
             .limit(limit)
         )
         if exclude_vacancy_ids:
