@@ -33,7 +33,7 @@ When the official applicant API is unavailable, set `HH_UI_APPLY_ENABLED=true` a
 **Ways to provide `storage_state`:**
 
 1. **Telegram JSON upload** — Settings → HeadHunter accounts → Add account (when OAuth is off): send the `.json` file produced locally (see below).
-2. **Server-side login assist (optional)** — Set `HH_LOGIN_ASSIST_ENABLED=true` and use “Server login” in the same menu. A Celery worker runs Playwright, opens the hh.ru login page, and waits until the session looks logged-in. **Headless containers cannot type for the user**; for real users you typically need a **viewer URL** (`HH_LOGIN_ASSIST_VIEWER_URL`, e.g. noVNC) and `DISPLAY` + `HH_LOGIN_ASSIST_HEADLESS=false` on the worker. See [docs/HH_LOGIN_ASSIST.md](docs/HH_LOGIN_ASSIST.md) and `docker-compose.login-assist.example.yml`.
+2. **Server-side login assist (optional)** — Set `HH_LOGIN_ASSIST_ENABLED=true` and use “Server login” in the same menu. Run the **`celery_worker_login_assist`** service from [`docker-compose.yml`](docker-compose.yml) (Dockerfile target `login_assist`: Xvfb, noVNC/websockify on port 6080). Set **`HH_LOGIN_ASSIST_VIEWER_URL`** to your HTTPS (or LAN test) noVNC URL, e.g. `https://your-host/vnc.html` or `http://server:6080/vnc.html`. Default Celery workers only consume queue `celery`; login assist uses queue `login_assist`. See [docs/HH_LOGIN_ASSIST.md](docs/HH_LOGIN_ASSIST.md).
 
 **Local script (for file upload path):**
 
@@ -108,8 +108,10 @@ flowchart TD
 
 ```
 hh_bot/
-├── docker-compose.yml              # PostgreSQL, Redis, bot, Celery worker (×5 replicas)
-├── Dockerfile                      # python:3.12-slim; shared image; Playwright Chromium for UI apply
+├── docker-compose.yml              # PostgreSQL, Redis, bot, Celery (queues celery + login_assist)
+├── Dockerfile                      # Multi-stage: app (default), login_assist (Xvfb/noVNC for HH login assist)
+├── docker/
+│   └── entrypoint-login-assist.sh  # Xvfb + x11vnc + websockify before Celery (target login_assist)
 ├── pyproject.toml                  # Dependencies, pytest, ruff config
 ├── alembic.ini
 ├── alembic/

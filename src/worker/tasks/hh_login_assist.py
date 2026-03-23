@@ -189,6 +189,7 @@ async def _login_assist_async(
     bind=True,
     base=HHBotTask,
     name="hh.login_assist",
+    queue="login_assist",
     soft_time_limit=960,
     time_limit=1020,
 )

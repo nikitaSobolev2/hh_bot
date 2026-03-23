@@ -42,6 +42,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: app
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -60,6 +61,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: app
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -67,9 +69,43 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A src.worker.app worker --loglevel=info --concurrency=2
+    command: celery -A src.worker.app worker --loglevel=info --concurrency=2 -Q celery
     deploy:
       replicas: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Single DISPLAY for Playwright headed login; consumes Celery queue login_assist only.
+  celery_worker_login_assist:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: login_assist
+    restart: unless-stopped
+    env_file: .env
+    entrypoint: ["/app/docker/entrypoint-login-assist.sh"]
+    command:
+      - celery
+      - -A
+      - src.worker.app
+      - worker
+      - --loglevel=info
+      - --concurrency=1
+      - -Q
+      - login_assist
+    environment:
+      DISPLAY: ":99"
+      HH_LOGIN_ASSIST_HEADLESS: "false"
+    ports:
+      - "${LOGIN_ASSIST_NOVNC_PORT:-6080}:6080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     logging:
       driver: json-file
       options:
