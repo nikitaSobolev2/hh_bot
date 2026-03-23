@@ -6,6 +6,8 @@ from src.models.ban import UserBan
 from src.models.blacklist import VacancyBlacklist
 from src.models.cover_letter_vacancy import CoverLetterVacancy
 from src.models.hh import HHArea, HHEmployer
+from src.models.hh_application_attempt import HhApplicationAttempt
+from src.models.hh_linked_account import HhLinkedAccount
 from src.models.interview import (
     Interview,
     InterviewImprovement,
@@ -76,4 +78,6 @@ __all__ = [
     "RecommendationLetter",
     "HHEmployer",
     "HHArea",
+    "HhLinkedAccount",
+    "HhApplicationAttempt",
 ]

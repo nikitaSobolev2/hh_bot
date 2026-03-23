@@ -461,8 +461,34 @@ async def handle_view_feed_below_compat(
 
     from src.bot.modules.autoparse.callbacks import FeedCallback
     from src.bot.modules.autoparse.feed_services import build_stats_message
+    from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
     from src.core.i18n import get_text
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+    from src.services.hh.feed_gating import HhFeedAccountStatus, classify_user_hh_accounts
+
+    hh_status, hh_accounts = await classify_user_hh_accounts(session, user.id)
+    if hh_status == HhFeedAccountStatus.NONE:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=i18n.get("hh-accounts-open"),
+                        callback_data=HhAccountCallback(action="menu").pack(),
+                    )
+                ],
+            ]
+        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-no-hh-link"),
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        return
+
+    hh_linked_id = hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
 
     feed_repo = VacancyFeedSessionRepository(session)
     feed_session = await feed_repo.create(
@@ -470,6 +496,7 @@ async def handle_view_feed_below_compat(
         autoparse_company_id=first_company_id,
         chat_id=user.telegram_id,
         vacancy_ids=[v.id for v in vacancies],
+        hh_linked_account_id=hh_linked_id,
         current_index=0,
         liked_ids=[],
         disliked_ids=[],
@@ -484,32 +511,59 @@ async def handle_view_feed_below_compat(
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=get_text("feed-btn-start", i18n.locale),
-                    callback_data=FeedCallback(
-                        action="start", session_id=feed_session.id
-                    ).pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=get_text("feed-btn-stop", i18n.locale),
-                    callback_data=FeedCallback(
-                        action="stop", session_id=feed_session.id
-                    ).pack(),
-                )
-            ],
+    if len(hh_accounts) > 1:
+        text = f"{text}\n\n{i18n.get('feed-pick-hh-hint')}"
+        rows: list[list[InlineKeyboardButton]] = []
+        for acc in hh_accounts:
+            label = (acc.label or acc.hh_user_id)[:40]
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=label,
+                        callback_data=FeedCallback(
+                            action="pick_hh_account",
+                            session_id=feed_session.id,
+                            hh_account_id=acc.id,
+                        ).pack(),
+                    )
+                ]
+            )
+        rows.append(
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-back"),
                     callback_data=AutoparseCallback(action="list").pack(),
                 )
-            ],
-        ]
-    )
+            ]
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+    else:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=i18n.get("feed-btn-start"),
+                        callback_data=FeedCallback(
+                            action="start", session_id=feed_session.id
+                        ).pack(),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=i18n.get("feed-btn-stop"),
+                        callback_data=FeedCallback(
+                            action="stop", session_id=feed_session.id
+                        ).pack(),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=i18n.get("btn-back"),
+                        callback_data=AutoparseCallback(action="list").pack(),
+                    )
+                ],
+            ]
+        )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,

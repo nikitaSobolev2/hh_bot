@@ -3,6 +3,7 @@
 .venv
 .env
 *.env.local
+hh_browser_storage_state.json
 
 logs/
 reports/

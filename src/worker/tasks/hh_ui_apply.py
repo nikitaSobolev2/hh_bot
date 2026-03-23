@@ -1,0 +1,205 @@
+"""Celery task: apply to an hh.ru vacancy via Playwright (UI)."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from src.config import settings
+from src.core.i18n import I18nContext, get_text
+from src.core.logging import get_logger
+from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
+from src.repositories.hh_linked_account import HhLinkedAccountRepository
+from src.services.hh.crypto import HhTokenCipher
+from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
+from src.services.hh_ui.runner import apply_to_vacancy_ui, normalize_hh_vacancy_url
+from src.services.hh_ui.storage import decrypt_browser_storage
+from src.worker.app import celery_app
+from src.worker.base_task import HHBotTask
+from src.worker.utils import run_async
+
+logger = get_logger(__name__)
+
+
+def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
+    """Return (status, error_code) for hh_application_attempts."""
+    if outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
+        return "success", None if outcome == ApplyOutcome.SUCCESS else f"ui:{outcome.value}"
+    if outcome == ApplyOutcome.RATE_LIMITED:
+        return "error", "ui:rate_limited"
+    return "error", f"ui:{outcome.value}"
+
+
+async def _apply_ui_async(
+    self,
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    autoparsed_vacancy_id: int,
+    hh_vacancy_id: str,
+    resume_id: str,
+    vacancy_url: str,
+    feed_session_id: int,
+) -> dict:
+    from src.bot.modules.autoparse import feed_services
+    from src.bot.modules.autoparse.feed_handlers import feed_vacancy_keyboard
+    from src.repositories.autoparse import AutoparsedVacancyRepository, VacancyFeedSessionRepository
+
+    bot = self.create_bot()
+    try:
+        cipher = HhTokenCipher(settings.hh_token_encryption_key)
+        config = HhUiApplyConfig.from_settings()
+
+        async with session_factory() as session:
+            acc_repo = HhLinkedAccountRepository(session)
+            acc = await acc_repo.get_by_id(hh_linked_account_id)
+            if not acc or not acc.browser_storage_enc:
+                logger.warning(
+                    "hh_ui apply: missing browser session",
+                    account_id=hh_linked_account_id,
+                )
+                await self.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    get_text("feed-respond-ui-no-session", locale),
+                )
+                return {"status": "error", "reason": "no_browser_session"}
+
+            storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+            if not storage:
+                await self.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    get_text("feed-respond-ui-no-session", locale),
+                )
+                return {"status": "error", "reason": "decrypt_failed"}
+
+            vac_repo = AutoparsedVacancyRepository(session)
+            vacancy = await vac_repo.get_by_id(autoparsed_vacancy_id)
+            feed_repo = VacancyFeedSessionRepository(session)
+            feed_session = await feed_repo.get_by_id(feed_session_id)
+
+        url = normalize_hh_vacancy_url(
+            vacancy_url or (vacancy.url if vacancy else None),
+            hh_vacancy_id,
+        )
+
+        try:
+            result = await asyncio.to_thread(
+                apply_to_vacancy_ui,
+                storage_state=storage,
+                vacancy_url=url,
+                resume_hh_id=resume_id,
+                config=config,
+            )
+        except Exception as exc:
+            logger.exception("hh_ui apply failed", error=str(exc))
+            result = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
+
+        status, err_code = _map_outcome_to_status(result.outcome)
+        excerpt = (result.detail or "")[:2000]
+        if result.screenshot_bytes:
+            excerpt = f"{excerpt}\n[screenshot omitted {len(result.screenshot_bytes)}b]"
+
+        async with session_factory() as session:
+            attempt_repo = HhApplicationAttemptRepository(session)
+            await attempt_repo.create(
+                user_id=user_id,
+                hh_linked_account_id=hh_linked_account_id,
+                autoparsed_vacancy_id=autoparsed_vacancy_id,
+                hh_vacancy_id=hh_vacancy_id,
+                resume_id=resume_id,
+                status=status,
+                api_negotiation_id=None,
+                error_code=err_code,
+                response_excerpt=excerpt or None,
+            )
+            await session.commit()
+
+        i18n = I18nContext(locale)
+
+        if not vacancy or not feed_session:
+            await self.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("feed-respond-ui-task-result", locale, outcome=result.outcome.value),
+            )
+            return {"status": status, "outcome": result.outcome.value}
+
+        total = len(feed_session.vacancy_ids)
+        text = feed_services.build_vacancy_card(
+            vacancy, feed_session.current_index, total, locale
+        )
+        if status == "success":
+            text = f"{text}\n\n{get_text('feed-respond-success', locale)}"
+        else:
+            detail = err_code or result.outcome.value
+            text = f"{text}\n\n{get_text('feed-respond-error', locale, detail=detail)}"
+
+        keyboard = feed_vacancy_keyboard(
+            feed_session.id,
+            vacancy.id,
+            vacancy.url,
+            i18n,
+            current_index=feed_session.current_index,
+        )
+
+        await self.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            text,
+            reply_markup=keyboard,
+        )
+
+        return {"status": status, "outcome": result.outcome.value}
+    finally:
+        with contextlib.suppress(Exception):
+            await bot.session.close()
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="hh_ui.apply_to_vacancy",
+    soft_time_limit=360,
+    time_limit=420,
+)
+def apply_to_vacancy_ui_task(
+    self,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    autoparsed_vacancy_id: int,
+    hh_vacancy_id: str,
+    resume_id: str,
+    vacancy_url: str,
+    feed_session_id: int,
+) -> dict:
+    return run_async(
+        lambda sf: _apply_ui_async(
+            self,
+            sf,
+            user_id,
+            chat_id,
+            message_id,
+            locale,
+            hh_linked_account_id,
+            autoparsed_vacancy_id,
+            hh_vacancy_id,
+            resume_id,
+            vacancy_url,
+            feed_session_id,
+        )
+    )

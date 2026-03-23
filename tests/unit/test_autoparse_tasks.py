@@ -2,15 +2,30 @@
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.hh.feed_gating import HhFeedAccountStatus
 from src.worker.tasks.autoparse import (
     _build_user_profile,
     _deliver_results_async,
     _resolve_cached_vacancy,
 )
+
+
+def _patch_hh_classify_single():
+    """HH account gating: one linked account so delivery tests need no real DB."""
+    return patch(
+        "src.services.hh.feed_gating.classify_user_hh_accounts",
+        AsyncMock(
+            return_value=(
+                HhFeedAccountStatus.SINGLE,
+                [SimpleNamespace(id=1)],
+            )
+        ),
+    )
 
 
 class TestBuildUserProfile:
@@ -495,6 +510,7 @@ class TestDeliverLastDeliveredAt:
                 "src.worker.tasks.autoparse._send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
+            _patch_hh_classify_single(),
         ):
             result = await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
@@ -683,6 +699,7 @@ class TestDeliverSeenIdsFilter:
                 "src.worker.tasks.autoparse._send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
+            _patch_hh_classify_single(),
         ):
             result = await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
@@ -739,6 +756,7 @@ class TestDeliverSeenIdsFilter:
                 "src.worker.tasks.autoparse._send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
+            _patch_hh_classify_single(),
         ):
             result = await _deliver_results_async(
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True

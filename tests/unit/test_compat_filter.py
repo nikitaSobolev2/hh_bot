@@ -363,6 +363,10 @@ class TestParsingTaskCompatIntegration:
             return_value=[{"url": "https://hh.ru/vacancy/1", "title": "Test", "hh_vacancy_id": "1"}]
         )
 
+        mock_staleness_redis = MagicMock()
+        mock_staleness_redis.set = AsyncMock()
+        mock_staleness_redis.get = AsyncMock(return_value=None)
+
         with (
             patch(
                 "src.worker.tasks.parsing._init_bot_and_locale",
@@ -394,6 +398,10 @@ class TestParsingTaskCompatIntegration:
             patch(
                 "src.services.task_checkpoint.create_checkpoint_redis",
                 return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.staleness_progress.create_staleness_redis",
+                return_value=mock_staleness_redis,
             ),
             patch(
                 "src.services.parser.scraper.HHScraper",
@@ -467,6 +475,10 @@ class TestParsingTaskCompatIntegration:
             return_value=[{"url": "https://hh.ru/vacancy/1", "title": "Test", "hh_vacancy_id": "1"}]
         )
 
+        mock_staleness_redis = MagicMock()
+        mock_staleness_redis.set = AsyncMock()
+        mock_staleness_redis.get = AsyncMock(return_value=None)
+
         with (
             patch(
                 "src.worker.tasks.parsing._init_bot_and_locale",
@@ -494,6 +506,10 @@ class TestParsingTaskCompatIntegration:
             patch(
                 "src.services.task_checkpoint.create_checkpoint_redis",
                 return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.staleness_progress.create_staleness_redis",
+                return_value=mock_staleness_redis,
             ),
             patch(
                 "src.services.parser.scraper.HHScraper",

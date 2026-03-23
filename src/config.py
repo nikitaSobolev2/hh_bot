@@ -40,6 +40,23 @@ class Settings(BaseSettings):
     # Admin — comma-separated Telegram user IDs for initial admin seeding
     admin_telegram_ids: str = ""
 
+    # HeadHunter OAuth (https://api.hh.ru/openapi/redoc)
+    hh_client_id: str = ""
+    hh_client_secret: str = ""
+    hh_oauth_redirect_uri: str = ""
+    hh_user_agent: str = "HHBot/1.0 (dev@localhost)"
+    hh_token_encryption_key: str = ""
+
+    # HeadHunter UI apply (Playwright) — optional; off by default
+    hh_ui_apply_enabled: bool = False
+    hh_ui_apply_max_per_day: int = 50
+    hh_ui_navigation_timeout_ms: int = 60000
+    hh_ui_action_timeout_ms: int = 30000
+    hh_ui_min_action_delay_ms: int = 300
+    hh_ui_max_action_delay_ms: int = 1200
+    hh_ui_headless: bool = True
+    hh_ui_screenshot_on_error: bool = False
+
     @property
     def database_url(self) -> str:
         return (

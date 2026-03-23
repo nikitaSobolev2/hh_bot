@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.bot.callbacks.common import MenuCallback
+from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
 from src.bot.modules.user_settings.callbacks import (
     BlacklistCallback,
     SettingsCallback,
@@ -104,6 +105,12 @@ def settings_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=i18n.get("btn-timezone"),
                     callback_data=SettingsCallback(action="timezone").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-hh-accounts"),
+                    callback_data=HhAccountCallback(action="menu").pack(),
                 )
             ],
             [

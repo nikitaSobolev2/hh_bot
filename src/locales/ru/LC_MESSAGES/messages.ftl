@@ -30,6 +30,44 @@ btn-remove = ❌ Удалить
 btn-yes = ✅ Да
 btn-no = ❌ Нет
 btn-type-manually = ✏️ Ввести вручную
+btn-hh-accounts = 🧑‍💼 Аккаунты HeadHunter
+
+# ── HeadHunter OAuth ─────────────────────────────────────
+hh-accounts-title = <b>Аккаунты HeadHunter</b>
+hh-accounts-empty = Аккаунты hh.ru не подключены. Добавьте аккаунт, чтобы откликаться на вакансии из ленты.
+hh-accounts-add = ➕ Добавить аккаунт
+hh-accounts-add-hint = Откройте ссылку, войдите на hh.ru и разрешите доступ. Затем вернитесь сюда.
+hh-accounts-open-browser = 🔗 Открыть hh.ru
+hh-accounts-open = 🔗 Подключить HeadHunter
+hh-accounts-remove = 🗑 Отвязать
+hh-oauth-not-configured = OAuth HeadHunter не настроен на сервере.
+hh-account-not-found = Аккаунт не найден.
+hh-accounts-removed = Аккаунт отвязан.
+hh-accounts-rename-prompt = Отправьте короткое название для этого аккаунта (или /cancel).
+hh-accounts-rename-empty = Название не может быть пустым.
+hh-accounts-renamed = Название сохранено.
+hh-account-selected = Аккаунт выбран.
+hh-token-error = Не удалось обновить сессию hh.ru. Подключите аккаунт снова.
+
+# ── Vacancy feed (HH) ─────────────────────────────────────
+feed-no-hh-link = Подключите аккаунт HeadHunter: Настройки → Аккаунты HeadHunter — чтобы пользоваться лентой и откликами.
+feed-pick-hh-hint = Выберите профиль hh.ru для этой ленты:
+feed-pick-hh-first = Сначала выберите аккаунт HeadHunter для этой ленты.
+feed-btn-respond-hh = 📨 Откликнуться на hh.ru
+feed-respond-no-resumes = На этом аккаунте hh.ru не найдено резюме.
+feed-respond-fetch-error = Не удалось загрузить резюме с hh.ru.
+feed-respond-pick-resume = <b>Выберите резюме для отклика:</b>
+feed-respond-bad-resume = Некорректный выбор резюме.
+feed-respond-success = ✅ Отклик отправлен на hh.ru (проверьте отклики на сайте).
+feed-respond-error = ❌ Не удалось откликнуться: { $detail }
+feed-respond-no-browser-session = Нет сохранённой браузерной сессии hh.ru. Запустите scripts/hh_browser_login.py и загрузите storage в БД (см. README).
+feed-respond-ui-captcha = На hh.ru показана проверка (капча). Отклик вручную на сайте.
+feed-respond-ui-session-expired = Сессия hh.ru истекла. Обновите storage (scripts/hh_browser_login.py).
+feed-respond-ui-already-applied = Вы уже успешно откликались на эту вакансию с этим резюме.
+feed-respond-ui-rate-limited = Достигнут дневной лимит автооткликов (UI). Попробуйте завтра.
+feed-respond-ui-queued = ⏳ Отклик поставлен в очередь (браузерная автоматизация). Результат придёт в этот чат.
+feed-respond-ui-no-session = Нет сохранённой браузерной сессии для отклика.
+feed-respond-ui-task-result = Результат отклика (UI): { $outcome }
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Профиль</b>

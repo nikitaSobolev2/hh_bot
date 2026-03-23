@@ -30,6 +30,44 @@ btn-remove = ❌ Remove
 btn-yes = ✅ Yes
 btn-no = ❌ No
 btn-type-manually = ✏️ Type manually
+btn-hh-accounts = 🧑‍💼 HeadHunter accounts
+
+# ── HeadHunter OAuth (linked hh.ru accounts) ─────────────
+hh-accounts-title = <b>HeadHunter accounts</b>
+hh-accounts-empty = No hh.ru accounts linked yet. Add one to respond to vacancies from the feed.
+hh-accounts-add = ➕ Add account
+hh-accounts-add-hint = Open the link, sign in on hh.ru, and approve access. Then return here.
+hh-accounts-open-browser = 🔗 Open hh.ru
+hh-accounts-open = 🔗 Connect HeadHunter
+hh-accounts-remove = 🗑 Remove
+hh-oauth-not-configured = HeadHunter OAuth is not configured on the server.
+hh-account-not-found = Account not found.
+hh-accounts-removed = Account disconnected.
+hh-accounts-rename-prompt = Send a short label for this account (or /cancel).
+hh-accounts-rename-empty = Label cannot be empty.
+hh-accounts-renamed = Label saved.
+hh-account-selected = Account selected.
+hh-token-error = Could not refresh HeadHunter session. Link the account again.
+
+# ── Vacancy feed (HH) ─────────────────────────────────────
+feed-no-hh-link = Connect a HeadHunter account in Settings → HeadHunter accounts to use the feed and respond.
+feed-pick-hh-hint = Choose which HeadHunter profile to use for this feed:
+feed-pick-hh-first = Choose a HeadHunter account for this feed first.
+feed-btn-respond-hh = 📨 Respond on hh.ru
+feed-respond-no-resumes = No resumes found on this HeadHunter account.
+feed-respond-fetch-error = Could not load resumes from hh.ru.
+feed-respond-pick-resume = <b>Choose a resume to respond with:</b>
+feed-respond-bad-resume = Invalid resume selection.
+feed-respond-success = ✅ Response sent on hh.ru (check your applications on the site).
+feed-respond-error = ❌ Could not respond: { $detail }
+feed-respond-no-browser-session = No saved hh.ru browser session. Run scripts/hh_browser_login.py and load storage into the DB (see README).
+feed-respond-ui-captcha = hh.ru is showing a captcha challenge. Respond manually on the site.
+feed-respond-ui-session-expired = hh.ru session expired. Refresh storage (scripts/hh_browser_login.py).
+feed-respond-ui-already-applied = You already successfully applied to this vacancy with this resume.
+feed-respond-ui-rate-limited = Daily UI apply limit reached. Try again tomorrow.
+feed-respond-ui-queued = ⏳ Apply queued (browser automation). Result will appear in this chat.
+feed-respond-ui-no-session = No browser session stored for applying.
+feed-respond-ui-task-result = Apply result (UI): { $outcome }
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Profile</b>

@@ -50,6 +50,8 @@ async def create_feed_session(
     company_id: int,
     chat_id: int,
     vacancy_ids: list[int],
+    *,
+    hh_linked_account_id: int | None = None,
 ) -> VacancyFeedSession:
     repo = VacancyFeedSessionRepository(session)
     feed_session = await repo.create(
@@ -57,6 +59,7 @@ async def create_feed_session(
         autoparse_company_id=company_id,
         chat_id=chat_id,
         vacancy_ids=vacancy_ids,
+        hh_linked_account_id=hh_linked_account_id,
         current_index=0,
         liked_ids=[],
         disliked_ids=[],

@@ -10,6 +10,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY . .
-RUN pip install --no-cache-dir .
+# Install app + Playwright Chromium + OS deps (required for celery_worker hh_ui.apply_to_vacancy).
+RUN pip install --no-cache-dir . \
+    && python -m playwright install --with-deps chromium
 
 CMD ["python", "-m", "src"]

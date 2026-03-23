@@ -11,6 +11,7 @@ from src.db.base import Base
 
 if TYPE_CHECKING:
     from src.models.autoparse import AutoparseCompany
+    from src.models.hh_linked_account import HhLinkedAccount
     from src.models.user import User
 
 
@@ -20,6 +21,9 @@ class VacancyFeedSession(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     autoparse_company_id: Mapped[int] = mapped_column(
         ForeignKey("autoparse_companies.id", ondelete="CASCADE"), nullable=False
+    )
+    hh_linked_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hh_linked_accounts.id", ondelete="SET NULL"), nullable=True
     )
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     vacancy_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -31,6 +35,7 @@ class VacancyFeedSession(Base):
 
     user: Mapped[User] = relationship()
     autoparse_company: Mapped[AutoparseCompany] = relationship()
+    hh_linked_account: Mapped[HhLinkedAccount | None] = relationship()
 
     def __repr__(self) -> str:
         return (

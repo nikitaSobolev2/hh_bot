@@ -779,12 +779,28 @@ async def _deliver_results_async(
     if not new_vacancies:
         return {"status": "no_new_vacancies"}
 
+    from src.services.hh.feed_gating import HhFeedAccountStatus, classify_user_hh_accounts
+
+    async with session_factory() as session:
+        hh_status, hh_accounts = await classify_user_hh_accounts(session, user_id)
+
+    if hh_status == HhFeedAccountStatus.NONE:
+        await _send_no_hh_account_message(
+            bot_token=settings.bot_token,
+            chat_id=user.telegram_id,
+            locale=locale,
+        )
+        return {"status": "no_hh_account"}
+
+    hh_linked_id: int | None = hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
+
     feed_session_id = await _create_feed_session(
         session_factory,
         user_id=user_id,
         company_id=company_id,
         chat_id=user.telegram_id,
         vacancy_ids=[v.id for v in new_vacancies],
+        hh_linked_account_id=hh_linked_id,
     )
 
     await _send_feed_stats_card(
@@ -794,6 +810,7 @@ async def _deliver_results_async(
         vacancies=new_vacancies,
         feed_session_id=feed_session_id,
         locale=locale,
+        linked_accounts=hh_accounts,
     )
 
     async with session_factory() as session:
@@ -814,6 +831,8 @@ async def _create_feed_session(
     company_id: int,
     chat_id: int,
     vacancy_ids: list[int],
+    *,
+    hh_linked_account_id: int | None = None,
 ) -> int:
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
@@ -824,6 +843,7 @@ async def _create_feed_session(
             autoparse_company_id=company_id,
             chat_id=chat_id,
             vacancy_ids=vacancy_ids,
+            hh_linked_account_id=hh_linked_account_id,
             current_index=0,
             liked_ids=[],
             disliked_ids=[],
@@ -833,6 +853,44 @@ async def _create_feed_session(
         return feed_session.id
 
 
+async def _send_no_hh_account_message(
+    bot_token: str,
+    chat_id: int,
+    locale: str,
+) -> None:
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
+
+    text = get_text("feed-no-hh-link", locale)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=get_text("hh-accounts-open", locale),
+                    callback_data=HhAccountCallback(action="menu").pack(),
+                )
+            ],
+        ]
+    )
+    bot = Bot(
+        token=bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+    finally:
+        await bot.session.close()
+
+
 async def _send_feed_stats_card(
     bot_token: str,
     chat_id: int,
@@ -840,6 +898,8 @@ async def _send_feed_stats_card(
     vacancies: list,
     feed_session_id: int,
     locale: str,
+    *,
+    linked_accounts: list | None = None,
 ) -> None:
     from aiogram import Bot
     from aiogram.client.default import DefaultBotProperties
@@ -853,28 +913,56 @@ async def _send_feed_stats_card(
     avg_compat = sum(compat_scores) / len(compat_scores) if compat_scores else None
 
     text = build_stats_message(vacancy_title, len(vacancies), avg_compat, locale)
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=get_text("feed-btn-start", locale),
-                    callback_data=FeedCallback(action="start", session_id=feed_session_id).pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=get_text("feed-btn-stop", locale),
-                    callback_data=FeedCallback(action="stop", session_id=feed_session_id).pack(),
-                )
-            ],
+    linked_accounts = linked_accounts or []
+    if len(linked_accounts) > 1:
+        text = f"{text}\n\n{get_text('feed-pick-hh-hint', locale)}"
+        rows: list[list[InlineKeyboardButton]] = []
+        for acc in linked_accounts:
+            label = (acc.label or acc.hh_user_id)[:40]
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=label,
+                        callback_data=FeedCallback(
+                            action="pick_hh_account",
+                            session_id=feed_session_id,
+                            hh_account_id=acc.id,
+                        ).pack(),
+                    )
+                ]
+            )
+        rows.append(
             [
                 InlineKeyboardButton(
                     text=get_text("btn-back", locale),
                     callback_data=AutoparseCallback(action="hub").pack(),
                 )
-            ],
-        ]
-    )
+            ]
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+    else:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=get_text("feed-btn-start", locale),
+                        callback_data=FeedCallback(action="start", session_id=feed_session_id).pack(),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=get_text("feed-btn-stop", locale),
+                        callback_data=FeedCallback(action="stop", session_id=feed_session_id).pack(),
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=get_text("btn-back", locale),
+                        callback_data=AutoparseCallback(action="hub").pack(),
+                    )
+                ],
+            ]
+        )
 
     bot = Bot(
         token=bot_token,

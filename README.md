@@ -26,6 +26,17 @@ A feature-rich Telegram bot that helps Russian-speaking job seekers work with He
 | **Blacklist** | Per-user, per-context vacancy deduplication with configurable expiry |
 | **i18n** | Fluent translation files for Russian and English; locale middleware in place |
 
+### HH.ru apply via Playwright (optional)
+
+When the official applicant API is unavailable, set `HH_UI_APPLY_ENABLED=true` and use a **saved browser session** (Playwright `storage_state`) instead of OAuth REST calls for “Respond” in the feed. The bot acknowledges the Telegram callback before slow Playwright steps so the client does not hit the ~10s callback timeout while loading resumes.
+
+1. Run `alembic upgrade head` so `hh_linked_accounts` has `browser_storage_enc` (and `browser_storage_updated_at`).
+2. Install Chromium for Playwright: `playwright install chromium` (after `pip install -e .`).
+3. Run `python scripts/hh_browser_login.py` from the project root, complete login in the opened window, press Enter. This writes `hh_browser_storage_state.json`.
+4. Encrypt the JSON with the same Fernet key as `HH_TOKEN_ENCRYPTION_KEY` (see `src/services/hh/crypto.py`) and store the ciphertext in `hh_linked_accounts.browser_storage_enc` for the user’s linked row (or automate via a one-off admin script).
+
+Daily limits and delays are controlled via `HH_UI_APPLY_MAX_PER_DAY`, `HH_UI_MIN_ACTION_DELAY_MS`, and `HH_UI_MAX_ACTION_DELAY_MS` in `.env`.
+
 ---
 
 ## Architecture
@@ -91,7 +102,7 @@ flowchart TD
 ```
 hh_bot/
 ├── docker-compose.yml              # PostgreSQL, Redis, bot, Celery worker (×5 replicas)
-├── Dockerfile                      # python:3.12-slim; shared image for bot and worker
+├── Dockerfile                      # python:3.12-slim; shared image; Playwright Chromium for UI apply
 ├── pyproject.toml                  # Dependencies, pytest, ruff config
 ├── alembic.ini
 ├── alembic/

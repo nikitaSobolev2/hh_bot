@@ -14,6 +14,12 @@ class AutoparseEditForm(StatesGroup):
     edit_keywords = State()
 
 
+class FeedRespondForm(StatesGroup):
+    """Picking HH resume for feed respond (stores mapping index → resume id)."""
+
+    choosing_resume = State()
+
+
 class AutoparseSettingsForm(StatesGroup):
     work_exp_company_name = State()
     work_exp_stack = State()
