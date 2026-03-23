@@ -142,6 +142,23 @@ class TestStripAgentWrapper:
         result = _strip_agent_wrapper(raw)
         assert result == "Я Senior разработчик."
 
+    def test_keeps_russian_sections_when_english_preamble_before_separator(self):
+        """Do not drop content before first --- when section markers live in that part."""
+        from src.worker.tasks.vacancy_summary import _strip_agent_wrapper
+
+        raw = (
+            "Here is a draft for your profile.\n\n"
+            "Я Senior Backend Developer с коммерческим опытом.\n\n"
+            "🔥 Как достигаю результата\n"
+            "Строю микросервисы.\n\n"
+            "---\n"
+            "Senior backend engineer focused on distributed systems."
+        )
+        result = _strip_agent_wrapper(raw)
+        assert "Я Senior Backend" in result
+        assert "🔥 Как достигаю" in result
+        assert "Senior backend engineer" in result
+
 
 _VALID_ABOUT_ME = """Я Senior разработчик с опытом.
 

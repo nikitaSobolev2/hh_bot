@@ -39,7 +39,11 @@ def _strip_agent_wrapper(text: str) -> str:
             if before and not any(
                 before.lower().startswith(p.lower()) for p in ("Я ", "🔥", "⭐", "⚠")
             ):
-                result = after
+                # Do not drop `before` if it already contains section markers (RU body may follow
+                # an English preamble — Cyrillic in the intro alone is not enough).
+                has_section_markers = "🔥" in before or "⭐" in before or "⚠" in before
+                if not has_section_markers:
+                    result = after
 
     # Remove leading intro phrase if no --- was used
     for phrase in _INTRO_PHRASES:
@@ -192,10 +196,13 @@ async def _generate_summary_async(
     if context == "regenerate":
         user_content += (
             "\n\n[ВАЖНО] Сгенерируй новый, отличающийся вариант текста «О себе». "
-            "Не повторяй предыдущую формулировку — используй другие формулировки и структуру."
+            "Сохрани ТОЧНО ту же шестисекционную структуру и эмодзи из system prompt (🔥 ⭐️ ⚠️, "
+            "разделитель ---, английский только после ---). "
+            "Меняй только формулировки и примеры; не сокращай до одного абзаца "
+            "и не переходи на английский в русской части."
         )
 
-    temperature = 0.55 if context == "regenerate" else 0.35
+    temperature = 0.45 if context == "regenerate" else 0.35
 
     async def _generate_once(content: str) -> str:
         raw = await ai_client.generate_text(
