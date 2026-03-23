@@ -377,3 +377,37 @@ class TestHandleEditGenerateAiDuties:
         state.update_data.assert_called()
         state.set_state.assert_called()
         callback.answer.assert_called_once()
+
+
+def test_format_detail_text_stays_within_telegram_message_cap():
+    """Long AI-generated achievements/duties must not break detail edit_text (4096)."""
+    from src.bot.modules.work_experience.handlers import _format_detail_text
+
+    exp = MagicMock()
+    exp.company_name = "Acme"
+    exp.title = None
+    exp.period = None
+    exp.stack = "Python, Django"
+    exp.achievements = "- " + "x" * 5000
+    exp.duties = "- " + "y" * 5000
+
+    text = _format_detail_text(exp, _make_i18n())
+    assert len(text) <= 4096
+
+
+def test_format_detail_text_escapes_html_in_ai_duties():
+    """AI duties may contain ``<`` / ``&``; raw HTML breaks edit_text with ParseMode.HTML."""
+    from src.bot.modules.work_experience.handlers import _format_detail_text
+
+    exp = MagicMock()
+    exp.company_name = "Acme"
+    exp.title = None
+    exp.period = None
+    exp.stack = "Python"
+    exp.achievements = None
+    exp.duties = "- Compare a < b & use <tags>\n- C++"
+
+    text = _format_detail_text(exp, _make_i18n())
+    assert len(text) <= 4096
+    assert "<tags>" not in text
+    assert "&lt;tags&gt;" in text or "&lt;" in text

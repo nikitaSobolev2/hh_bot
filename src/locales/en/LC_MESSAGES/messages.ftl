@@ -274,6 +274,7 @@ we-edit-enter-stack = Enter new tech stack (comma-separated):
 we-label-achievements = Achievements
 we-label-duties = Duties
 we-not-set = Not set
+we-detail-text-truncated = Long achievements or duties text was shortened to fit Telegram’s 4096 character limit.
 we-deleted = ✅ Entry deleted
 we-btn-edit-company-name = ✏️ Company name
 we-btn-edit-title = 📋 Job title

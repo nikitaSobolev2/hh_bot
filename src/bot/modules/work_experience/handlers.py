@@ -16,6 +16,7 @@ when the user is done:
 from __future__ import annotations
 
 import contextlib
+import html
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -74,6 +75,17 @@ _FIELD_PERIOD = "period"
 _FIELD_STACK = "stack"
 _FIELD_ACHIEVEMENTS = "achievements"
 _FIELD_DUTIES = "duties"
+
+# Telegram single-message HTML limit; exceeding it makes edit_text fail (often swallowed).
+_TELEGRAM_MESSAGE_CAP = 4096
+
+
+def _truncate_plain_for_telegram(text: str, max_len: int) -> str:
+    if max_len <= 0:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
 
 
 # ── Public display helpers ────────────────────────────────────────────────────
@@ -149,19 +161,59 @@ async def show_work_exp_detail(
 
 
 def _format_detail_text(exp, i18n: I18nContext) -> str:
-    lines = [f"<b>🏢 {exp.company_name}</b>"]
+    """Format work experience detail for Telegram HTML.
+
+    Escapes achievements/duties/body fields so AI output (e.g. ``<`` in tech names) cannot
+    break parse_mode=HTML — a common failure after «Generate with AI» for duties.
+    Caps length so edit_text stays within Telegram limits.
+    """
+    company = html.escape(exp.company_name or "")
+    title = html.escape(exp.title) if exp.title else None
+    period = html.escape(exp.period) if exp.period else None
+    stack = html.escape(exp.stack or "")
+
+    header_lines = [f"<b>🏢 {company}</b>"]
     if exp.title:
-        lines.append(f"📋 {exp.title}")
+        header_lines.append(f"📋 {title}")
     if exp.period:
-        lines.append(f"📅 {exp.period}")
-    lines.append(f"🛠 {exp.stack}")
-    lines.append("")
-    ach_val = exp.achievements or f"<i>{i18n.get('we-not-set')}</i>"
-    duties_val = exp.duties or f"<i>{i18n.get('we-not-set')}</i>"
-    lines.append(f"🏆 <b>{i18n.get('we-label-achievements')}</b>\n{ach_val}")
-    lines.append("")
-    lines.append(f"🔧 <b>{i18n.get('we-label-duties')}</b>\n{duties_val}")
-    return "\n".join(lines)
+        header_lines.append(f"📅 {period}")
+    header_lines.append(f"🛠 {stack}")
+    header_lines.append("")
+
+    ach_raw = (exp.achievements or "").strip()
+    dut_raw = (exp.duties or "").strip()
+
+    label_ach = html.escape(i18n.get("we-label-achievements"))
+    label_dut = html.escape(i18n.get("we-label-duties"))
+    not_set = html.escape(i18n.get("we-not-set"))
+
+    max_each = 3500
+    for _ in range(50):
+        if ach_raw:
+            ach_val = html.escape(_truncate_plain_for_telegram(ach_raw, max_each))
+        else:
+            ach_val = f"<i>{not_set}</i>"
+        if dut_raw:
+            dut_val = html.escape(_truncate_plain_for_telegram(dut_raw, max_each))
+        else:
+            dut_val = f"<i>{not_set}</i>"
+        body_lines = [
+            *header_lines,
+            f"🏆 <b>{label_ach}</b>\n{ach_val}",
+            "",
+            f"🔧 <b>{label_dut}</b>\n{dut_val}",
+        ]
+        text = "\n".join(body_lines)
+        if len(text) <= _TELEGRAM_MESSAGE_CAP:
+            truncated = (ach_raw and len(ach_raw) > max_each) or (dut_raw and len(dut_raw) > max_each)
+            if truncated:
+                note = "\n\n<i>" + html.escape(i18n.get("we-detail-text-truncated")) + "</i>"
+                if len(text) + len(note) <= _TELEGRAM_MESSAGE_CAP:
+                    text += note
+            return text
+        max_each = max(80, max_each - 200)
+
+    return _truncate_plain_for_telegram(text, _TELEGRAM_MESSAGE_CAP)
 
 
 # ── List view ────────────────────────────────────────────────────────────────
