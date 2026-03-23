@@ -16,10 +16,17 @@ services:
       timeout: 3s
       retries: 5
 
+  # VM / Docker: point REDIS_HOST=redis in .env so bot and Celery use this service,
+  # not localhost or an external Redis URL (replicas → ReadOnlyError on writes).
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server /usr/local/etc/redis/redis-standalone.conf
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis-standalone.conf
+      - --replicaof
+      - "no"
+      - "one"
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
