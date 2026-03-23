@@ -288,7 +288,7 @@ async def handle_ref_text(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    """Start paste step after pick (menu) or from detail keyboard."""
+    """Start paste step after menu pick, from edit achievements/duties, or stale detail."""
     from src.repositories.work_experience import WorkExperienceRepository
 
     field = callback_data.field
@@ -303,6 +303,22 @@ async def handle_ref_text(
     if current == WorkExpForm.ref_text_pick_company:
         data = await state.get_data()
         if data.get("we_editing_field") != field:
+            await callback.answer(i18n.get("access-denied"), show_alert=True)
+            return
+    elif current == WorkExpForm.edit_achievements:
+        if field != _FIELD_ACHIEVEMENTS:
+            await callback.answer(i18n.get("access-denied"), show_alert=True)
+            return
+        data = await state.get_data()
+        if data.get("we_editing_id") != callback_data.work_exp_id:
+            await callback.answer(i18n.get("access-denied"), show_alert=True)
+            return
+    elif current == WorkExpForm.edit_duties:
+        if field != _FIELD_DUTIES:
+            await callback.answer(i18n.get("access-denied"), show_alert=True)
+            return
+        data = await state.get_data()
+        if data.get("we_editing_id") != callback_data.work_exp_id:
             await callback.answer(i18n.get("access-denied"), show_alert=True)
             return
     elif current is not None:
@@ -856,7 +872,9 @@ async def handle_edit_field(
             if field == _FIELD_ACHIEVEMENTS
             else WorkExpForm.edit_duties
         )
-        ai_kb = work_exp_ai_input_keyboard(return_to, field, i18n)
+        ai_kb = work_exp_ai_input_keyboard(
+            return_to, field, i18n, work_exp_id=work_exp_id
+        )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(i18n.get(prompt_key), reply_markup=ai_kb)
     else:

@@ -177,28 +177,6 @@ def work_exp_detail_keyboard(
         [_edit_btn(i18n.get("we-btn-edit-duties"), "duties")],
         [
             InlineKeyboardButton(
-                text=i18n.get("we-btn-from-text-achievements"),
-                callback_data=WorkExpCallback(
-                    action="ref_text",
-                    work_exp_id=work_exp_id,
-                    return_to=return_to,
-                    field="achievements",
-                ).pack(),
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=i18n.get("we-btn-from-text-duties"),
-                callback_data=WorkExpCallback(
-                    action="ref_text",
-                    work_exp_id=work_exp_id,
-                    return_to=return_to,
-                    field="duties",
-                ).pack(),
-            )
-        ],
-        [
-            InlineKeyboardButton(
                 text=i18n.get("we-btn-delete"),
                 callback_data=WorkExpCallback(
                     action="delete",
@@ -294,20 +272,40 @@ def work_exp_ai_input_keyboard(
     return_to: str,
     field: str,
     i18n: I18nContext,
+    *,
+    work_exp_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Generate with AI + Skip + Cancel keyboard for achievements/duties steps."""
+    """Generate with AI (+ from-text when editing) + Skip + Cancel for achievements/duties."""
+    generate_btn = InlineKeyboardButton(
+        text=i18n.get("btn-generate-ai"),
+        callback_data=WorkExpCallback(
+            action="generate_ai",
+            return_to=return_to,
+            field=field,
+        ).pack(),
+    )
+    first_row: list[InlineKeyboardButton] = [generate_btn]
+    if work_exp_id is not None:
+        from_text_label = (
+            i18n.get("we-btn-from-text-achievements")
+            if field == "achievements"
+            else i18n.get("we-btn-from-text-duties")
+        )
+        first_row.append(
+            InlineKeyboardButton(
+                text=from_text_label,
+                callback_data=WorkExpCallback(
+                    action="ref_text",
+                    work_exp_id=work_exp_id,
+                    return_to=return_to,
+                    field=field,
+                ).pack(),
+            )
+        )
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-generate-ai"),
-                    callback_data=WorkExpCallback(
-                        action="generate_ai",
-                        return_to=return_to,
-                        field=field,
-                    ).pack(),
-                )
-            ],
+            first_row,
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-skip"),

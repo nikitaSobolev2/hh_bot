@@ -305,3 +305,27 @@ def test_add_work_experience_service_passes_all_fields_to_repo():
     assert created_experience["period"] == "2021-2024"
     assert created_experience["achievements"] == "Shipped MVP in 2 months"
     assert created_experience["duties"] == "Led frontend development"
+
+
+class TestWorkExpAiInputKeyboard:
+    """Edit flow adds a second button (from text) next to Generate with AI."""
+
+    def test_create_flow_single_button_in_first_row(self):
+        from src.bot.modules.work_experience.keyboards import work_exp_ai_input_keyboard
+
+        i18n = MagicMock()
+        i18n.get = lambda key, **kwargs: key
+
+        kb = work_exp_ai_input_keyboard("menu", "achievements", i18n)
+        assert len(kb.inline_keyboard[0]) == 1
+
+    def test_edit_flow_two_buttons_in_first_row(self):
+        from src.bot.modules.work_experience.keyboards import work_exp_ai_input_keyboard
+
+        i18n = MagicMock()
+        i18n.get = lambda key, **kwargs: key
+
+        kb = work_exp_ai_input_keyboard(
+            "menu", "achievements", i18n, work_exp_id=42
+        )
+        assert len(kb.inline_keyboard[0]) == 2
