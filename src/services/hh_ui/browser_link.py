@@ -89,5 +89,21 @@ def make_hh_user_id_for_browser_link(state: dict[str, Any]) -> str:
     return f"browser_{uuid.uuid4().hex[:16]}"
 
 
+def is_logged_in_storage_state(state: dict[str, Any]) -> bool:
+    """True if cookies suggest an authenticated hh.ru session (not just landing cookies)."""
+    if guess_hh_user_id_from_storage(state):
+        return True
+    for c in state.get("cookies") or []:
+        if not isinstance(c, dict):
+            continue
+        if "hh.ru" not in str(c.get("domain", "")).lower():
+            continue
+        name = (c.get("name") or "").lower()
+        val = str(c.get("value") or "").strip()
+        if name == "hhtoken" and len(val) > 10:
+            return True
+    return False
+
+
 def encrypt_storage_for_account(state: dict[str, Any], cipher: HhTokenCipher) -> bytes:
     return encrypt_browser_storage(state, cipher)

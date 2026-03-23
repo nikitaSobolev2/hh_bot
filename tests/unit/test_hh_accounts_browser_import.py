@@ -58,7 +58,7 @@ async def test_browser_import_reactivates_revoked_row(monkeypatch: pytest.Monkey
 
     with (
         patch(
-            "src.bot.modules.hh_accounts.handlers.HhLinkedAccountRepository",
+            "src.services.hh.linked_account_browser_storage.HhLinkedAccountRepository",
             return_value=repo_inst,
         ),
         patch(

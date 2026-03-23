@@ -62,6 +62,21 @@ hh-accounts-rename-empty = Label cannot be empty.
 hh-accounts-renamed = Label saved.
 hh-account-selected = Account selected.
 hh-token-error = Could not refresh HeadHunter session. Link the account again.
+hh-accounts-remote-login = 🖥 Server login
+hh-login-assist-disabled = Server login is disabled. Ask the administrator to enable HH_LOGIN_ASSIST_ENABLED (and UI apply + encryption key).
+hh-login-assist-not-configured = Server login needs HH_UI_APPLY_ENABLED and HH_TOKEN_ENCRYPTION_KEY.
+hh-login-assist-parallel = Another login session is already running. Wait for it to finish or cancel it.
+hh-login-assist-rate-limited = Daily limit for server login reached. Try again tomorrow.
+hh-login-assist-queued = Queued: starting a browser on the server…
+hh-login-assist-browser-open = Open this link and complete login in the remote browser (password and 2FA): { $url }
+hh-login-assist-no-viewer = No HH_LOGIN_ASSIST_VIEWER_URL is configured. The operator must set DISPLAY + headed Chromium (see docs/HH_LOGIN_ASSIST.md), or you can send a storage_state JSON file instead.
+hh-login-assist-starting = Starting server login… You can cancel while it queues.
+hh-login-assist-saving = Saving session…
+hh-login-assist-success = hh.ru session saved. You can respond from the feed (UI apply).
+hh-login-assist-timeout = Login timed out. Try again or use JSON file import.
+hh-login-assist-captcha = CAPTCHA detected. Complete login manually on hh.ru and try again later, or import storage_state from your PC.
+hh-login-assist-error = Server login failed: { $detail }
+hh-login-assist-cancelled = Login cancelled.
 
 # ── Vacancy feed (HH) ─────────────────────────────────────
 feed-no-hh-link = Connect a HeadHunter account in Settings → HeadHunter accounts to respond on hh.ru from the feed.

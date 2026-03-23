@@ -7,12 +7,21 @@ from src.core.i18n import I18nContext
 from src.models.hh_linked_account import HhLinkedAccount
 
 
-def hh_accounts_hub_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+def hh_accounts_hub_keyboard(
+    i18n: I18nContext,
+    *,
+    show_remote_login: bool = False,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(
         text=i18n.get("hh-accounts-add"),
         callback_data=HhAccountCallback(action="add").pack(),
     )
+    if show_remote_login:
+        builder.button(
+            text=i18n.get("hh-accounts-remote-login"),
+            callback_data=HhAccountCallback(action="remote_login").pack(),
+        )
     builder.button(
         text=i18n.get("btn-back"),
         callback_data=SettingsCallback(action="back").pack(),
@@ -24,6 +33,8 @@ def hh_accounts_hub_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
 def hh_account_row_keyboard(
     accounts: list[HhLinkedAccount],
     i18n: I18nContext,
+    *,
+    show_remote_login: bool = False,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for acc in accounts:
@@ -44,6 +55,13 @@ def hh_account_row_keyboard(
             callback_data=HhAccountCallback(action="add").pack(),
         )
     )
+    if show_remote_login:
+        builder.row(
+            InlineKeyboardButton(
+                text=i18n.get("hh-accounts-remote-login"),
+                callback_data=HhAccountCallback(action="remote_login").pack(),
+            )
+        )
     builder.row(
         InlineKeyboardButton(
             text=i18n.get("btn-back"),

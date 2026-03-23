@@ -30,12 +30,19 @@ A feature-rich Telegram bot that helps Russian-speaking job seekers work with He
 
 When the official applicant API is unavailable, set `HH_UI_APPLY_ENABLED=true` and use a **saved browser session** (Playwright `storage_state`) instead of OAuth REST calls for “Respond” in the feed. The bot acknowledges the Telegram callback before slow Playwright steps so the client does not hit the ~10s callback timeout while loading resumes.
 
+**Ways to provide `storage_state`:**
+
+1. **Telegram JSON upload** — Settings → HeadHunter accounts → Add account (when OAuth is off): send the `.json` file produced locally (see below).
+2. **Server-side login assist (optional)** — Set `HH_LOGIN_ASSIST_ENABLED=true` and use “Server login” in the same menu. A Celery worker runs Playwright, opens the hh.ru login page, and waits until the session looks logged-in. **Headless containers cannot type for the user**; for real users you typically need a **viewer URL** (`HH_LOGIN_ASSIST_VIEWER_URL`, e.g. noVNC) and `DISPLAY` + `HH_LOGIN_ASSIST_HEADLESS=false` on the worker. See [docs/HH_LOGIN_ASSIST.md](docs/HH_LOGIN_ASSIST.md) and `docker-compose.login-assist.example.yml`.
+
+**Local script (for file upload path):**
+
 1. Run `alembic upgrade head` so `hh_linked_accounts` has `browser_storage_enc` (and `browser_storage_updated_at`).
 2. Install Chromium for Playwright: `playwright install chromium` (after `pip install -e .`).
 3. Run `python scripts/hh_browser_login.py` from the project root, complete login in the opened window, press Enter. This writes `hh_browser_storage_state.json`.
-4. Encrypt the JSON with the same Fernet key as `HH_TOKEN_ENCRYPTION_KEY` (see `src/services/hh/crypto.py`) and store the ciphertext in `hh_linked_accounts.browser_storage_enc` for the user’s linked row (or automate via a one-off admin script).
+4. Send that file to the bot (or encrypt into DB manually as before).
 
-Daily limits and delays are controlled via `HH_UI_APPLY_MAX_PER_DAY`, `HH_UI_MIN_ACTION_DELAY_MS`, and `HH_UI_MAX_ACTION_DELAY_MS` in `.env`.
+**Risks (server login):** CAPTCHA, datacenter IP blocks, and hh.ru terms are uncertain; prefer honest user messaging on failure. Daily limits: `HH_LOGIN_ASSIST_MAX_PER_DAY` (server login) and `HH_UI_APPLY_MAX_PER_DAY` (apply). Delays for apply: `HH_UI_MIN_ACTION_DELAY_MS`, `HH_UI_MAX_ACTION_DELAY_MS` in `.env`.
 
 ---
 

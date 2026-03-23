@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     hh_ui_headless: bool = True
     hh_ui_screenshot_on_error: bool = False
 
+    # HH server-side login assist (Playwright on worker; optional noVNC — see docs/HH_LOGIN_ASSIST.md)
+    hh_login_assist_enabled: bool = False
+    hh_login_assist_max_wait_seconds: int = 900
+    hh_login_assist_poll_interval_seconds: float = 2.0
+    hh_login_assist_max_per_day: int = 5
+    hh_login_assist_login_url: str = "https://hh.ru/account/login"
+    hh_login_assist_viewer_url: str = ""
+    hh_login_assist_headless: bool = True
+
     @property
     def database_url(self) -> str:
         return (

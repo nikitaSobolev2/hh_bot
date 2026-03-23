@@ -23,15 +23,10 @@ from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.hh.crypto import HhTokenCipher
+from src.services.hh.linked_account_browser_storage import persist_browser_storage_state_for_user
 from src.services.hh.oauth_state import generate_state, store_state
 from src.services.hh.oauth_tokens import build_authorize_url
-from src.services.hh_ui.browser_link import (
-    encrypt_storage_for_account,
-    make_hh_user_id_for_browser_link,
-    placeholder_access_expires_at,
-    placeholder_token_ciphertexts,
-    validate_playwright_storage_state,
-)
+from src.services.hh_ui.browser_link import validate_playwright_storage_state
 
 router = Router(name="hh_accounts")
 
@@ -58,6 +53,14 @@ def _browser_import_configured() -> bool:
     return bool(settings.hh_ui_apply_enabled and settings.hh_token_encryption_key)
 
 
+def _login_assist_available() -> bool:
+    return bool(
+        settings.hh_login_assist_enabled
+        and settings.hh_ui_apply_enabled
+        and settings.hh_token_encryption_key
+    )
+
+
 async def _hub_message(
     session: AsyncSession,
     user: User,
@@ -65,14 +68,17 @@ async def _hub_message(
 ) -> tuple[str, InlineKeyboardMarkup]:
     repo = HhLinkedAccountRepository(session)
     accounts = await repo.list_active_for_user(user.id)
+    show_remote = _login_assist_available()
     if not accounts:
-        return i18n.get("hh-accounts-empty"), hh_accounts_hub_keyboard(i18n)
+        return i18n.get("hh-accounts-empty"), hh_accounts_hub_keyboard(
+            i18n, show_remote_login=show_remote
+        )
     lines = [i18n.get("hh-accounts-title"), ""]
     for acc in accounts:
         label = acc.label or acc.hh_user_id
         lines.append(f"• {label}")
     text = "\n".join(lines)
-    kb = hh_account_row_keyboard(accounts, i18n)
+    kb = hh_account_row_keyboard(accounts, i18n, show_remote_login=show_remote)
     return text, kb
 
 
@@ -153,6 +159,69 @@ async def hh_add_account(
     await callback.answer(i18n.get("hh-link-not-available"), show_alert=True)
 
 
+@router.callback_query(HhAccountCallback.filter(F.action == "remote_login"))
+async def hh_remote_login(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    if not _login_assist_available():
+        await callback.answer(i18n.get("hh-login-assist-disabled"), show_alert=True)
+        return
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.hh_login_assist import hh_login_assist_task
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=HhAccountCallback(action="cancel_login_assist").pack(),
+                )
+            ],
+        ]
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("hh-login-assist-starting"),
+            reply_markup=kb,
+        )
+    await callback.answer()
+    await run_celery_task(
+        hh_login_assist_task,
+        user.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+    )
+
+
+@router.callback_query(HhAccountCallback.filter(F.action == "cancel_login_assist"))
+async def hh_cancel_login_assist(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_sync_in_thread
+    from src.core.redis import create_async_redis
+    from src.worker.app import celery_app
+    from src.worker.tasks.hh_login_assist import clear_active_job_for_user, get_active_job_id
+
+    tid = await run_sync_in_thread(get_active_job_id, user.id)
+    if tid:
+        await run_sync_in_thread(lambda: celery_app.control.revoke(tid, terminate=True))
+    await run_sync_in_thread(clear_active_job_for_user, user.id)
+    r = create_async_redis()
+    try:
+        await r.delete(f"lock:user_task:hh_login_assist:{user.id}")
+    finally:
+        await r.aclose()
+    await _show_hub(callback, session, user, i18n)
+    await callback.answer(i18n.get("hh-login-assist-cancelled"))
+
+
 @router.callback_query(HhAccountCallback.filter(F.action == "cancel_browser"))
 async def hh_cancel_browser_import(
     callback: CallbackQuery,
@@ -200,35 +269,8 @@ async def hh_browser_import_document(
         await message.answer(i18n.get(msg_key))
         return
 
-    hh_uid = make_hh_user_id_for_browser_link(state_dict)
     cipher = HhTokenCipher(settings.hh_token_encryption_key)
-    enc_storage = encrypt_storage_for_account(state_dict, cipher)
-    now = _utc_naive_now()
-
-    repo = HhLinkedAccountRepository(session)
-    existing = await repo.get_by_user_and_hh_user_id(user.id, hh_uid)
-    if existing:
-        await repo.update(
-            existing,
-            browser_storage_enc=enc_storage,
-            browser_storage_updated_at=now,
-            revoked_at=None,
-            last_used_at=now,
-        )
-    else:
-        ph_access, ph_refresh = placeholder_token_ciphertexts(cipher)
-        await repo.create(
-            user_id=user.id,
-            hh_user_id=hh_uid,
-            label=None,
-            access_token_enc=ph_access,
-            refresh_token_enc=ph_refresh,
-            access_expires_at=placeholder_access_expires_at(),
-            revoked_at=None,
-            last_used_at=now,
-            browser_storage_enc=enc_storage,
-            browser_storage_updated_at=now,
-        )
+    await persist_browser_storage_state_for_user(session, user.id, state_dict, cipher=cipher)
     await session.commit()
     await state.clear()
 
