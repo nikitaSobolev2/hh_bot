@@ -36,6 +36,7 @@ def generate_work_experience_ai_task(
     period: str | None = None,
     return_to: str = "menu",
     work_exp_id: int | None = None,
+    reference_text: str | None = None,
 ) -> dict:
     return run_async(
         lambda sf: _generate_async(
@@ -52,6 +53,7 @@ def generate_work_experience_ai_task(
             period=period,
             return_to=return_to,
             work_exp_id=work_exp_id,
+            reference_text=reference_text,
         )
     )
 
@@ -71,6 +73,7 @@ async def _generate_async(
     period: str | None,
     return_to: str,
     work_exp_id: int | None,
+    reference_text: str | None = None,
 ) -> dict:
     from src.services.ai.client import AIClient
     from src.worker.circuit_breaker import CircuitBreaker
@@ -93,7 +96,9 @@ async def _generate_async(
             stack = exp.stack
             period = exp.period
 
-    prompt, system_prompt = _build_prompt(field, company_name, stack, title, period)
+    prompt, system_prompt = _build_prompt(
+        field, company_name, stack, title, period, reference_text=reference_text
+    )
     ai_client = AIClient()
 
     try:
@@ -157,6 +162,8 @@ def _build_prompt(
     stack: str,
     title: str | None,
     period: str | None,
+    *,
+    reference_text: str | None = None,
 ) -> tuple[str, str]:
     from src.services.ai.prompts import (
         build_work_experience_achievements_prompt,
@@ -168,12 +175,14 @@ def _build_prompt(
     if field == "achievements":
         return (
             build_work_experience_achievements_prompt(
-                company_name, stack, title=title, period=period
+                company_name, stack, title=title, period=period, reference_text=reference_text
             ),
             build_work_experience_achievements_system_prompt(),
         )
     return (
-        build_work_experience_duties_prompt(company_name, stack, title=title, period=period),
+        build_work_experience_duties_prompt(
+            company_name, stack, title=title, period=period, reference_text=reference_text
+        ),
         build_work_experience_duties_system_prompt(),
     )
 

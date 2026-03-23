@@ -207,6 +207,46 @@ async def test_edit_mode_generates_and_saves_to_db():
 
 
 @pytest.mark.asyncio
+async def test_edit_mode_with_reference_text_includes_wrapped_block_in_user_prompt():
+    """Edit mode passes reference_text into the prompt shown to the model."""
+    from src.worker.tasks.work_experience import _generate_async
+
+    exp = MagicMock()
+    exp.user_id = 1
+    exp.company_name = "Corp"
+    exp.title = "Dev"
+    exp.stack = "Python"
+    exp.period = "2021-2023"
+
+    session = _make_session()
+    session_factory = _make_session_factory(session)
+
+    mock_we_repo = AsyncMock()
+    mock_we_repo.get_by_id = AsyncMock(return_value=exp)
+    mock_cb = MagicMock()
+    mock_cb.is_call_allowed.return_value = True
+
+    edit_with_ref = {**_EDIT_KWARGS, "reference_text": "Notes: led migration to Postgres."}
+
+    with (
+        patch(_CB_PATH, return_value=mock_cb),
+        patch(_AI_PATH) as mock_ai_cls,
+        patch(_WE_REPO_PATH, return_value=mock_we_repo),
+        patch(f"{_TASK_PATH}._notify_user_edit", AsyncMock()),
+    ):
+        mock_ai = MagicMock()
+        mock_ai.generate_text = AsyncMock(return_value=_GENERATED_TEXT)
+        mock_ai_cls.return_value = mock_ai
+
+        await _generate_async(session_factory, **edit_with_ref)
+
+    mock_ai.generate_text.assert_awaited_once()
+    user_prompt = mock_ai.generate_text.call_args[0][0]
+    assert "<reference_text>" in user_prompt
+    assert "Notes: led migration to Postgres." in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_edit_mode_not_found_returns_early():
     """If the work experience row is missing, the task exits without generating."""
     from src.worker.tasks.work_experience import _generate_async

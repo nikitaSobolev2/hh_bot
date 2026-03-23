@@ -2,6 +2,7 @@ from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -195,6 +196,36 @@ async def _handle_cover_letter(
     from src.bot.modules.cover_letter.handlers import show_cover_letter_hub
 
     await show_cover_letter_hub(callback, i18n)
+
+
+@router.callback_query(MenuCallback.filter(F.action == "we_from_text_achievements"))
+async def menu_we_from_text_achievements(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    state: FSMContext,
+) -> None:
+    await callback.answer()
+    from src.bot.modules.work_experience.handlers import start_ref_text_from_menu
+
+    await start_ref_text_from_menu(
+        callback, user, session, i18n, state, field="achievements"
+    )
+
+
+@router.callback_query(MenuCallback.filter(F.action == "we_from_text_duties"))
+async def menu_we_from_text_duties(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    state: FSMContext,
+) -> None:
+    await callback.answer()
+    from src.bot.modules.work_experience.handlers import start_ref_text_from_menu
+
+    await start_ref_text_from_menu(callback, user, session, i18n, state, field="duties")
 
 
 _MENU_DISPATCH = {

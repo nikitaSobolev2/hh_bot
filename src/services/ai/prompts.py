@@ -1317,12 +1317,24 @@ def build_work_experience_achievements_prompt(
     stack: str,
     title: str | None = None,
     period: str | None = None,
+    reference_text: str | None = None,
 ) -> str:
     """Return user content to generate 3-4 professional achievements for a work experience entry."""
     role_info = _format_role_info(company_name, title, period)
-    return (
+    base = (
         f"Сгенерируй 3–4 конкретных профессиональных достижения "
         f"для специалиста, который работал в компании {role_info} со стеком: {stack}."
+    )
+    if not reference_text:
+        return base
+    wrapped = _wrap_user_input("reference_text", reference_text)
+    return (
+        f"{base}\n\n"
+        "[ОПОРНЫЙ ТЕКСТ]\n"
+        "Ниже — заметки и факты от пользователя. Сформулируй достижения в первую очередь "
+        "на основе этого текста (проекты, стек, результаты), но не противоречь данным о компании, "
+        "должности, периоде и стеке из блока выше.\n"
+        f"{wrapped}"
     )
 
 
@@ -1352,12 +1364,24 @@ def build_work_experience_duties_prompt(
     stack: str,
     title: str | None = None,
     period: str | None = None,
+    reference_text: str | None = None,
 ) -> str:
     """Return user content to generate 3-5 professional duties for a work experience entry."""
     role_info = _format_role_info(company_name, title, period)
-    return (
+    base = (
         f"Сгенерируй 3–5 типичных рабочих обязанностей "
         f"для специалиста, который работал в компании {role_info} со стеком: {stack}."
+    )
+    if not reference_text:
+        return base
+    wrapped = _wrap_user_input("reference_text", reference_text)
+    return (
+        f"{base}\n\n"
+        "[ОПОРНЫЙ ТЕКСТ]\n"
+        "Ниже — заметки и факты от пользователя. Сформулируй обязанности в первую очередь "
+        "на основе этого текста (проекты, стек, задачи), но не противоречь данным о компании, "
+        "должности, периоде и стеке из блока выше. Глаголы — несовершенного вида.\n"
+        f"{wrapped}"
     )
 
 

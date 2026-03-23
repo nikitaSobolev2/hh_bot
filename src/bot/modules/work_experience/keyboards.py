@@ -103,6 +103,50 @@ def work_experience_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def work_experience_from_text_keyboard(
+    experiences: list[UserWorkExperience],
+    return_to: str,
+    field: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """List view for choosing a job before pasting reference text (menu path)."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    for exp in experiences:
+        label = f"🏢 {exp.company_name}"
+        if exp.title:
+            label += f" — {exp.title}"
+        if exp.period:
+            label += f" ({exp.period})"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=WorkExpCallback(
+                        action="ref_text",
+                        work_exp_id=exp.id,
+                        return_to=return_to,
+                        field=field,
+                    ).pack(),
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-cancel"),
+                callback_data=WorkExpCallback(
+                    action="ref_text_cancel",
+                    return_to=return_to,
+                ).pack(),
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def work_exp_detail_keyboard(
     work_exp_id: int,
     return_to: str,
@@ -131,6 +175,28 @@ def work_exp_detail_keyboard(
         [_edit_btn(i18n.get("we-btn-edit-stack"), "stack")],
         [_edit_btn(i18n.get("we-btn-edit-achievements"), "achievements")],
         [_edit_btn(i18n.get("we-btn-edit-duties"), "duties")],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("we-btn-from-text-achievements"),
+                callback_data=WorkExpCallback(
+                    action="ref_text",
+                    work_exp_id=work_exp_id,
+                    return_to=return_to,
+                    field="achievements",
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("we-btn-from-text-duties"),
+                callback_data=WorkExpCallback(
+                    action="ref_text",
+                    work_exp_id=work_exp_id,
+                    return_to=return_to,
+                    field="duties",
+                ).pack(),
+            )
+        ],
         [
             InlineKeyboardButton(
                 text=i18n.get("we-btn-delete"),

@@ -32,10 +32,12 @@ from src.bot.modules.work_experience.keyboards import (
     work_exp_ai_input_keyboard,
     work_exp_detail_keyboard,
     work_exp_optional_keyboard,
+    work_experience_from_text_keyboard,
     work_experience_keyboard,
 )
 from src.bot.modules.work_experience.states import WorkExpForm
 from src.bot.utils.limits import (
+    get_max_message_length,
     get_max_text_length,
     get_max_work_experiences,
 )
@@ -217,6 +219,173 @@ async def handle_detail(
         disabled_exp_ids=disabled_ids,
     )
     await callback.answer()
+
+
+# ── Reference text → AI (achievements / duties) ───────────────────────────────
+
+
+async def start_ref_text_from_menu(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    state: FSMContext,
+    *,
+    field: str,
+) -> None:
+    """Menu path: pick company, then paste reference text."""
+    from src.bot.keyboards.common import back_to_menu_keyboard
+
+    experiences = await we_service.get_active_work_experiences(session, user.id)
+    if not experiences:
+        await _clear_we_state(state)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("we-from-text-no-experiences"),
+                reply_markup=back_to_menu_keyboard(i18n),
+            )
+        return
+
+    await _clear_we_state(state)
+    await state.set_state(WorkExpForm.ref_text_pick_company)
+    await state.update_data(we_editing_field=field, we_return_to="menu")
+
+    title_key = (
+        "we-from-text-pick-intro-achievements"
+        if field == "achievements"
+        else "we-from-text-pick-intro-duties"
+    )
+    text = i18n.get(title_key)
+    kb = work_experience_from_text_keyboard(experiences, "menu", field, i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(WorkExpCallback.filter(F.action == "ref_text_cancel"))
+async def handle_ref_text_cancel(
+    callback: CallbackQuery,
+    _callback_data: WorkExpCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    """Abort pick-company step (menu path) and return to main menu."""
+    from src.bot.keyboards.common import main_menu_admin_keyboard, main_menu_keyboard
+
+    await _clear_we_state(state)
+    kb = main_menu_admin_keyboard(i18n) if user.is_admin else main_menu_keyboard(i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(i18n.get("welcome"), reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(WorkExpCallback.filter(F.action == "ref_text"))
+async def handle_ref_text(
+    callback: CallbackQuery,
+    callback_data: WorkExpCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    """Start paste step after pick (menu) or from detail keyboard."""
+    from src.repositories.work_experience import WorkExperienceRepository
+
+    field = callback_data.field
+    if field not in (_FIELD_ACHIEVEMENTS, _FIELD_DUTIES):
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+
+    current = await state.get_state()
+    if current == WorkExpForm.ref_text_paste:
+        await callback.answer(i18n.get("we-from-text-busy"), show_alert=True)
+        return
+    if current == WorkExpForm.ref_text_pick_company:
+        data = await state.get_data()
+        if data.get("we_editing_field") != field:
+            await callback.answer(i18n.get("access-denied"), show_alert=True)
+            return
+    elif current is not None:
+        await callback.answer(i18n.get("we-from-text-wrong-state"), show_alert=True)
+        return
+
+    repo = WorkExperienceRepository(session)
+    exp = await repo.get_by_id(callback_data.work_exp_id)
+    if not exp or exp.user_id != user.id or not exp.is_active:
+        await callback.answer(i18n.get("work-exp-not-found"), show_alert=True)
+        return
+
+    return_to = callback_data.return_to
+    await state.update_data(
+        we_editing_id=callback_data.work_exp_id,
+        we_editing_field=field,
+        we_return_to=return_to,
+    )
+    await state.set_state(WorkExpForm.ref_text_paste)
+
+    prompt_key = (
+        "we-from-text-prompt-achievements"
+        if field == _FIELD_ACHIEVEMENTS
+        else "we-from-text-prompt-duties"
+    )
+    cancel_kb = cancel_edit_keyboard(callback_data.work_exp_id, return_to, i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(i18n.get(prompt_key), reply_markup=cancel_kb)
+    await callback.answer()
+
+
+@router.message(WorkExpForm.ref_text_paste)
+async def fsm_ref_text_paste(
+    message: Message,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    """Accept reference text and dispatch Celery edit task with reference_text."""
+    from src.core.celery_async import run_celery_task
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.worker.tasks.work_experience import generate_work_experience_ai_task
+
+    text = (message.text or "").strip()
+    # Empty / whitespace-only input is rejected (no silent fallback).
+    if not text:
+        await message.answer(i18n.get("we-from-text-empty"))
+        return
+
+    max_len = get_max_message_length(user, "default")
+    if len(text) > max_len:
+        await message.answer(i18n.get("we-from-text-too-long"))
+        return
+
+    data = await state.get_data()
+    work_exp_id: int = data["we_editing_id"]
+    field: str = data["we_editing_field"]
+    return_to: str = data["we_return_to"]
+
+    repo = WorkExperienceRepository(session)
+    exp = await repo.get_by_id(work_exp_id)
+    if not exp or exp.user_id != user.id:
+        await _clear_we_state(state)
+        await message.answer(i18n.get("work-exp-not-found"))
+        return
+
+    await _clear_we_state(state)
+
+    wait_msg = await message.answer(i18n.get("work-exp-generating"))
+
+    await run_celery_task(
+        generate_work_experience_ai_task,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        message_id=wait_msg.message_id,
+        field=field,
+        mode="edit",
+        locale=user.language_code or "ru",
+        work_exp_id=work_exp_id,
+        return_to=return_to,
+        reference_text=text,
+    )
 
 
 @router.callback_query(WorkExpCallback.filter(F.action == "toggle_for_resume"))

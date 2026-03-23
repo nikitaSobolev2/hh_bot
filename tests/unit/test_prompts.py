@@ -11,7 +11,9 @@ from src.services.ai.prompts import (
     build_batch_keyword_extraction_user_content,
     build_key_phrases_prompt,
     build_per_company_key_phrases_prompt,
+    build_work_experience_achievements_prompt,
     build_work_experience_achievements_system_prompt,
+    build_work_experience_duties_prompt,
 )
 
 
@@ -307,3 +309,38 @@ class TestAchievementPrompts:
         assert "Acme" in prompt
         assert "Python, Django" in prompt
         assert "Built API" in prompt
+
+
+class TestWorkExperiencePromptsReferenceText:
+    """Reference-based WE achievements/duties user prompts."""
+
+    def test_achievements_prompt_without_reference_unchanged_shape(self):
+        p = build_work_experience_achievements_prompt(
+            "Acme", "Python", title="Dev", period="2020"
+        )
+        assert "<reference_text>" not in p
+        assert "Acme" in p
+        assert "[ОПОРНЫЙ ТЕКСТ]" not in p
+
+    def test_achievements_prompt_wraps_reference_text(self):
+        p = build_work_experience_achievements_prompt(
+            "Acme",
+            "Python",
+            title="Dev",
+            period="2020",
+            reference_text="Shipped billing v2 with Kafka.",
+        )
+        assert "<reference_text>" in p
+        assert "</reference_text>" in p
+        assert "Shipped billing v2 with Kafka." in p
+        assert "[ОПОРНЫЙ ТЕКСТ]" in p
+
+    def test_duties_prompt_wraps_reference_text(self):
+        p = build_work_experience_duties_prompt(
+            "Acme",
+            "Go",
+            reference_text="Maintained CI pipelines.",
+        )
+        assert "<reference_text>" in p
+        assert "Maintained CI pipelines." in p
+        assert "[ОПОРНЫЙ ТЕКСТ]" in p

@@ -2,7 +2,7 @@
 
 Layout design:
 - Job Search section: Parsing, Autoparse
-- Resume section: Work Experience, Achievements, Vacancy Summary, Resume
+- Resume section: Work Experience, Achievements, AI from notes (achievements/duties), Vacancy Summary, Resume
 - Interview section: My Interviews, Interview Q&A
 - Account section: Profile, Settings, Support
 - Admin section (admin-only): Admin Panel
@@ -50,6 +50,14 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         callback_data=MenuCallback(action="achievements").pack(),
     )
     builder.button(
+        text=i18n.get("btn-we-from-text-achievements"),
+        callback_data=MenuCallback(action="we_from_text_achievements").pack(),
+    )
+    builder.button(
+        text=i18n.get("btn-we-from-text-duties"),
+        callback_data=MenuCallback(action="we_from_text_duties").pack(),
+    )
+    builder.button(
         text=i18n.get("btn-vacancy-summary"),
         callback_data=MenuCallback(action="vacancy_summary").pack(),
     )
@@ -75,7 +83,7 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         callback_data=MenuCallback(action="support").pack(),
     )
 
-    builder.adjust(2, 1, 2, 2, 1, 2, 2, 1)
+    builder.adjust(2, 1, 2, 2, 2, 2, 1, 2, 1)
     return builder.as_markup()
 
 

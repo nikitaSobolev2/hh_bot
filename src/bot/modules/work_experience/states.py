@@ -14,3 +14,7 @@ class WorkExpForm(StatesGroup):
     edit_value = State()
     edit_achievements = State()
     edit_duties = State()
+
+    # Generate achievements/duties from pasted reference text (menu or detail)
+    ref_text_pick_company = State()
+    ref_text_paste = State()

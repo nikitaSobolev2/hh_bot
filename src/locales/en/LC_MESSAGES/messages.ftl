@@ -281,6 +281,23 @@ we-btn-edit-period = 📅 Work period
 we-btn-edit-stack = 🛠 Tech stack
 we-btn-edit-achievements = 🏆 Achievements
 we-btn-edit-duties = 🔧 Duties
+btn-we-from-text-achievements = 📝 Achievements from text
+btn-we-from-text-duties = 📝 Duties from text
+we-btn-from-text-achievements = 📝 Generate achievements from text
+we-btn-from-text-duties = 📝 Generate duties from text
+we-from-text-no-experiences = No work experience entries. Add a job in Work experience first.
+we-from-text-pick-intro-achievements =
+    Pick a job — then send one long message with notes and facts; the bot will draft resume achievements for that entry.
+we-from-text-pick-intro-duties =
+    Pick a job — then send one long message with notes and facts; the bot will draft imperfective-verb duties for that entry.
+we-from-text-prompt-achievements =
+    Send one message with reference text: notes, projects, stack, outcomes. Achievements for this entry will be based on it.
+we-from-text-prompt-duties =
+    Send one message with reference text: notes, tasks, projects. Imperfective-verb duties for this entry will be based on it.
+we-from-text-empty = Send non-empty text (not whitespace only).
+we-from-text-too-long = Message is too long. Shorten the text and try again.
+we-from-text-busy = Send your reference text first, or cancel.
+we-from-text-wrong-state = Finish or cancel the current step in the bot, then try again.
 we-btn-delete = 🗑 Delete
 work-exp-enter-achievements =
     🏆 <b>{ $company }</b> — achievements
