@@ -217,6 +217,8 @@ async def test_edit_mode_with_reference_text_includes_wrapped_block_in_user_prom
     exp.title = "Dev"
     exp.stack = "Python"
     exp.period = "2021-2023"
+    exp.achievements = "- Shipped feature X"
+    exp.duties = "- Разрабатывал сервисы"
 
     session = _make_session()
     session_factory = _make_session_factory(session)
@@ -244,6 +246,11 @@ async def test_edit_mode_with_reference_text_includes_wrapped_block_in_user_prom
     user_prompt = mock_ai.generate_text.call_args[0][0]
     assert "<reference_text>" in user_prompt
     assert "Notes: led migration to Postgres." in user_prompt
+    assert "[ДАННЫЕ ЗАПИСИ ИЗ БД]" in user_prompt
+    assert "<existing_duties>" in user_prompt
+    assert "Разрабатывал сервисы" in user_prompt
+    assert "<existing_achievements>" in user_prompt
+    assert "Shipped feature X" in user_prompt
 
 
 @pytest.mark.asyncio

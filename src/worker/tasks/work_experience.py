@@ -83,6 +83,8 @@ async def _generate_async(
         logger.warning("Circuit breaker open, skipping WE AI generation", user_id=user_id)
         return {"status": "circuit_open"}
 
+    existing_achievements: str | None = None
+    existing_duties: str | None = None
     if mode == _MODE_EDIT:
         async with session_factory() as session:
             from src.repositories.work_experience import WorkExperienceRepository
@@ -95,9 +97,18 @@ async def _generate_async(
             title = exp.title
             stack = exp.stack
             period = exp.period
+            existing_achievements = exp.achievements
+            existing_duties = exp.duties
 
     prompt, system_prompt = _build_prompt(
-        field, company_name, stack, title, period, reference_text=reference_text
+        field,
+        company_name,
+        stack,
+        title,
+        period,
+        reference_text=reference_text,
+        existing_achievements=existing_achievements,
+        existing_duties=existing_duties,
     )
     ai_client = AIClient()
 
@@ -164,6 +175,8 @@ def _build_prompt(
     period: str | None,
     *,
     reference_text: str | None = None,
+    existing_achievements: str | None = None,
+    existing_duties: str | None = None,
 ) -> tuple[str, str]:
     from src.services.ai.prompts import (
         build_work_experience_achievements_prompt,
@@ -175,13 +188,25 @@ def _build_prompt(
     if field == "achievements":
         return (
             build_work_experience_achievements_prompt(
-                company_name, stack, title=title, period=period, reference_text=reference_text
+                company_name,
+                stack,
+                title=title,
+                period=period,
+                reference_text=reference_text,
+                existing_achievements=existing_achievements,
+                existing_duties=existing_duties,
             ),
             build_work_experience_achievements_system_prompt(),
         )
     return (
         build_work_experience_duties_prompt(
-            company_name, stack, title=title, period=period, reference_text=reference_text
+            company_name,
+            stack,
+            title=title,
+            period=period,
+            reference_text=reference_text,
+            existing_achievements=existing_achievements,
+            existing_duties=existing_duties,
         ),
         build_work_experience_duties_system_prompt(),
     )

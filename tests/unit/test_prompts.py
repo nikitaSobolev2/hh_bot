@@ -344,3 +344,17 @@ class TestWorkExperiencePromptsReferenceText:
         assert "<reference_text>" in p
         assert "Maintained CI pipelines." in p
         assert "[ОПОРНЫЙ ТЕКСТ]" in p
+
+    def test_achievements_prompt_includes_db_snapshot_with_reference(self):
+        p = build_work_experience_achievements_prompt(
+            "Acme",
+            "Python",
+            reference_text="New notes.",
+            existing_duties="- Разрабатывал API",
+            existing_achievements="- Старый пункт",
+        )
+        assert "[ДАННЫЕ ЗАПИСИ ИЗ БД]" in p
+        assert "<existing_duties>" in p
+        assert "Разрабатывал API" in p
+        assert "<existing_achievements>" in p
+        assert "Старый пункт" in p

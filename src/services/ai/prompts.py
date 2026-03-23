@@ -1312,12 +1312,43 @@ def build_work_experience_achievements_system_prompt() -> str:
     )
 
 
+def _work_exp_db_snapshot_for_prompt(
+    *,
+    existing_achievements: str | None,
+    existing_duties: str | None,
+    achievements_first: bool = False,
+) -> str:
+    """XML-wrapped current DB fields for reference-based generation (anti-injection)."""
+    parts: list[str] = []
+    if achievements_first:
+        if existing_achievements and existing_achievements.strip():
+            parts.append(_wrap_user_input("existing_achievements", existing_achievements.strip()))
+        if existing_duties and existing_duties.strip():
+            parts.append(_wrap_user_input("existing_duties", existing_duties.strip()))
+    else:
+        if existing_duties and existing_duties.strip():
+            parts.append(_wrap_user_input("existing_duties", existing_duties.strip()))
+        if existing_achievements and existing_achievements.strip():
+            parts.append(_wrap_user_input("existing_achievements", existing_achievements.strip()))
+    if not parts:
+        return ""
+    return (
+        "[ДАННЫЕ ЗАПИСИ ИЗ БД]\n"
+        "Ниже — текущие обязанности и/или достижения по этой записи опыта работы. "
+        "Учитывай их при формулировке; не противоречь им без необходимости.\n\n"
+        + "\n\n".join(parts)
+        + "\n\n"
+    )
+
+
 def build_work_experience_achievements_prompt(
     company_name: str,
     stack: str,
     title: str | None = None,
     period: str | None = None,
     reference_text: str | None = None,
+    existing_achievements: str | None = None,
+    existing_duties: str | None = None,
 ) -> str:
     """Return user content to generate 3-4 professional achievements for a work experience entry."""
     role_info = _format_role_info(company_name, title, period)
@@ -1327,13 +1358,18 @@ def build_work_experience_achievements_prompt(
     )
     if not reference_text:
         return base
+    db_block = _work_exp_db_snapshot_for_prompt(
+        existing_achievements=existing_achievements,
+        existing_duties=existing_duties,
+    )
     wrapped = _wrap_user_input("reference_text", reference_text)
     return (
         f"{base}\n\n"
+        f"{db_block}"
         "[ОПОРНЫЙ ТЕКСТ]\n"
         "Ниже — заметки и факты от пользователя. Сформулируй достижения в первую очередь "
         "на основе этого текста (проекты, стек, результаты), но не противоречь данным о компании, "
-        "должности, периоде и стеке из блока выше.\n"
+        "должности, периоде, стеке и блоку «Данные записи из БД» выше.\n"
         f"{wrapped}"
     )
 
@@ -1365,6 +1401,8 @@ def build_work_experience_duties_prompt(
     title: str | None = None,
     period: str | None = None,
     reference_text: str | None = None,
+    existing_achievements: str | None = None,
+    existing_duties: str | None = None,
 ) -> str:
     """Return user content to generate 3-5 professional duties for a work experience entry."""
     role_info = _format_role_info(company_name, title, period)
@@ -1374,13 +1412,19 @@ def build_work_experience_duties_prompt(
     )
     if not reference_text:
         return base
+    db_block = _work_exp_db_snapshot_for_prompt(
+        existing_achievements=existing_achievements,
+        existing_duties=existing_duties,
+        achievements_first=True,
+    )
     wrapped = _wrap_user_input("reference_text", reference_text)
     return (
         f"{base}\n\n"
+        f"{db_block}"
         "[ОПОРНЫЙ ТЕКСТ]\n"
         "Ниже — заметки и факты от пользователя. Сформулируй обязанности в первую очередь "
         "на основе этого текста (проекты, стек, задачи), но не противоречь данным о компании, "
-        "должности, периоде и стеке из блока выше. Глаголы — несовершенного вида.\n"
+        "должности, периоде, стеке и блоку «Данные записи из БД» выше. Глаголы — несовершенного вида.\n"
         f"{wrapped}"
     )
 
