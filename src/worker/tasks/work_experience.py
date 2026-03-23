@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from celery.exceptions import SoftTimeLimitExceeded
+
+from src.core.constants import AppSettingKey, TaskName
 from src.core.logging import get_logger
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
+
+_IMPROVE_STACK_MAX_OUT_LEN = 8000
 
 _MODE_CREATE = "create"
 _MODE_EDIT = "edit"
@@ -165,6 +170,229 @@ async def _generate_async(
         )
 
     return {"status": "completed", "field": field, "mode": mode}
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="work_experience.improve_stack",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=240,
+    time_limit=300,
+)
+def improve_work_experience_stack_task(
+    self,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    work_exp_id: int,
+    locale: str = "ru",
+    return_to: str = "menu",
+) -> dict:
+    try:
+        return run_async(
+            lambda sf: _improve_stack_async(
+                self,
+                sf,
+                user_id=user_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                work_exp_id=work_exp_id,
+                locale=locale,
+                return_to=return_to,
+            )
+        )
+    except SoftTimeLimitExceeded:
+        logger.warning(
+            "improve_stack soft time limit exceeded",
+            user_id=user_id,
+            work_exp_id=work_exp_id,
+        )
+        idempotency_key = f"improve_we_stack:{self.request.id}"
+        try:
+            run_async(
+                lambda sf: _improve_stack_soft_timeout_async(
+                    self,
+                    sf,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    locale=locale,
+                    idempotency_key=idempotency_key,
+                )
+            )
+        except Exception:
+            logger.exception("improve_stack soft timeout cleanup failed")
+        self.request.retries = self.max_retries
+        raise
+
+
+async def _improve_stack_soft_timeout_async(
+    task: HHBotTask,
+    session_factory,
+    *,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    idempotency_key: str,
+) -> None:
+    bot = task.create_bot()
+    try:
+        await task.handle_soft_timeout(
+            bot,
+            chat_id,
+            message_id,
+            locale,
+            idempotency_key=idempotency_key,
+            task_type="work_experience_improve_stack",
+            user_id=user_id,
+            session_factory=session_factory,
+        )
+    finally:
+        await bot.session.close()
+
+
+async def _improve_stack_async(
+    task: HHBotTask,
+    session_factory,
+    *,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    work_exp_id: int,
+    locale: str,
+    return_to: str,
+) -> dict:
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import (
+        build_improve_stack_system_prompt,
+        build_improve_stack_user_prompt,
+        normalize_improved_stack_output,
+        ordered_unique_stack_tokens,
+    )
+
+    enabled = await task.check_enabled(
+        AppSettingKey.TASK_WORK_EXPERIENCE_AI_ENABLED,
+        session_factory,
+    )
+    if not enabled:
+        return {"status": "disabled"}
+
+    cb = await task.load_circuit_breaker(
+        "work_experience_improve_stack",
+        AppSettingKey.CB_WORK_EXPERIENCE_AI_FAILURE_THRESHOLD,
+        AppSettingKey.CB_WORK_EXPERIENCE_AI_RECOVERY_TIMEOUT,
+        session_factory,
+    )
+    if not cb.is_call_allowed():
+        logger.warning("Circuit breaker open, skipping improve stack", user_id=user_id)
+        return {"status": "circuit_open"}
+
+    idempotency_key = f"improve_we_stack:{task.request.id}"
+    if await task.is_already_completed(idempotency_key, session_factory):
+        return {"status": "already_completed"}
+
+    async with session_factory() as session:
+        repo = WorkExperienceRepository(session)
+        exp = await repo.get_by_id(work_exp_id)
+        if not exp or exp.user_id != user_id or not exp.is_active:
+            return {"status": "not_found"}
+
+        stack_in = exp.stack or ""
+        company_name = exp.company_name
+        title = exp.title
+        period = exp.period
+        achievements = exp.achievements
+        duties = exp.duties
+
+    system_prompt = build_improve_stack_system_prompt()
+    user_prompt = build_improve_stack_user_prompt(
+        stack=stack_in,
+        company_name=company_name,
+        title=title,
+        period=period,
+        achievements=achievements,
+        duties=duties,
+        locale=locale,
+    )
+    ai_client = AIClient()
+
+    try:
+        generated = await ai_client.generate_text(
+            user_prompt,
+            system_prompt=system_prompt,
+            max_tokens=400,
+            temperature=0.35,
+        )
+        cb.record_success()
+    except Exception as exc:
+        cb.record_failure()
+        logger.error(
+            "Improve stack AI failed",
+            user_id=user_id,
+            work_exp_id=work_exp_id,
+            error=str(exc),
+        )
+        raise
+
+    improved = normalize_improved_stack_output(generated or "")
+    if not improved.strip():
+        improved = ordered_unique_stack_tokens(stack_in) or stack_in
+    if len(improved) > _IMPROVE_STACK_MAX_OUT_LEN:
+        improved = improved[: _IMPROVE_STACK_MAX_OUT_LEN - 1] + "…"
+
+    async with session_factory() as session:
+        repo = WorkExperienceRepository(session)
+        exp = await repo.get_by_id(work_exp_id)
+        if exp and exp.user_id == user_id:
+            await repo.update(exp, stack=improved)
+            await session.commit()
+
+    bot = task.create_bot()
+    try:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        from src.bot.modules.work_experience.callbacks import WorkExpCallback
+        from src.core.i18n import get_text
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=get_text("we-btn-view-result", locale),
+                        callback_data=WorkExpCallback(
+                            action="detail",
+                            work_exp_id=work_exp_id,
+                            return_to=return_to,
+                        ).pack(),
+                    )
+                ]
+            ]
+        )
+        await task.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            get_text("work-exp-ai-generation-done", locale),
+            reply_markup=keyboard,
+        )
+    finally:
+        await bot.session.close()
+
+    await task.mark_completed(
+        idempotency_key,
+        "work_experience_improve_stack",
+        user_id,
+        session_factory,
+        result_data={
+            "task": str(TaskName.IMPROVE_WORK_EXPERIENCE_STACK),
+            "work_exp_id": work_exp_id,
+        },
+    )
+    return {"status": "completed", "work_exp_id": work_exp_id}
 
 
 def _build_prompt(

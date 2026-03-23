@@ -9,11 +9,15 @@ from src.services.ai.prompts import (
     build_batch_compatibility_user_content,
     build_batch_keyword_extraction_system_prompt,
     build_batch_keyword_extraction_user_content,
+    build_improve_stack_system_prompt,
+    build_improve_stack_user_prompt,
     build_key_phrases_prompt,
     build_per_company_key_phrases_prompt,
     build_work_experience_achievements_prompt,
     build_work_experience_achievements_system_prompt,
     build_work_experience_duties_prompt,
+    normalize_improved_stack_output,
+    ordered_unique_stack_tokens,
 )
 
 
@@ -358,3 +362,60 @@ class TestWorkExperiencePromptsReferenceText:
         assert "Разрабатывал API" in p
         assert "<existing_achievements>" in p
         assert "Старый пункт" in p
+
+
+class TestImproveStackPrompts:
+    def test_system_prompt_includes_rules_and_injection(self) -> None:
+        p = build_improve_stack_system_prompt()
+        assert "comma-separated" in p.lower()
+        assert "PostgreSQL" in p or "recognized" in p.lower()
+
+    def test_user_prompt_includes_stack_and_company_ru(self) -> None:
+        p = build_improve_stack_user_prompt(
+            stack="python, django",
+            company_name="Acme",
+            title="Dev",
+            period="2020",
+            achievements=None,
+            duties=None,
+            locale="ru",
+        )
+        assert "Acme" in p
+        assert "[ТЕКУЩИЙ СТЕК]" in p
+        assert "python" in p.lower() or "django" in p.lower()
+        assert "русском" in p.lower()
+
+    def test_user_prompt_includes_achievements_and_duties_when_present(self) -> None:
+        p = build_improve_stack_user_prompt(
+            stack="Go",
+            company_name="Co",
+            title=None,
+            period=None,
+            achievements="- Built API",
+            duties="- Ran deploys",
+            locale="en",
+        )
+        assert "<achievements>" in p
+        assert "Built API" in p
+        assert "<duties>" in p
+        assert "deploys" in p.lower()
+        assert "english" in p.lower()
+
+    def test_user_prompt_stack_only_without_context_block(self) -> None:
+        p = build_improve_stack_user_prompt(
+            stack="Rust",
+            company_name="X",
+            title=None,
+            period=None,
+            achievements=None,
+            duties=None,
+            locale="en",
+        )
+        assert "[КОНТЕКСТ ДЛЯ СОГЛАСОВАННОСТИ]" not in p
+
+    def test_ordered_unique_stack_tokens_dedupes_and_sorts(self) -> None:
+        s = ordered_unique_stack_tokens("Python, python, Z, A")
+        assert s == "A, Python, Z"
+
+    def test_normalize_improved_stack_output_flattens_lines(self) -> None:
+        assert normalize_improved_stack_output("A\nB") == "A, B"

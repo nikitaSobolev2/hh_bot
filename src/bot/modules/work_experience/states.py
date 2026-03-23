@@ -18,3 +18,6 @@ class WorkExpForm(StatesGroup):
     # Generate achievements/duties from pasted reference text (menu or detail)
     ref_text_pick_company = State()
     ref_text_paste = State()
+
+    # Improve tech stack (menu path: pick company)
+    improve_stack_pick_company = State()

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-
 from src.bot.modules.cover_letter.handlers import _parse_idempotency_key
 from src.bot.modules.cover_letter.services import parse_hh_vacancy_id
 from src.worker.tasks.cover_letter import _build_cover_letter_keyboard

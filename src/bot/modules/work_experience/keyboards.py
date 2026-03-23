@@ -5,8 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.modules.work_experience.callbacks import WorkExpCallback
+from src.bot.modules.work_experience.callbacks import (
+    ImproveStackAction,
+    ImproveStackCallback,
+    WorkExpCallback,
+)
 
 if TYPE_CHECKING:
     from src.core.i18n import I18nContext
@@ -327,6 +332,65 @@ def work_exp_ai_input_keyboard(
             ],
         ]
     )
+
+
+def stack_edit_keyboard(
+    work_exp_id: int,
+    return_to: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Improve stack (primary) + cancel → detail view."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=i18n.get("we-btn-improve-stack"),
+        callback_data=ImproveStackCallback(
+            action=ImproveStackAction.from_edit,
+            work_exp_id=work_exp_id,
+            return_to=return_to,
+        ),
+    )
+    builder.button(
+        text=i18n.get("btn-cancel"),
+        callback_data=WorkExpCallback(
+            action="detail",
+            work_exp_id=work_exp_id,
+            return_to=return_to,
+        ),
+    )
+    builder.adjust(1, 1)
+    return builder.as_markup()
+
+
+def work_experience_improve_stack_keyboard(
+    experiences: list[UserWorkExperience],
+    return_to: str,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    """Pick a job to improve stack (menu path)."""
+    builder = InlineKeyboardBuilder()
+    for exp in experiences:
+        label = f"🏢 {exp.company_name}"
+        if exp.title:
+            label += f" — {exp.title}"
+        if exp.period:
+            label += f" ({exp.period})"
+        builder.button(
+            text=label,
+            callback_data=ImproveStackCallback(
+                action=ImproveStackAction.pick,
+                work_exp_id=exp.id,
+                return_to=return_to,
+            ),
+        )
+    builder.button(
+        text=i18n.get("btn-cancel"),
+        callback_data=ImproveStackCallback(
+            action=ImproveStackAction.menu_cancel,
+            return_to=return_to,
+        ),
+    )
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 def cancel_edit_keyboard(

@@ -179,6 +179,99 @@ async def test_edit_generate_ai_shows_alert_when_exp_not_found_and_skips_ai():
     assert kwargs.get("show_alert") is True
 
 
+# ── work_experience: improve stack ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_improve_stack_from_edit_answers_before_celery():
+    """handle_improve_stack_from_edit answers callback and dispatches improve_stack task."""
+    from src.bot.modules.work_experience.callbacks import ImproveStackAction, ImproveStackCallback
+    from src.bot.modules.work_experience.handlers import handle_improve_stack_from_edit
+
+    exp = MagicMock()
+    exp.user_id = 1
+    exp.is_active = True
+
+    callback = _make_callback()
+    callback_data = ImproveStackCallback(
+        action=ImproveStackAction.from_edit,
+        work_exp_id=5,
+        return_to="menu",
+    )
+    state = AsyncMock()
+    state.get_data = AsyncMock(
+        return_value={
+            "we_editing_field": "stack",
+            "we_editing_id": 5,
+            "we_return_to": "detail",
+        }
+    )
+    session = AsyncMock()
+    i18n = I18nContext(locale="en")
+
+    mock_repo = AsyncMock()
+    mock_repo.get_by_id = AsyncMock(return_value=exp)
+    mock_task = MagicMock()
+
+    with (
+        patch(
+            "src.repositories.work_experience.WorkExperienceRepository",
+            return_value=mock_repo,
+        ),
+        patch(
+            "src.worker.tasks.work_experience.improve_work_experience_stack_task",
+            mock_task,
+        ),
+    ):
+        await handle_improve_stack_from_edit(
+            callback, callback_data, _make_user(), state, session, i18n
+        )
+
+    callback.answer.assert_called_once_with()
+    mock_task.delay.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_improve_stack_pick_answers_before_celery():
+    """handle_improve_stack_pick answers callback and dispatches improve_stack task."""
+    from src.bot.modules.work_experience.callbacks import ImproveStackAction, ImproveStackCallback
+    from src.bot.modules.work_experience.handlers import handle_improve_stack_pick
+
+    exp = MagicMock()
+    exp.user_id = 1
+    exp.is_active = True
+
+    callback = _make_callback()
+    callback_data = ImproveStackCallback(
+        action=ImproveStackAction.pick,
+        work_exp_id=3,
+        return_to="menu",
+    )
+    state = AsyncMock()
+    state.get_data = AsyncMock(return_value={"we_return_to": "menu"})
+    session = AsyncMock()
+    i18n = I18nContext(locale="en")
+
+    mock_repo = AsyncMock()
+    mock_repo.get_by_id = AsyncMock(return_value=exp)
+    mock_task = MagicMock()
+
+    with (
+        patch(
+            "src.repositories.work_experience.WorkExperienceRepository",
+            return_value=mock_repo,
+        ),
+        patch(
+            "src.worker.tasks.work_experience.improve_work_experience_stack_task",
+            mock_task,
+        ),
+    ):
+        await handle_improve_stack_pick(callback, callback_data, _make_user(), state, session, i18n)
+
+    callback.answer.assert_called_once_with()
+    mock_task.delay.assert_called_once()
+
+
 # ── achievements: handle_proceed ──────────────────────────────────────────────
 
 

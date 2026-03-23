@@ -284,6 +284,10 @@ we-btn-edit-achievements = 🏆 Achievements
 we-btn-edit-duties = 🔧 Duties
 btn-we-from-text-achievements = 📝 Achievements from text
 btn-we-from-text-duties = 📝 Duties from text
+btn-we-improve-stack = 🛠 Improve tech stack
+we-btn-improve-stack = 🛠 Improve stack
+we-improve-stack-pick-intro =
+    Pick a job — the bot will normalize and expand your tech stack using AI (based on your entry and, if present, achievements and duties).
 we-btn-from-text-achievements = 📝 Generate achievements from text
 we-btn-from-text-duties = 📝 Generate duties from text
 we-from-text-no-experiences = No work experience entries. Add a job in Work experience first.

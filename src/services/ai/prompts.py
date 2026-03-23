@@ -1424,8 +1424,84 @@ def build_work_experience_duties_prompt(
         "[ОПОРНЫЙ ТЕКСТ]\n"
         "Ниже — заметки и факты от пользователя. Сформулируй обязанности в первую очередь "
         "на основе этого текста (проекты, стек, задачи), но не противоречь данным о компании, "
-        "должности, периоде, стеке и блоку «Данные записи из БД» выше. Глаголы — несовершенного вида.\n"
+        "должности, периоде, стеке и блоку «Данные записи из БД» выше. "
+        "Глаголы — несовершенного вида.\n"
         f"{wrapped}"
+    )
+
+
+def ordered_unique_stack_tokens(raw_stack: str) -> str:
+    """Comma-separated stack line: strip parts, casefold-dedupe, stable alphabetical order."""
+    if not raw_stack or not raw_stack.strip():
+        return ""
+    parts = [p.strip() for p in raw_stack.replace(";", ",").split(",") if p.strip()]
+    seen: dict[str, str] = {}
+    for p in parts:
+        key = p.casefold()
+        if key not in seen:
+            seen[key] = p
+    return ", ".join(sorted(seen.values(), key=str.casefold))
+
+
+def normalize_improved_stack_output(raw: str) -> str:
+    """Normalize model output: newlines to commas, then ordered_unique_stack_tokens."""
+    if not raw or not raw.strip():
+        return ""
+    lines = [ln.strip() for ln in raw.strip().splitlines() if ln.strip()]
+    flattened = ", ".join(lines) if lines else ""
+    return ordered_unique_stack_tokens(flattened.replace(";", ","))
+
+
+def build_improve_stack_system_prompt() -> str:
+    """System prompt for normalizing and extending a tech stack string."""
+    return (
+        "You are a senior engineer helping polish a resume tech stack line.\n"
+        "Rules:\n"
+        "- Output exactly one line: comma-separated technology names only.\n"
+        "- Use widely recognized spellings and casing (e.g. PostgreSQL, JavaScript, Kubernetes).\n"
+        "- Deduplicate synonyms; do not repeat the same technology.\n"
+        "- You may add a few plausible adjacent tools/frameworks that fit the role and context "
+        "(reasonable inference, not fantasy stacks).\n"
+        "- If achievements and/or duties are provided, keep additions consistent with them.\n"
+        "- No explanations, bullets, or numbering — only the comma-separated list.\n\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_improve_stack_user_prompt(
+    *,
+    stack: str,
+    company_name: str,
+    title: str | None,
+    period: str | None,
+    achievements: str | None,
+    duties: str | None,
+    locale: str,
+) -> str:
+    """User content for improving one work experience stack field."""
+    role_info = _format_role_info(company_name, title, period)
+    lang_line = (
+        "Ответь одной строкой на русском: только перечисление через запятую."
+        if locale == "ru"
+        else "Respond in one line in English: comma-separated list only."
+    )
+    base = (
+        f"[РОЛЬ]\n{role_info}\n\n"
+        f"[ТЕКУЩИЙ СТЕК]\n{_wrap_user_input('stack', stack or '')}\n\n"
+        f"{lang_line}\n"
+    )
+    ctx_parts: list[str] = []
+    if achievements and achievements.strip():
+        ctx_parts.append(_wrap_user_input("achievements", achievements.strip()))
+    if duties and duties.strip():
+        ctx_parts.append(_wrap_user_input("duties", duties.strip()))
+    if not ctx_parts:
+        return base
+    return (
+        f"{base}"
+        "[КОНТЕКСТ ДЛЯ СОГЛАСОВАННОСТИ]\n"
+        "Учитывай следующие данные записи при дополнении стека (не противоречь им):\n\n"
+        + "\n\n".join(ctx_parts)
     )
 
 

@@ -139,12 +139,13 @@ def format_company_detail(
         else i18n.get("autoparse-status-disabled")
     )
     last_run = company.last_parsed_at.strftime("%Y-%m-%d %H:%M") if company.last_parsed_at else "—"
+    url_label = i18n.get("autoparse-detail-url")
     lines = [
         f"<b>{i18n.get('autoparse-detail-title')}</b>",
         "",
         f"<b>{company.vacancy_title}</b>",
         f"{i18n.get('autoparse-detail-status')}: {status}",
-        f"{i18n.get('autoparse-detail-url')}: <a href='{company.search_url}'>{i18n.get('autoparse-detail-url')}</a>",
+        f"{url_label}: <a href='{company.search_url}'>{url_label}</a>",
         f"{i18n.get('autoparse-detail-keywords')}: {company.keyword_filter or '—'}",
         f"{i18n.get('autoparse-detail-skills')}: {company.skills or '—'}",
         "",

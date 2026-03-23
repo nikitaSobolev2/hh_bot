@@ -228,6 +228,20 @@ async def menu_we_from_text_duties(
     await start_ref_text_from_menu(callback, user, session, i18n, state, field="duties")
 
 
+@router.callback_query(MenuCallback.filter(F.action == "we_improve_stack"))
+async def menu_we_improve_stack(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    state: FSMContext,
+) -> None:
+    await callback.answer()
+    from src.bot.modules.work_experience.handlers import start_improve_stack_from_menu
+
+    await start_improve_stack_from_menu(callback, user, session, i18n, state)
+
+
 _MENU_DISPATCH = {
     "main": _handle_main,
     "profile": _handle_profile,

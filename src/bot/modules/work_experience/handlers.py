@@ -26,14 +26,20 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.parsing import services as we_service
-from src.bot.modules.work_experience.callbacks import WorkExpCallback
+from src.bot.modules.work_experience.callbacks import (
+    ImproveStackAction,
+    ImproveStackCallback,
+    WorkExpCallback,
+)
 from src.bot.modules.work_experience.keyboards import (
     cancel_add_keyboard,
     cancel_edit_keyboard,
+    stack_edit_keyboard,
     work_exp_ai_input_keyboard,
     work_exp_detail_keyboard,
     work_exp_optional_keyboard,
     work_experience_from_text_keyboard,
+    work_experience_improve_stack_keyboard,
     work_experience_keyboard,
 )
 from src.bot.modules.work_experience.states import WorkExpForm
@@ -205,7 +211,9 @@ def _format_detail_text(exp, i18n: I18nContext) -> str:
         ]
         text = "\n".join(body_lines)
         if len(text) <= _TELEGRAM_MESSAGE_CAP:
-            truncated = (ach_raw and len(ach_raw) > max_each) or (dut_raw and len(dut_raw) > max_each)
+            truncated = (ach_raw and len(ach_raw) > max_each) or (
+                dut_raw and len(dut_raw) > max_each
+            )
             if truncated:
                 note = "\n\n<i>" + html.escape(i18n.get("we-detail-text-truncated")) + "</i>"
                 if len(text) + len(note) <= _TELEGRAM_MESSAGE_CAP:
@@ -309,6 +317,36 @@ async def start_ref_text_from_menu(
     )
     text = i18n.get(title_key)
     kb = work_experience_from_text_keyboard(experiences, "menu", field, i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=kb)
+
+
+async def start_improve_stack_from_menu(
+    callback: CallbackQuery,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    state: FSMContext,
+) -> None:
+    """Menu path: pick company, then improve stack via Celery."""
+    from src.bot.keyboards.common import back_to_menu_keyboard
+
+    experiences = await we_service.get_active_work_experiences(session, user.id)
+    if not experiences:
+        await _clear_we_state(state)
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("we-from-text-no-experiences"),
+                reply_markup=back_to_menu_keyboard(i18n),
+            )
+        return
+
+    await _clear_we_state(state)
+    await state.set_state(WorkExpForm.improve_stack_pick_company)
+    await state.update_data(we_return_to="menu")
+
+    text = i18n.get("we-improve-stack-pick-intro")
+    kb = work_experience_improve_stack_keyboard(experiences, "menu", i18n)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=kb)
 
@@ -917,6 +955,7 @@ async def handle_edit_field(
 
     prompt_key = _field_prompt_key(field)
     cancel_kb = cancel_edit_keyboard(work_exp_id, return_to, i18n)
+    stack_kb = stack_edit_keyboard(work_exp_id, return_to, i18n)
 
     if field in (_FIELD_ACHIEVEMENTS, _FIELD_DUTIES):
         await state.set_state(
@@ -931,8 +970,9 @@ async def handle_edit_field(
             await callback.message.edit_text(i18n.get(prompt_key), reply_markup=ai_kb)
     else:
         await state.set_state(WorkExpForm.edit_value)
+        edit_kb = stack_kb if field == _FIELD_STACK else cancel_kb
         with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(i18n.get(prompt_key), reply_markup=cancel_kb)
+            await callback.message.edit_text(i18n.get(prompt_key), reply_markup=edit_kb)
 
     await callback.answer()
 
@@ -1077,6 +1117,120 @@ async def _handle_edit_generate_ai(
         work_exp_id=work_exp_id,
         return_to=return_to,
     )
+
+
+async def _dispatch_improve_stack_celery(
+    callback: CallbackQuery,
+    user: User,
+    state: FSMContext,
+    work_exp_id: int,
+    return_to: str,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.work_experience import improve_work_experience_stack_task
+
+    await _clear_we_state(state)
+    wait_msg = None
+    with contextlib.suppress(TelegramBadRequest):
+        wait_msg = await callback.message.edit_text(i18n.get("work-exp-generating"))
+
+    await run_celery_task(
+        improve_work_experience_stack_task,
+        user_id=user.id,
+        chat_id=callback.message.chat.id,
+        message_id=wait_msg.message_id if wait_msg else callback.message.message_id,
+        work_exp_id=work_exp_id,
+        locale=user.language_code or "ru",
+        return_to=return_to,
+    )
+
+
+@router.callback_query(
+    ImproveStackCallback.filter(F.action == ImproveStackAction.from_edit),
+    StateFilter(WorkExpForm.edit_value),
+)
+async def handle_improve_stack_from_edit(
+    callback: CallbackQuery,
+    callback_data: ImproveStackCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.work_experience import WorkExperienceRepository
+
+    data = await state.get_data()
+    if data.get("we_editing_field") != _FIELD_STACK:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+    if data.get("we_editing_id") != callback_data.work_exp_id:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+
+    repo = WorkExperienceRepository(session)
+    exp = await repo.get_by_id(callback_data.work_exp_id)
+    if not exp or exp.user_id != user.id or not exp.is_active:
+        await callback.answer(i18n.get("work-exp-not-found"), show_alert=True)
+        return
+
+    return_to: str = data["we_return_to"]
+    await callback.answer()
+    await _dispatch_improve_stack_celery(
+        callback, user, state, callback_data.work_exp_id, return_to, i18n
+    )
+
+
+@router.callback_query(
+    ImproveStackCallback.filter(F.action == ImproveStackAction.pick),
+    StateFilter(WorkExpForm.improve_stack_pick_company),
+)
+async def handle_improve_stack_pick(
+    callback: CallbackQuery,
+    callback_data: ImproveStackCallback,
+    user: User,
+    state: FSMContext,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.work_experience import WorkExperienceRepository
+
+    repo = WorkExperienceRepository(session)
+    exp = await repo.get_by_id(callback_data.work_exp_id)
+    if not exp or exp.user_id != user.id or not exp.is_active:
+        await callback.answer(i18n.get("work-exp-not-found"), show_alert=True)
+        return
+
+    data = await state.get_data()
+    if data.get("we_return_to") != callback_data.return_to:
+        await callback.answer(i18n.get("access-denied"), show_alert=True)
+        return
+
+    return_to = callback_data.return_to
+    await callback.answer()
+    await _dispatch_improve_stack_celery(
+        callback, user, state, callback_data.work_exp_id, return_to, i18n
+    )
+
+
+@router.callback_query(
+    ImproveStackCallback.filter(F.action == ImproveStackAction.menu_cancel),
+    StateFilter(WorkExpForm.improve_stack_pick_company),
+)
+async def handle_improve_stack_menu_cancel(
+    callback: CallbackQuery,
+    _callback_data: ImproveStackCallback,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.bot.keyboards.common import main_menu_admin_keyboard, main_menu_keyboard
+
+    await callback.answer()
+    await _clear_we_state(state)
+    kb = main_menu_admin_keyboard(i18n) if user.is_admin else main_menu_keyboard(i18n)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(i18n.get("welcome"), reply_markup=kb)
 
 
 @router.callback_query(

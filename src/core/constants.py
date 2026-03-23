@@ -113,6 +113,7 @@ class TaskName(StrEnum):
     GENERATE_VACANCY_SUMMARY = "vacancy_summary.generate"
     GENERATE_ACHIEVEMENTS = "achievements.generate"
     GENERATE_WORK_EXPERIENCE_AI = "work_experience.generate_ai"
+    IMPROVE_WORK_EXPERIENCE_STACK = "work_experience.improve_stack"
     GENERATE_RESUME_KEY_PHRASES = "work_experience.generate_resume_keyphrases"
     GENERATE_RECOMMENDATION_LETTER = "recommendation_letter.generate"
     GENERATE_COVER_LETTER = "cover_letter.generate"

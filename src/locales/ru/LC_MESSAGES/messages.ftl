@@ -284,6 +284,10 @@ we-btn-edit-achievements = 🏆 Достижения
 we-btn-edit-duties = 🔧 Обязанности
 btn-we-from-text-achievements = 📝 Достижения из текста
 btn-we-from-text-duties = 📝 Обязанности из текста
+btn-we-improve-stack = 🛠 Улучшить стек
+we-btn-improve-stack = 🛠 Улучшить стек
+we-improve-stack-pick-intro =
+    Выберите место работы — бот нормализует и дополнит стек технологий с помощью ИИ (по записи и, если есть, достижениям и обязанностям).
 we-btn-from-text-achievements = 📝 Сгенерировать достижения из текста
 we-btn-from-text-duties = 📝 Сгенерировать обязанности из текста
 we-from-text-no-experiences = Нет записей об опыте работы. Добавьте место работы в разделе «Опыт работы».
