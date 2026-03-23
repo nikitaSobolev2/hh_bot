@@ -461,33 +461,10 @@ async def handle_view_feed_below_compat(
 
     from src.bot.modules.autoparse.callbacks import FeedCallback
     from src.bot.modules.autoparse.feed_services import build_stats_message
-    from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
-    from src.core.i18n import get_text
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
     from src.services.hh.feed_gating import HhFeedAccountStatus, classify_user_hh_accounts
 
     hh_status, hh_accounts = await classify_user_hh_accounts(session, user.id)
-    if hh_status == HhFeedAccountStatus.NONE:
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=i18n.get("hh-accounts-open"),
-                        callback_data=HhAccountCallback(action="menu").pack(),
-                    )
-                ],
-            ]
-        )
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                i18n.get("feed-no-hh-link"),
-                reply_markup=kb,
-                parse_mode="HTML",
-            )
-        return
-
     hh_linked_id = hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
 
     feed_repo = VacancyFeedSessionRepository(session)

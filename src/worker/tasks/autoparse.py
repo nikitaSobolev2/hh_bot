@@ -784,15 +784,9 @@ async def _deliver_results_async(
     async with session_factory() as session:
         hh_status, hh_accounts = await classify_user_hh_accounts(session, user_id)
 
-    if hh_status == HhFeedAccountStatus.NONE:
-        await _send_no_hh_account_message(
-            bot_token=settings.bot_token,
-            chat_id=user.telegram_id,
-            locale=locale,
-        )
-        return {"status": "no_hh_account"}
-
-    hh_linked_id: int | None = hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
+    hh_linked_id: int | None = (
+        hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
+    )
 
     feed_session_id = await _create_feed_session(
         session_factory,
@@ -851,44 +845,6 @@ async def _create_feed_session(
         )
         await session.commit()
         return feed_session.id
-
-
-async def _send_no_hh_account_message(
-    bot_token: str,
-    chat_id: int,
-    locale: str,
-) -> None:
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
-
-    text = get_text("feed-no-hh-link", locale)
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=get_text("hh-accounts-open", locale),
-                    callback_data=HhAccountCallback(action="menu").pack(),
-                )
-            ],
-        ]
-    )
-    bot = Bot(
-        token=bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-    finally:
-        await bot.session.close()
 
 
 async def _send_feed_stats_card(

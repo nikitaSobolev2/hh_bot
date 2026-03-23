@@ -48,7 +48,10 @@ async def _apply_ui_async(
     feed_session_id: int,
 ) -> dict:
     from src.bot.modules.autoparse import feed_services
-    from src.bot.modules.autoparse.feed_handlers import feed_vacancy_keyboard
+    from src.bot.modules.autoparse.feed_handlers import (
+        _feed_show_respond_button,
+        feed_vacancy_keyboard,
+    )
     from src.repositories.autoparse import AutoparsedVacancyRepository, VacancyFeedSessionRepository
 
     bot = self.create_bot()
@@ -151,6 +154,7 @@ async def _apply_ui_async(
             vacancy.url,
             i18n,
             current_index=feed_session.current_index,
+            show_respond=_feed_show_respond_button(feed_session),
         )
 
         await self.notify_user(

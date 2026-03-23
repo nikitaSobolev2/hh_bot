@@ -41,6 +41,20 @@ hh-accounts-open-browser = 🔗 Открыть hh.ru
 hh-accounts-open = 🔗 Подключить HeadHunter
 hh-accounts-remove = 🗑 Отвязать
 hh-oauth-not-configured = OAuth HeadHunter не настроен на сервере.
+hh-link-not-available = Аккаунт hh.ru не подключён: OAuth не настроен на сервере или отключён импорт браузерной сессии (нужны HH_UI_APPLY_ENABLED=true и HH_TOKEN_ENCRYPTION_KEY).
+hh-accounts-browser-import-hint =
+    <b>Сессия браузера (без OAuth)</b>
+
+    Пришлите JSON файл <code>storage_state</code> Playwright (например из <code>python scripts/hh_browser_login.py</code> → <code>hh_browser_storage_state.json</code>).
+
+    В файле должны быть cookie для <code>hh.ru</code>. После этого можно откликаться из ленты при включённом UI apply.
+hh-accounts-browser-import-send-file = Пришлите файл .json с storage_state Playwright (не обычным текстом).
+hh-accounts-browser-import-bad-file = Не удалось прочитать файл. Пришлите корректный UTF-8 JSON (.json).
+hh-accounts-browser-err-not-object = Нужен JSON-объект (Playwright storage_state).
+hh-accounts-browser-err-no-cookies = В JSON должно быть поле "cookies" (массив).
+hh-accounts-browser-err-no-hh = Нет cookie для hh.ru. Войдите на hh.ru и сохраните storage_state снова.
+hh-accounts-browser-err-unknown = Файл не похож на корректный storage_state Playwright для hh.ru.
+hh-accounts-browser-import-success = Сессия браузера сохранена. Можно откликаться из ленты с этого аккаунта.
 hh-account-not-found = Аккаунт не найден.
 hh-accounts-removed = Аккаунт отвязан.
 hh-accounts-rename-prompt = Отправьте короткое название для этого аккаунта (или /cancel).
@@ -50,7 +64,7 @@ hh-account-selected = Аккаунт выбран.
 hh-token-error = Не удалось обновить сессию hh.ru. Подключите аккаунт снова.
 
 # ── Vacancy feed (HH) ─────────────────────────────────────
-feed-no-hh-link = Подключите аккаунт HeadHunter: Настройки → Аккаунты HeadHunter — чтобы пользоваться лентой и откликами.
+feed-no-hh-link = Подключите аккаунт HeadHunter: Настройки → Аккаунты HeadHunter — чтобы откликаться на hh.ru из ленты.
 feed-pick-hh-hint = Выберите профиль hh.ru для этой ленты:
 feed-pick-hh-first = Сначала выберите аккаунт HeadHunter для этой ленты.
 feed-btn-respond-hh = 📨 Откликнуться на hh.ru

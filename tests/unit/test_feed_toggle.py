@@ -106,3 +106,23 @@ def test_feed_vacancy_keyboard_uses_fits_me_not_fit_buttons():
     assert "feed-btn-not-fit" in all_texts
     assert "feed-btn-like" not in all_texts
     assert "feed-btn-dislike" not in all_texts
+
+
+def test_feed_vacancy_keyboard_omits_respond_when_show_respond_false():
+    from unittest.mock import MagicMock
+
+    from src.bot.modules.autoparse.feed_handlers import feed_vacancy_keyboard
+
+    mock_i18n = MagicMock()
+    mock_i18n.get.side_effect = lambda key: key
+
+    kb = feed_vacancy_keyboard(
+        session_id=1,
+        vacancy_id=99,
+        vacancy_url="https://hh.ru/vacancy/1",
+        i18n=mock_i18n,
+        show_respond=False,
+    )
+
+    all_texts = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert "feed-btn-respond-hh" not in all_texts

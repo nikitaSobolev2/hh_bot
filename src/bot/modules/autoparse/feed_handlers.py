@@ -25,6 +25,11 @@ from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 router = Router(name="feed")
 
 
+def _feed_show_respond_button(feed_session: VacancyFeedSession) -> bool:
+    """Respond requires a linked HH account on this feed session."""
+    return feed_session.hh_linked_account_id is not None
+
+
 def feed_vacancy_keyboard(
     session_id: int,
     vacancy_id: int,
@@ -33,6 +38,7 @@ def feed_vacancy_keyboard(
     mode: str = "summary",
     *,
     current_index: int = 0,
+    show_respond: bool = True,
 ) -> InlineKeyboardMarkup:
     from src.bot.modules.autoparse.callbacks import AutoparseCallback
 
@@ -80,6 +86,8 @@ def feed_vacancy_keyboard(
                 ).pack(),
             ),
         ],
+    ]
+    respond_row = [
         [
             InlineKeyboardButton(
                 text=i18n.get("feed-btn-respond-hh"),
@@ -90,6 +98,8 @@ def feed_vacancy_keyboard(
                 ).pack(),
             ),
         ],
+    ]
+    tail_rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
                 text=i18n.get("feed-btn-show-later"),
@@ -106,7 +116,7 @@ def feed_vacancy_keyboard(
         ],
     ]
     if current_index > 0:
-        rows.append(
+        tail_rows.append(
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-back"),
@@ -119,7 +129,7 @@ def feed_vacancy_keyboard(
             ]
         )
     else:
-        rows.append(
+        tail_rows.append(
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-back"),
@@ -127,6 +137,8 @@ def feed_vacancy_keyboard(
                 )
             ]
         )
+    rows.extend(respond_row if show_respond else [])
+    rows.extend(tail_rows)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -184,6 +196,7 @@ async def handle_feed_toggle_view(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n, mode,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -214,9 +227,6 @@ async def handle_feed_start(
             feed_repo = VacancyFeedSessionRepository(session)
             await feed_repo.update(feed_session, hh_linked_account_id=accs[0].id)
             await session.commit()
-        else:
-            await callback.answer(i18n.get("feed-no-hh-link"), show_alert=True)
-            return
 
     vacancy_repo = AutoparsedVacancyRepository(session)
     vacancy_id = feed_session.vacancy_ids[feed_session.current_index]
@@ -230,6 +240,7 @@ async def handle_feed_start(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -269,6 +280,7 @@ async def handle_feed_react(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -307,6 +319,7 @@ async def handle_feed_show_later(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -439,6 +452,7 @@ async def handle_feed_back_to_vacancy(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -490,6 +504,7 @@ async def handle_feed_prev_vacancy(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -728,6 +743,7 @@ async def handle_feed_respond_cancel(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -806,6 +822,7 @@ async def handle_feed_respond_pick(
         keyboard = feed_vacancy_keyboard(
             feed_session.id, vacancy.id, vacancy.url, i18n,
             current_index=feed_session.current_index,
+            show_respond=_feed_show_respond_button(feed_session),
         )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -870,6 +887,7 @@ async def handle_feed_respond_pick(
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")

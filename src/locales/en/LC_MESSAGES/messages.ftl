@@ -41,6 +41,20 @@ hh-accounts-open-browser = 🔗 Open hh.ru
 hh-accounts-open = 🔗 Connect HeadHunter
 hh-accounts-remove = 🗑 Remove
 hh-oauth-not-configured = HeadHunter OAuth is not configured on the server.
+hh-link-not-available = HeadHunter is not linked: OAuth is not configured on the server, or browser import is disabled (set HH_UI_APPLY_ENABLED=true and HH_TOKEN_ENCRYPTION_KEY).
+hh-accounts-browser-import-hint =
+    <b>Browser session (no OAuth)</b>
+
+    Send a Playwright <code>storage_state</code> JSON file (for example from <code>python scripts/hh_browser_login.py</code> → <code>hh_browser_storage_state.json</code>).
+
+    The file must contain cookies for <code>hh.ru</code>. Then you can respond from the feed while UI apply is enabled.
+hh-accounts-browser-import-send-file = Send a .json file with Playwright storage_state (not plain text).
+hh-accounts-browser-import-bad-file = Could not read the file. Send a valid UTF-8 JSON file (.json).
+hh-accounts-browser-err-not-object = The file must be a JSON object (Playwright storage_state).
+hh-accounts-browser-err-no-cookies = The JSON must include a "cookies" array.
+hh-accounts-browser-err-no-hh = No cookies for hh.ru found. Log in on hh.ru and export storage_state again.
+hh-accounts-browser-err-unknown = This file does not look like a valid Playwright storage_state for hh.ru.
+hh-accounts-browser-import-success = Browser session saved. You can use this account for responses from the feed.
 hh-account-not-found = Account not found.
 hh-accounts-removed = Account disconnected.
 hh-accounts-rename-prompt = Send a short label for this account (or /cancel).
@@ -50,7 +64,7 @@ hh-account-selected = Account selected.
 hh-token-error = Could not refresh HeadHunter session. Link the account again.
 
 # ── Vacancy feed (HH) ─────────────────────────────────────
-feed-no-hh-link = Connect a HeadHunter account in Settings → HeadHunter accounts to use the feed and respond.
+feed-no-hh-link = Connect a HeadHunter account in Settings → HeadHunter accounts to respond on hh.ru from the feed.
 feed-pick-hh-hint = Choose which HeadHunter profile to use for this feed:
 feed-pick-hh-first = Choose a HeadHunter account for this feed first.
 feed-btn-respond-hh = 📨 Respond on hh.ru
