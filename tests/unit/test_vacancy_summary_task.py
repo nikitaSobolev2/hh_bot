@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -141,3 +141,195 @@ class TestStripAgentWrapper:
         raw = "Я Senior разработчик.\n\nЕсли хотите, могу подготовить вариант под LinkedIn."
         result = _strip_agent_wrapper(raw)
         assert result == "Я Senior разработчик."
+
+
+_VALID_ABOUT_ME = """Я Senior разработчик с опытом.
+
+🔥 Как достигаю результата
+Строю надёжные системы.
+
+⭐️ Мне это легко
+• Достижение без выдуманных метрик.
+
+Я полезен для — продуктовых команд.
+
+⚠️ Ограничения — не указано.
+
+Где живу — Москва.
+
+---
+Senior engineer focused on backend systems.
+"""
+
+
+class TestVacancySummaryOutputMeetsFormat:
+    def test_valid_russian_body_with_markers_and_english_tail(self):
+        from src.worker.tasks.vacancy_summary import _vacancy_summary_output_meets_format
+
+        assert _vacancy_summary_output_meets_format(_VALID_ABOUT_ME) is True
+
+    def test_rejects_missing_separator(self):
+        from src.worker.tasks.vacancy_summary import _vacancy_summary_output_meets_format
+
+        assert (
+            _vacancy_summary_output_meets_format(
+                "Я разработчик.\n\n🔥\n\n⭐️\n\n⚠️\n\nТекст без разделителя."
+            )
+            is False
+        )
+
+    def test_rejects_english_only_before_separator(self):
+        from src.worker.tasks.vacancy_summary import _vacancy_summary_output_meets_format
+
+        assert (
+            _vacancy_summary_output_meets_format(
+                "I am a Senior developer.\n\n---\nEnglish only."
+            )
+            is False
+        )
+
+    def test_rejects_missing_section_markers(self):
+        from src.worker.tasks.vacancy_summary import _vacancy_summary_output_meets_format
+
+        assert (
+            _vacancy_summary_output_meets_format(
+                "Я разработчик в Москве.\n\n---\nI am a developer."
+            )
+            is False
+        )
+
+    def test_rejects_empty_tail_after_separator(self):
+        from src.worker.tasks.vacancy_summary import _vacancy_summary_output_meets_format
+
+        assert _vacancy_summary_output_meets_format("Я текст.\n\n🔥\n\n⭐️\n\n⚠️\n\n---\n") is False
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_retries_once_when_first_invalid(mock_session_factory, mock_task):
+    """First model output invalid (English-only); second output valid — two API calls."""
+    from src.worker.tasks.vacancy_summary import _generate_summary_async
+
+    factory, _session = mock_session_factory
+    task, cb = mock_task
+
+    exp = MagicMock()
+    exp.company_name = "ACME"
+    exp.stack = "Python"
+    exp.title = "Dev"
+    exp.period = "2020"
+    exp.achievements = None
+    exp.duties = None
+
+    mock_we_repo = MagicMock()
+    mock_we_repo.get_active_by_user = AsyncMock(return_value=[exp])
+
+    summary = MagicMock()
+    mock_vs_repo = MagicMock()
+    mock_vs_repo.get_by_id = AsyncMock(return_value=summary)
+    mock_vs_repo.update_text = AsyncMock()
+
+    invalid = "I am a Senior Fullstack-Developer with over 5 years. No Russian structure."
+    valid = _VALID_ABOUT_ME
+
+    with (
+        patch(
+            "src.repositories.work_experience.WorkExperienceRepository",
+            return_value=mock_we_repo,
+        ),
+        patch(
+            "src.repositories.vacancy_summary.VacancySummaryRepository",
+            return_value=mock_vs_repo,
+        ),
+        patch(
+            "src.bot.modules.autoparse.services.derive_tech_stack_from_experiences",
+            return_value=["Python"],
+        ),
+        patch("src.services.ai.client.AIClient") as mock_ai_cls,
+        patch("src.core.i18n.get_text", return_value="RETRY"),
+    ):
+        mock_ai_cls.return_value.generate_text = AsyncMock(side_effect=[invalid, valid])
+
+        await _generate_summary_async(
+            task,
+            factory,
+            summary_id=1,
+            user_id=1,
+            excluded_industries=None,
+            location=None,
+            remote_preference=None,
+            additional_notes=None,
+            chat_id=100,
+            message_id=200,
+            locale="ru",
+            context="",
+        )
+
+    assert mock_ai_cls.return_value.generate_text.await_count == 2
+    mock_vs_repo.update_text.assert_called_once()
+    assert cb.record_success.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_logs_warning_when_both_outputs_invalid(
+    mock_session_factory,
+    mock_task,
+):
+    from src.worker.tasks.vacancy_summary import _generate_summary_async
+
+    factory, _ = mock_session_factory
+    task, _cb = mock_task
+
+    exp = MagicMock()
+    exp.company_name = "ACME"
+    exp.stack = "Py"
+    exp.title = None
+    exp.period = None
+    exp.achievements = None
+    exp.duties = None
+
+    mock_we_repo = MagicMock()
+    mock_we_repo.get_active_by_user = AsyncMock(return_value=[exp])
+
+    summary = MagicMock()
+    mock_vs_repo = MagicMock()
+    mock_vs_repo.get_by_id = AsyncMock(return_value=summary)
+    mock_vs_repo.update_text = AsyncMock()
+
+    bad = "English only paragraph without markers."
+
+    with (
+        patch(
+            "src.repositories.work_experience.WorkExperienceRepository",
+            return_value=mock_we_repo,
+        ),
+        patch(
+            "src.repositories.vacancy_summary.VacancySummaryRepository",
+            return_value=mock_vs_repo,
+        ),
+        patch(
+            "src.bot.modules.autoparse.services.derive_tech_stack_from_experiences",
+            return_value=["Py"],
+        ),
+        patch("src.services.ai.client.AIClient") as mock_ai_cls,
+        patch("src.core.i18n.get_text", return_value="RETRY"),
+    ):
+        mock_ai_cls.return_value.generate_text = AsyncMock(side_effect=[bad, bad])
+
+        await _generate_summary_async(
+            task,
+            factory,
+            summary_id=2,
+            user_id=1,
+            excluded_industries=None,
+            location=None,
+            remote_preference=None,
+            additional_notes=None,
+            chat_id=100,
+            message_id=200,
+            locale="en",
+            context="",
+        )
+
+    mock_vs_repo.update_text.assert_called_once()
+    call_text = mock_vs_repo.update_text.call_args[0][1]
+    assert "English only" in call_text

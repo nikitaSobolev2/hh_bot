@@ -1011,6 +1011,8 @@ vs-generating = ⏳ Generating your about-me summary...
 vs-generation-completed = ✅ About-me summary is ready!
 vs-not-found = Summary not found.
 vs-deleted = Deleted.
+vs-ai-format-retry =
+    Rewrite your answer: the required format was violated. First output the full Russian text for all six sections from the system prompt (with 🔥, ⭐️, ⚠️), then a line containing only ---, then only the English translation of the first section. No preambles or questions at the end.
 
 # ── Resume Generator ──────────────────────────────────────────
 res-welcome = 📋 <b>Resume Generator</b>

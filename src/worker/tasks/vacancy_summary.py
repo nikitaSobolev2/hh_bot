@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
 from src.worker.app import celery_app
@@ -9,6 +11,8 @@ from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
+
+_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 
 _AGENT_OUTRO_MARKERS = ("Если хотите", "Хотите, чтобы", "Могу подготовить")
 _INTRO_PHRASES = ("Вот профессиональный", "Составляю", "Вот текст", "Готово.", "Вот ваш")
@@ -50,6 +54,28 @@ def _strip_agent_wrapper(text: str) -> str:
     if result.endswith("---"):
         result = result[:-3].rstrip()
     return result
+
+
+def _vacancy_summary_output_meets_format(text: str) -> bool:
+    """Return True if the about-me text matches the expected RU body + --- + EN tail shape."""
+    if not text or not text.strip():
+        return False
+    if "---" not in text:
+        return False
+    main, sep, tail = text.partition("---")
+    if not sep:
+        return False
+    main = main.strip()
+    tail = tail.strip()
+    if not main or not tail:
+        return False
+    if not _CYRILLIC_RE.search(main):
+        return False
+    if "🔥" not in main:
+        return False
+    if "⭐" not in main:
+        return False
+    return "⚠" in main
 
 
 @celery_app.task(
@@ -106,6 +132,7 @@ async def _generate_summary_async(
     locale: str,
     context: str = "",
 ) -> dict:
+    from src.core.i18n import get_text
     from src.repositories.vacancy_summary import VacancySummaryRepository
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
@@ -168,22 +195,39 @@ async def _generate_summary_async(
             "Не повторяй предыдущую формулировку — используй другие формулировки и структуру."
         )
 
-    temperature = 0.85 if context == "regenerate" else 0.6
-    try:
-        generated_text = await ai_client.generate_text(
-            user_content,
+    temperature = 0.55 if context == "regenerate" else 0.35
+
+    async def _generate_once(content: str) -> str:
+        raw = await ai_client.generate_text(
+            content,
             system_prompt=system_prompt,
             timeout=180,
             max_tokens=2000,
             temperature=temperature,
         )
         cb.record_success()
+        return _strip_agent_wrapper(raw)
+
+    try:
+        generated_text = await _generate_once(user_content)
+        if not _vacancy_summary_output_meets_format(generated_text):
+            logger.info(
+                "vacancy_summary_format_retry",
+                summary_id=summary_id,
+            )
+            retry_instruction = get_text("vs-ai-format-retry", locale)
+            retry_user = f"{user_content}\n\n{retry_instruction}"
+            generated_text = await _generate_once(retry_user)
+            if not _vacancy_summary_output_meets_format(generated_text):
+                logger.warning(
+                    "vacancy_summary_format_invalid_after_retry",
+                    summary_id=summary_id,
+                    validation_failed_after_retry=True,
+                )
     except Exception as exc:
         cb.record_failure()
         logger.error("Vacancy summary generation failed", summary_id=summary_id, error=str(exc))
         raise
-
-    generated_text = _strip_agent_wrapper(generated_text)
 
     async with session_factory() as session:
         repo = VacancySummaryRepository(session)
