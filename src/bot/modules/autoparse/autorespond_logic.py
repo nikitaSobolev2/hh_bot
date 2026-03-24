@@ -21,9 +21,11 @@ def _keyword_tokens(keyword_filter: str) -> list[str]:
 def vacancy_passes_compatibility(
     vacancy: AutoparsedVacancy,
     min_compat: int,
+    *,
+    allow_missing_score: bool = False,
 ) -> bool:
     if vacancy.compatibility_score is None:
-        return False
+        return allow_missing_score
     return float(vacancy.compatibility_score) >= float(min_compat)
 
 
@@ -53,10 +55,19 @@ def filter_vacancies_for_autorespond(
     min_compat: int,
     company_keyword_filter: str,
     keyword_mode: str,
+    allow_missing_compatibility_score: bool = False,
 ) -> list[AutoparsedVacancy]:
+    """When *allow_missing_compatibility_score* is True, vacancies with no compatibility
+    score still pass the compatibility gate (used for explicit ``vacancy_ids`` runs where
+    rows may not be scored yet).
+    """
     out: list[AutoparsedVacancy] = []
     for v in vacancies:
-        if not vacancy_passes_compatibility(v, min_compat):
+        if not vacancy_passes_compatibility(
+            v,
+            min_compat,
+            allow_missing_score=allow_missing_compatibility_score,
+        ):
             continue
         if not vacancy_passes_keyword_mode(v, company_keyword_filter, keyword_mode):
             continue

@@ -46,6 +46,31 @@ def test_compat_none_filtered_out() -> None:
     assert out == []
 
 
+def test_compat_none_included_when_allow_missing_score() -> None:
+    v = _vac(compat=None)
+    out = ar.filter_vacancies_for_autorespond(
+        [v],
+        min_compat=50,
+        company_keyword_filter="",
+        keyword_mode=ar.AUTORESPOND_KEYWORD_TITLE_AND_KEYWORDS,
+        allow_missing_compatibility_score=True,
+    )
+    assert out == [v]
+
+
+def test_compat_below_threshold_still_filtered_when_allow_missing() -> None:
+    """Explicit-ID mode only relaxes *missing* scores, not low scores."""
+    v = _vac(compat=40.0)
+    out = ar.filter_vacancies_for_autorespond(
+        [v],
+        min_compat=50,
+        company_keyword_filter="",
+        keyword_mode=ar.AUTORESPOND_KEYWORD_TITLE_AND_KEYWORDS,
+        allow_missing_compatibility_score=True,
+    )
+    assert out == []
+
+
 def test_title_only_requires_tokens_in_title() -> None:
     ok = _vac(title="Senior Python Engineer", description="no django here")
     bad = _vac(

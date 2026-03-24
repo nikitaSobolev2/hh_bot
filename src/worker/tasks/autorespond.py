@@ -166,6 +166,7 @@ async def _run_autorespond_async(
             min_compat=company.autorespond_min_compat,
             company_keyword_filter=company.keyword_filter or "",
             keyword_mode=company.autorespond_keyword_mode,
+            allow_missing_compatibility_score=vacancy_ids is not None,
         )
         filtered.sort(key=lambda v: -v.id)
         capped = autorespond_logic.apply_max_cap(filtered, company.autorespond_max_per_run)
