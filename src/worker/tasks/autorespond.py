@@ -20,6 +20,7 @@ from src.services.hh.client import HhApiClient, HhApiError, apply_to_vacancy_wit
 from src.services.hh.token_service import ensure_access_token
 from src.services.hh_ui.rate_limit import (
     current_ui_apply_count_sync,
+    get_hh_ui_apply_max_per_day_effective,
     try_acquire_ui_apply_slot_sync,
 )
 from src.services.hh_ui.runner import normalize_hh_vacancy_url
@@ -339,7 +340,7 @@ async def _run_autorespond_async(
                             queued=queued,
                             partial_batch=queued > 0,
                             hh_ui_apply_count_today=current_ui_apply_count_sync(user.id),
-                            hh_ui_apply_max_per_day=int(settings.hh_ui_apply_max_per_day),
+                            hh_ui_apply_max_per_day=get_hh_ui_apply_max_per_day_effective(),
                         )
                         if task_key and user.telegram_id:
                             await clear_autorespond_done_counter(user.telegram_id, task_key)
