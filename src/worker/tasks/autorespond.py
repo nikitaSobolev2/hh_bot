@@ -27,6 +27,32 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 
+def _autorespond_filter_rejection_counts(
+    raw: list[AutoparsedVacancy],
+    *,
+    min_compat: int,
+    company_keyword_filter: str,
+    keyword_mode: str,
+    allow_missing_compatibility_score: bool,
+) -> tuple[int, int]:
+    """How many rows fail compatibility vs keyword (among those that passed compat)."""
+    compat_rejected = 0
+    keyword_rejected = 0
+    for v in raw:
+        if not autorespond_logic.vacancy_passes_compatibility(
+            v,
+            min_compat,
+            allow_missing_score=allow_missing_compatibility_score,
+        ):
+            compat_rejected += 1
+            continue
+        if not autorespond_logic.vacancy_passes_keyword_mode(
+            v, company_keyword_filter, keyword_mode
+        ):
+            keyword_rejected += 1
+    return compat_rejected, keyword_rejected
+
+
 async def _load_candidates(
     session: AsyncSession,
     company_id: int,
@@ -135,20 +161,50 @@ async def _run_autorespond_async(
         settings_repo = AppSettingRepository(session)
         global_on = await settings_repo.get_value("task_autorespond_enabled", default=False)
         if not global_on:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="disabled_global",
+            )
             return {"status": "disabled_global"}
 
         company_repo = AutoparseCompanyRepository(session)
         company = await company_repo.get_by_id(company_id)
         if not company or company.is_deleted:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="company_not_found",
+            )
             return {"status": "company_not_found"}
         if not company.autorespond_enabled:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="disabled_company",
+            )
             return {"status": "disabled_company"}
         if not company.autorespond_resume_id or not company.autorespond_hh_linked_account_id:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="not_configured",
+            )
             return {"status": "not_configured"}
 
         user_repo = UserRepository(session)
         user = await user_repo.get_by_id(company.user_id)
         if not user:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="user_not_found",
+            )
             return {"status": "user_not_found"}
 
         hh_acc_id = company.autorespond_hh_linked_account_id
@@ -161,15 +217,47 @@ async def _run_autorespond_async(
         )
 
         raw = await _load_candidates(session, company_id, vacancy_ids, task_started_at)
+        # Manual chain passes concrete unreacted feed IDs; do not re-apply company
+        # keyword_filter here (it targets search/query matching and can drop every row).
+        kw_filter = (company.keyword_filter or "") if trigger != "manual_unreacted" else ""
+        allow_missing_compat = vacancy_ids is not None
+        compat_rejected, keyword_rejected = _autorespond_filter_rejection_counts(
+            raw,
+            min_compat=company.autorespond_min_compat,
+            company_keyword_filter=kw_filter,
+            keyword_mode=company.autorespond_keyword_mode,
+            allow_missing_compatibility_score=allow_missing_compat,
+        )
         filtered = autorespond_logic.filter_vacancies_for_autorespond(
             raw,
             min_compat=company.autorespond_min_compat,
-            company_keyword_filter=company.keyword_filter or "",
+            company_keyword_filter=kw_filter,
             keyword_mode=company.autorespond_keyword_mode,
-            allow_missing_compatibility_score=vacancy_ids is not None,
+            allow_missing_compatibility_score=allow_missing_compat,
         )
         filtered.sort(key=lambda v: -v.id)
         capped = autorespond_logic.apply_max_cap(filtered, company.autorespond_max_per_run)
+
+        logger.info(
+            "autorespond_selection_breakdown",
+            company_id=company_id,
+            trigger=trigger,
+            user_id=user.id,
+            vacancy_ids_requested=len(vacancy_ids) if vacancy_ids else None,
+            raw_loaded=len(raw),
+            min_compat=company.autorespond_min_compat,
+            keyword_mode=company.autorespond_keyword_mode,
+            keyword_filter_chars=len(kw_filter.strip()),
+            keyword_filter_skipped_for_trigger=trigger == "manual_unreacted",
+            allow_missing_compatibility_score=allow_missing_compat,
+            compat_rejected=compat_rejected,
+            keyword_rejected=keyword_rejected,
+            after_filter=len(filtered),
+            max_per_run=company.autorespond_max_per_run,
+            after_cap=len(capped),
+            hh_ui_apply_enabled=settings.hh_ui_apply_enabled,
+            cover_task_enabled=cover_task_enabled,
+        )
 
         attempt_repo = HhApplicationAttemptRepository(session)
         already_success: set[str] = set()
