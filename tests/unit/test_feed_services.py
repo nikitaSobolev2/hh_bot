@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.bot.modules.autoparse.feed_services import (
+    advance_feed_index,
     build_results_message,
     build_stats_message,
     build_vacancy_card,
     complete_feed_session,
     compute_feed_results,
     create_feed_session,
+    format_ui_apply_result_line,
     get_feed_session,
     merge_liked_for_respond,
     move_vacancy_to_end,
@@ -286,6 +288,46 @@ def test_build_results_message_shows_all_stats():
     assert "4" in text
     assert "3" in text
     assert "82" in text
+
+
+def test_build_results_message_includes_ui_apply_lines_when_provided():
+    results = {
+        "seen": 2,
+        "total": 5,
+        "liked": 1,
+        "disliked": 1,
+        "avg_compat_liked": None,
+    }
+    lines = ["✅ Job A", "❌ Job B — err"]
+    text = build_results_message(results, "en", ui_apply_lines=lines)
+    assert "HH responses (browser)" in text
+    assert "✅ Job A" in text
+    assert "❌ Job B" in text
+
+
+def test_format_ui_apply_result_line_success_and_error():
+    ok = format_ui_apply_result_line("Dev", success=True, detail=None, locale="en")
+    assert "Dev" in ok
+    err = format_ui_apply_result_line("Dev", success=False, detail="ui:error", locale="en")
+    assert "Dev" in err
+    assert "ui:error" in err
+
+
+@pytest.mark.asyncio
+async def test_advance_feed_index_only_increments_index(make_feed_session):
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(liked_ids=[1], disliked_ids=[], current_index=2)
+
+    with patch("src.bot.modules.autoparse.feed_services.VacancyFeedSessionRepository") as mock_repo:
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.update = AsyncMock(return_value=feed_session)
+        mock_repo.return_value = mock_repo_instance
+
+        await advance_feed_index(mock_session, feed_session)
+
+    call_kwargs = mock_repo_instance.update.call_args.kwargs
+    assert call_kwargs["current_index"] == 3
+    assert "liked_ids" not in call_kwargs
 
 
 def test_build_results_message_omits_avg_compat_line_when_none():

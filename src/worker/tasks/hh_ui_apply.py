@@ -61,6 +61,8 @@ async def _apply_ui_async(
     vacancy_url: str,
     feed_session_id: int,
     cover_letter: str = "",
+    *,
+    silent_feed: bool = False,
 ) -> dict:
     from src.bot.modules.autoparse import feed_services
     from src.bot.modules.autoparse.feed_handlers import (
@@ -84,12 +86,13 @@ async def _apply_ui_async(
                     "hh_ui apply: missing browser session",
                     account_id=hh_linked_account_id,
                 )
-                await self.notify_user(
-                    bot,
-                    chat_id,
-                    message_id,
-                    get_text("feed-respond-ui-no-session", locale),
-                )
+                if not silent_feed:
+                    await self.notify_user(
+                        bot,
+                        chat_id,
+                        message_id,
+                        get_text("feed-respond-ui-no-session", locale),
+                    )
                 async with session_factory() as s2:
                     await feed_services.remove_liked_on_apply_failure(
                         s2, feed_session_id, autoparsed_vacancy_id
@@ -98,12 +101,13 @@ async def _apply_ui_async(
 
             storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
             if not storage:
-                await self.notify_user(
-                    bot,
-                    chat_id,
-                    message_id,
-                    get_text("feed-respond-ui-no-session", locale),
-                )
+                if not silent_feed:
+                    await self.notify_user(
+                        bot,
+                        chat_id,
+                        message_id,
+                        get_text("feed-respond-ui-no-session", locale),
+                    )
                 async with session_factory() as s2:
                     await feed_services.remove_liked_on_apply_failure(
                         s2, feed_session_id, autoparsed_vacancy_id
@@ -188,6 +192,9 @@ async def _apply_ui_async(
                 fr = VacancyFeedSessionRepository(s_reload)
                 feed_session = await fr.get_by_id(feed_session_id)
 
+        if silent_feed:
+            return {"status": status, "outcome": result.outcome.value}
+
         i18n = I18nContext(locale)
 
         if not vacancy or not feed_session:
@@ -262,6 +269,7 @@ def apply_to_vacancy_ui_task(
     vacancy_url: str,
     feed_session_id: int,
     cover_letter: str = "",
+    silent_feed: bool = False,
 ) -> dict:
     return run_async(
         lambda sf: _apply_ui_async(
@@ -278,5 +286,6 @@ def apply_to_vacancy_ui_task(
             vacancy_url,
             feed_session_id,
             cover_letter,
+            silent_feed=silent_feed,
         )
     )

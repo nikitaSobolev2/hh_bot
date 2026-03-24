@@ -99,6 +99,7 @@ def generate_cover_letter_task(
     session_id: int = 0,
     source: str = "autoparse",
     apply_after: dict | None = None,
+    silent_feed: bool = False,
 ) -> dict:
     return run_async(
         lambda sf: _generate_cover_letter_async(
@@ -113,6 +114,7 @@ def generate_cover_letter_task(
             session_id,
             source,
             apply_after,
+            silent_feed,
         )
     )
 
@@ -236,6 +238,7 @@ async def _generate_cover_letter_async(
     session_id: int,
     source: str = "autoparse",
     apply_after: dict | None = None,
+    silent_feed: bool = False,
 ) -> dict:
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.cover_letter_vacancy import CoverLetterVacancyRepository
@@ -368,41 +371,44 @@ async def _generate_cover_letter_async(
             )
             raise
         generated_text = _normalize_dashes(_strip_agent_wrapper(generated_text))
-        bot = task.create_bot()
-        try:
-            from src.core.i18n import get_text
-            from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+        from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
 
-            apply_to_vacancy_ui_task.delay(
-                apply_after["user_id"],
-                apply_after["chat_id"],
-                apply_after["message_id"],
-                apply_after["locale"],
-                apply_after["hh_linked_account_id"],
-                apply_after["autoparsed_vacancy_id"],
-                apply_after["hh_vacancy_id"],
-                apply_after["resume_id"],
-                apply_after["vacancy_url"],
-                apply_after["feed_session_id"],
-                generated_text,
-            )
-            await task.notify_user(
-                bot,
-                chat_id,
-                message_id,
-                get_text("feed-respond-ui-queued", locale),
-                parse_mode="HTML",
-            )
-            await task.mark_completed(
-                idempotency_key,
-                "cover_letter",
-                user_id,
-                session_factory,
-                result_data={"generated_text": generated_text, "chained_apply": True},
-            )
-            return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}
-        finally:
-            await bot.session.close()
+        apply_to_vacancy_ui_task.delay(
+            apply_after["user_id"],
+            apply_after["chat_id"],
+            apply_after["message_id"],
+            apply_after["locale"],
+            apply_after["hh_linked_account_id"],
+            apply_after["autoparsed_vacancy_id"],
+            apply_after["hh_vacancy_id"],
+            apply_after["resume_id"],
+            apply_after["vacancy_url"],
+            apply_after["feed_session_id"],
+            generated_text,
+            silent_feed,
+        )
+        if not silent_feed:
+            from src.core.i18n import get_text
+
+            bot = task.create_bot()
+            try:
+                await task.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    get_text("feed-respond-ui-queued", locale),
+                    parse_mode="HTML",
+                )
+            finally:
+                await bot.session.close()
+        await task.mark_completed(
+            idempotency_key,
+            "cover_letter",
+            user_id,
+            session_factory,
+            result_data={"generated_text": generated_text, "chained_apply": True},
+        )
+        return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}
 
     keyboard = _build_cover_letter_keyboard(
         session_id, vacancy_id, locale, standalone=(source == "standalone")

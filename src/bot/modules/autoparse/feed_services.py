@@ -153,6 +153,16 @@ async def record_reaction(
     await session.commit()
 
 
+async def advance_feed_index(session: AsyncSession, feed_session: VacancyFeedSession) -> None:
+    """Increment current_index only (e.g. after queued respond without changing liked/disliked)."""
+    repo = VacancyFeedSessionRepository(session)
+    await repo.update(
+        feed_session,
+        current_index=feed_session.current_index + 1,
+    )
+    await session.commit()
+
+
 async def move_vacancy_to_end(
     session: AsyncSession,
     feed_session: VacancyFeedSession,
@@ -292,7 +302,12 @@ def build_vacancy_card(
     return "\n".join(lines)
 
 
-def build_results_message(results: dict, locale: str = "ru") -> str:
+def build_results_message(
+    results: dict,
+    locale: str = "ru",
+    *,
+    ui_apply_lines: list[str] | None = None,
+) -> str:
     lines = [
         f"<b>{get_text('feed-results-header', locale)}</b>",
         "",
@@ -303,4 +318,23 @@ def build_results_message(results: dict, locale: str = "ru") -> str:
     if results["avg_compat_liked"] is not None:
         avg = f"{results['avg_compat_liked']:.0f}"
         lines.append(get_text("feed-results-avg-liked-compat", locale, avg=avg))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if ui_apply_lines:
+        text += "\n\n"
+        text += f"<b>{get_text('feed-results-ui-applies-header', locale)}</b>\n"
+        text += "\n".join(ui_apply_lines)
+    return text
+
+
+def format_ui_apply_result_line(
+    title: str,
+    *,
+    success: bool,
+    detail: str | None,
+    locale: str = "ru",
+) -> str:
+    safe_title = html.escape(title)
+    if success:
+        return get_text("feed-results-ui-apply-ok", locale, title=safe_title)
+    d = html.escape(detail or "")
+    return get_text("feed-results-ui-apply-err", locale, title=safe_title, detail=d)

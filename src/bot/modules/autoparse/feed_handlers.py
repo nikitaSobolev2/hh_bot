@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -495,6 +496,41 @@ async def handle_feed_react(
         **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+async def _feed_show_next_vacancy_or_results(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    feed_session: VacancyFeedSession,
+    i18n: I18nContext,
+) -> None:
+    total = len(feed_session.vacancy_ids)
+    if feed_session.current_index >= total:
+        await _show_results(callback, session, feed_session, i18n)
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    next_vacancy_id = feed_session.vacancy_ids[feed_session.current_index]
+    vacancy = await vacancy_repo.get_by_id(next_vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    text = feed_services.build_vacancy_card(
+        vacancy, feed_session.current_index, total, i18n.locale
+    )
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id,
+        vacancy.id,
+        vacancy.url,
+        i18n,
+        current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
@@ -1305,12 +1341,13 @@ async def handle_feed_respond_pick(
             }
             current = await ap_service.get_user_autoparse_settings(session, user.id)
             cover_letter_style = current.get("cover_letter_style", "professional")
-            await callback.answer()
-            with contextlib.suppress(TelegramBadRequest):
-                await callback.message.edit_text(
-                    i18n.get("feed-cover-letter-generating"),
-                    parse_mode="HTML",
-                )
+            session_id = feed_session.id
+            await feed_services.advance_feed_index(session, feed_session)
+            feed_session = await feed_services.get_feed_session(session, session_id)
+            if not feed_session:
+                await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
+                return
+            await _feed_show_next_vacancy_or_results(callback, session, feed_session, i18n)
             await run_celery_task(
                 generate_cover_letter_task,
                 user.id,
@@ -1322,6 +1359,7 @@ async def handle_feed_respond_pick(
                 feed_session.id,
                 "feed_respond_apply",
                 apply_after=apply_after,
+                silent_feed=True,
             )
             return
 
@@ -1702,7 +1740,40 @@ async def _show_results(
 
     vacancies_by_id = {v.id: v for v in liked_vacancies}
     results = feed_services.compute_feed_results(feed_session, vacancies_by_id)
-    text = feed_services.build_results_message(results, i18n.locale)
+
+    ui_apply_lines: list[str] = []
+    since = getattr(feed_session, "created_at", None)
+    if isinstance(since, datetime):
+        attempt_repo = HhApplicationAttemptRepository(session)
+        attempts = await attempt_repo.list_for_feed_session_summary(
+            user_id=feed_session.user_id,
+            vacancy_ids=list(feed_session.vacancy_ids),
+            since=since,
+        )
+        attempts_sorted = sorted(attempts, key=lambda a: a.created_at)
+        for a in attempts_sorted:
+            vid = a.autoparsed_vacancy_id
+            if vid is None:
+                title = "?"
+            else:
+                v = await vacancy_repo.get_by_id(vid)
+                title = v.title if v else f"#{vid}"
+            ok = a.status == "success"
+            detail = None if ok else (a.error_code or a.status or "")
+            ui_apply_lines.append(
+                feed_services.format_ui_apply_result_line(
+                    title,
+                    success=ok,
+                    detail=detail,
+                    locale=i18n.locale,
+                )
+            )
+
+    text = feed_services.build_results_message(
+        results,
+        i18n.locale,
+        ui_apply_lines=ui_apply_lines or None,
+    )
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
