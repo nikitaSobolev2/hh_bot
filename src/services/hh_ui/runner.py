@@ -22,6 +22,7 @@ from src.services.hh_ui.applicant_http import (
     url_suggests_login_page,
 )
 from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.vacancy_response_popup import try_apply_via_popup
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 
 logger = get_logger(__name__)
@@ -339,6 +340,25 @@ def apply_to_vacancy_ui(
                     detail=None,
                 )
                 return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
+
+            if config.use_popup_api:
+                popup_result = try_apply_via_popup(
+                    page,
+                    vacancy_url,
+                    resume_hh_id,
+                    log_user_id=log_user_id,
+                )
+                if popup_result is not None:
+                    logger.info(
+                        "apply_to_vacancy_ui_done",
+                        log_user_id=log_user_id,
+                        step="popup_api",
+                        vacancy_url_safe=safe_v,
+                        resume_ref=resume_ref,
+                        outcome=popup_result.outcome.value,
+                        detail=(popup_result.detail or "")[:200] if popup_result.detail else None,
+                    )
+                    return popup_result
 
             if not _click_first(
                 page,

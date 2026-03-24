@@ -15,6 +15,7 @@ class HhUiApplyConfig:
     max_action_delay_ms: int
     headless: bool
     screenshot_on_error: bool
+    use_popup_api: bool
 
     @classmethod
     def from_settings(cls) -> HhUiApplyConfig:
@@ -25,4 +26,5 @@ class HhUiApplyConfig:
             max_action_delay_ms=int(settings.hh_ui_max_action_delay_ms),
             headless=bool(settings.hh_ui_headless),
             screenshot_on_error=bool(settings.hh_ui_screenshot_on_error),
+            use_popup_api=bool(settings.hh_ui_apply_use_popup_api),
         )

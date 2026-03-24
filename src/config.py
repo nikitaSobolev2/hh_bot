@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     hh_ui_max_action_delay_ms: int = 1200
     hh_ui_headless: bool = True
     hh_ui_screenshot_on_error: bool = False
+    # Prefer POST /applicant/vacancy_response/popup via in-page fetch before modal automation.
+    hh_ui_apply_use_popup_api: bool = True
 
     # HH server-side login assist (Playwright on worker; optional noVNC — see docs/HH_LOGIN_ASSIST.md)
     hh_login_assist_enabled: bool = False
