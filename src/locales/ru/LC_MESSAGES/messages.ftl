@@ -737,6 +737,7 @@ autorespond-saved = Настройки сохранены.
 autorespond-queued = Задача автоответа поставлена в очередь.
 autorespond-enable-first = Сначала включите автоответ для этой компании.
 autorespond-configure-first = Сначала выберите резюме и аккаунт HH.
+autorespond-worker-disabled-hint = ⚠️ Автоответ выключён глобально — включите «Задача автоответа» в Админ → Настройки приложения.
 autoparse-run-now = ▶️ Запустить сейчас
 autoparse-run-started = ✅ Парсинг запущен!
 autoparse-run-finished = ✅ Парсинг завершён! Найдено { $count } { $count ->

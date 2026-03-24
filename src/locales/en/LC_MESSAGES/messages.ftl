@@ -737,6 +737,7 @@ autorespond-saved = Settings saved.
 autorespond-queued = Autorespond task queued.
 autorespond-enable-first = Enable autorespond for this company first.
 autorespond-configure-first = Pick resume and HH account first.
+autorespond-worker-disabled-hint = ⚠️ Autorespond jobs are off globally — enable “Autorespond Task” in Admin → App Settings to run.
 autoparse-run-now = ▶️ Run now
 autoparse-run-started = ✅ Parsing started!
 autoparse-run-finished = ✅ Parsing complete! Found { $count } new { $count ->

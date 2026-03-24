@@ -35,15 +35,19 @@ async def ar_menu(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
     if not company or company.user_id != user.id:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     count = await ap_service.get_vacancy_count(session, company.id)
-    text = ap_service.format_company_detail(company, count, i18n, autorespond_global=True)
+    ar_task_on = await autorespond_globally_enabled(session)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -61,9 +65,6 @@ async def ar_toggle(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     repo = AutoparseCompanyRepository(session)
     company = await repo.get_by_id(callback_data.company_id)
     if not company or company.user_id != user.id:
@@ -74,7 +75,14 @@ async def ar_toggle(
     company = await ap_service.get_autoparse_detail(session, company.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
-    text = ap_service.format_company_detail(company, count, i18n, autorespond_global=True)
+    ar_task_on = await autorespond_globally_enabled(session)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -92,9 +100,6 @@ async def ar_mode(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     repo = AutoparseCompanyRepository(session)
     company = await repo.get_by_id(callback_data.company_id)
     if not company or company.user_id != user.id:
@@ -110,7 +115,14 @@ async def ar_mode(
     company = await ap_service.get_autoparse_detail(session, company.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
-    text = ap_service.format_company_detail(company, count, i18n, autorespond_global=True)
+    ar_task_on = await autorespond_globally_enabled(session)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -128,9 +140,6 @@ async def ar_limit(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     repo = AutoparseCompanyRepository(session)
     company = await repo.get_by_id(callback_data.company_id)
     if not company or company.user_id != user.id:
@@ -146,7 +155,14 @@ async def ar_limit(
     company = await ap_service.get_autoparse_detail(session, company.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
-    text = ap_service.format_company_detail(company, count, i18n, autorespond_global=True)
+    ar_task_on = await autorespond_globally_enabled(session)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -164,9 +180,6 @@ async def ar_thr(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     thr = callback_data.page
     if thr not in {40, 50, 60, 70, 80}:
         await callback.answer()
@@ -181,7 +194,14 @@ async def ar_thr(
     company = await ap_service.get_autoparse_detail(session, company.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
-    text = ap_service.format_company_detail(company, count, i18n, autorespond_global=True)
+    ar_task_on = await autorespond_globally_enabled(session)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -199,9 +219,6 @@ async def ar_resume(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
     if not company or company.user_id != user.id:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
@@ -250,9 +267,6 @@ async def ar_resume_acc(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
     if not company or company.user_id != user.id:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
@@ -307,9 +321,6 @@ async def ar_resume_pick(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not await autorespond_globally_enabled(session):
-        await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
-        return
     repo = AutoparseCompanyRepository(session)
     company = await repo.get_by_id(callback_data.company_id)
     if not company or company.user_id != user.id:
@@ -338,7 +349,14 @@ async def ar_resume_pick(
     company = await ap_service.get_autoparse_detail(session, company.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
-    text = ap_service.format_company_detail(company, count, i18n, autorespond_global=True)
+    ar_task_on = await autorespond_globally_enabled(session)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,

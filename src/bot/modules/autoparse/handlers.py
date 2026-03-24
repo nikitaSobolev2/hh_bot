@@ -572,9 +572,13 @@ async def company_detail(
 
     count = await ap_service.get_vacancy_count(session, company.id)
     show_run_now = await _should_show_run_now(session, company, user)
-    show_ar = await autorespond_globally_enabled(session)
+    ar_task_on = await autorespond_globally_enabled(session)
     text = ap_service.format_company_detail(
-        company, count, i18n, autorespond_global=show_ar
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
@@ -584,7 +588,7 @@ async def company_detail(
                 i18n,
                 show_run_now=show_run_now,
                 show_show_now=(count > 0),
-                show_autorespond=show_ar,
+                show_autorespond=True,
             ),
         )
     await callback.answer()
@@ -650,9 +654,13 @@ async def edit_keywords_receive(
 
     count = await ap_service.get_vacancy_count(session, company.id)
     show_run_now = await _should_show_run_now(session, company, user)
-    show_ar = await autorespond_globally_enabled(session)
+    ar_task_on = await autorespond_globally_enabled(session)
     text = ap_service.format_company_detail(
-        company, count, i18n, autorespond_global=show_ar
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
     )
     with contextlib.suppress(TelegramBadRequest):
         await message.bot.edit_message_text(
@@ -664,7 +672,7 @@ async def edit_keywords_receive(
                 i18n,
                 show_run_now=show_run_now,
                 show_show_now=(count > 0),
-                show_autorespond=show_ar,
+                show_autorespond=True,
             ),
         )
     await message.answer(i18n.get("autoparse-edit-keywords-saved"))
@@ -691,9 +699,13 @@ async def toggle_company(
     if company:
         count = await ap_service.get_vacancy_count(session, company.id)
         show_run_now = await _should_show_run_now(session, company, user)
-        show_ar = await autorespond_globally_enabled(session)
+        ar_task_on = await autorespond_globally_enabled(session)
         text = ap_service.format_company_detail(
-            company, count, i18n, autorespond_global=show_ar
+            company,
+            count,
+            i18n,
+            autorespond_global=True,
+            autorespond_task_enabled=ar_task_on,
         )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
@@ -703,7 +715,7 @@ async def toggle_company(
                     i18n,
                     show_run_now=show_run_now,
                     show_show_now=(count > 0),
-                    show_autorespond=show_ar,
+                    show_autorespond=True,
                 ),
             )
 
@@ -729,9 +741,13 @@ async def run_now(
 
     if not await _should_show_run_now(session, company, user):
         count = await ap_service.get_vacancy_count(session, company.id)
-        show_ar = await autorespond_globally_enabled(session)
+        ar_task_on = await autorespond_globally_enabled(session)
         text = ap_service.format_company_detail(
-            company, count, i18n, autorespond_global=show_ar
+            company,
+            count,
+            i18n,
+            autorespond_global=True,
+            autorespond_task_enabled=ar_task_on,
         )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
@@ -741,7 +757,7 @@ async def run_now(
                     i18n,
                     show_run_now=False,
                     show_show_now=(count > 0),
-                    show_autorespond=show_ar,
+                    show_autorespond=True,
                 ),
             )
         await callback.answer(i18n.get("autoparse-run-already-running"), show_alert=True)
@@ -755,9 +771,13 @@ async def run_now(
     await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
 
     count = await ap_service.get_vacancy_count(session, company.id)
-    show_ar = await autorespond_globally_enabled(session)
+    ar_task_on = await autorespond_globally_enabled(session)
     text = ap_service.format_company_detail(
-        company, count, i18n, autorespond_global=show_ar
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
@@ -767,7 +787,7 @@ async def run_now(
                 i18n,
                 show_run_now=False,
                 show_show_now=(count > 0),
-                show_autorespond=show_ar,
+                show_autorespond=True,
             ),
         )
 

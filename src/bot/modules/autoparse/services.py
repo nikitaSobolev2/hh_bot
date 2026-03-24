@@ -134,6 +134,7 @@ def format_company_detail(
     i18n: I18nContext,
     *,
     autorespond_global: bool = False,
+    autorespond_task_enabled: bool | None = None,
 ) -> str:
     status = (
         i18n.get("autoparse-status-enabled")
@@ -179,6 +180,8 @@ def format_company_detail(
                 f"{i18n.get('autorespond-detail-resume')}: {resume_s}",
             ]
         )
+        if autorespond_task_enabled is False:
+            lines.append(i18n.get("autorespond-worker-disabled-hint"))
     return "\n".join(lines)
 
 
