@@ -97,6 +97,7 @@ def try_apply_via_popup(
     vacancy_url: str,
     resume_hash: str,
     log_user_id: int | None = None,
+    letter: str = "",
 ) -> ApplyResult | None:
     """POST vacancy_response/popup via in-page fetch. Returns None to fall back to modal UI."""
     vacancy_id = parse_vacancy_id_from_url(vacancy_url)
@@ -129,7 +130,7 @@ def try_apply_via_popup(
         return None
 
     hhtm_from = hhtm_from_for_popup(vacancy_url)
-    letter = ""
+    letter = letter or ""
 
     js = f"""
     async (args) => {{

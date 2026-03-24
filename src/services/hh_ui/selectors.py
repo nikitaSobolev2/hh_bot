@@ -73,5 +73,12 @@ RESUME_SUBMIT: tuple[str, ...] = (
     'button:has-text("Отправить")',
 )
 
+# Cover letter in respond modal / bottom sheet (best-effort).
+RESPONSE_LETTER_TEXTAREA: tuple[str, ...] = (
+    'textarea[name="letter"]',
+    'textarea[data-qa="vacancy-response-popup-message-text"]',
+    'textarea[data-qa="response-letter"]',
+)
+
 # Applicant resume list page (HTML fetch + parse in applicant_http).
 APPLICANT_RESUMES_URL = "https://hh.ru/applicant/resumes"

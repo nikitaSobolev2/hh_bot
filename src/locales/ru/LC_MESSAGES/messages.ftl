@@ -105,6 +105,11 @@ feed-respond-ui-rate-limited = Достигнут дневной лимит ав
 feed-respond-ui-queued = ⏳ Отклик поставлен в очередь (браузерная автоматизация). Результат придёт в этот чат.
 feed-respond-ui-no-session = Нет сохранённой браузерной сессии для отклика.
 feed-respond-ui-task-result = Результат отклика (UI): { $outcome }
+feed-respond-enter-letter = <b>Сопроводительное письмо</b>\n\nОтправьте текст следующим сообщением или используйте кнопки ниже.
+feed-respond-letter-generate = ✨ Сгенерировать с AI
+feed-respond-letter-skip = Отправить без письма
+feed-respond-ai-not-available = Режим AI-отклика доступен только при отклике через браузер (включите UI apply в настройках).
+feed-respond-session-expired = Шаг устарел. Откройте карточку вакансии и снова нажмите «Откликнуться».
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Профиль</b>
@@ -990,6 +995,8 @@ work-exp-title = 💼 Опыт работы
 
 # ── Feed buttons (F1, F2) ─────────────────────────────────────
 feed-btn-fits-me = ✅ Подходит
+feed-btn-fits-me-liked = 💚 В избранном
+feed-btn-respond-ai-cover = 🤖 Отклик с AI-сопроводительным
 feed-btn-not-fit = ❌ Не подходит
 feed-btn-show-description = 📄 Показать описание
 feed-btn-show-summary = 📝 Показать краткое

@@ -135,6 +135,46 @@ def _detect_employer_questions(page: Any) -> bool:
     return False
 
 
+def _fill_cover_letter_if_present(
+    page: Any,
+    cover_letter: str,
+    action_timeout_ms: int,
+    log_user_id: int | None,
+) -> None:
+    """Best-effort fill cover letter textarea in respond modal; never logs letter body."""
+    text = (cover_letter or "").strip()
+    if not text:
+        return
+    to_try: list[Any] = []
+    modal = page.locator(sel.RESPONSE_MODAL_CONTENT).first
+    try:
+        if modal.count() > 0:
+            to_try.append(modal)
+    except Exception:
+        pass
+    to_try.append(page)
+    for root in to_try:
+        for s in sel.RESPONSE_LETTER_TEXTAREA:
+            loc = root.locator(s).first
+            try:
+                loc.wait_for(state="attached", timeout=min(4000, action_timeout_ms))
+                loc.fill(text)
+                logger.info(
+                    "apply_to_vacancy_ui_step",
+                    log_user_id=log_user_id,
+                    step="cover_letter_filled",
+                    letter_selector=s,
+                )
+                return
+            except Exception:
+                continue
+    logger.info(
+        "apply_to_vacancy_ui_step",
+        log_user_id=log_user_id,
+        step="cover_letter_field_not_found",
+    )
+
+
 def _click_first(page: Any, selectors: tuple[str, ...], timeout: int) -> bool:
     for s in selectors:
         loc = page.locator(s).first
@@ -263,6 +303,7 @@ def apply_to_vacancy_ui(
     resume_hh_id: str,
     config: HhUiApplyConfig,
     log_user_id: int | None = None,
+    cover_letter: str = "",
 ) -> ApplyResult:
     """Open vacancy page and submit respond via UI."""
     safe_v = _safe_url_host_path(vacancy_url)
@@ -347,6 +388,7 @@ def apply_to_vacancy_ui(
                     vacancy_url,
                     resume_hh_id,
                     log_user_id=log_user_id,
+                    letter=cover_letter or "",
                 )
                 if popup_result is not None:
                     logger.info(
@@ -524,6 +566,7 @@ def apply_to_vacancy_ui(
             )
 
             _jitter(config)
+            _fill_cover_letter_if_present(page, cover_letter, config.action_timeout_ms, log_user_id)
 
             modal_root = page.locator(sel.RESPONSE_MODAL_CONTENT).first
             submitted = False

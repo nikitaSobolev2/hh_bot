@@ -18,6 +18,7 @@ class FeedRespondForm(StatesGroup):
     """Picking HH resume for feed respond (stores mapping index → resume id)."""
 
     choosing_resume = State()
+    entering_cover_letter = State()
 
 
 class AutoparseSettingsForm(StatesGroup):

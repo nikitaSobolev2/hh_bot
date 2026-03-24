@@ -74,6 +74,63 @@ async def get_feed_session(session: AsyncSession, session_id: int) -> VacancyFee
     return await repo.get_by_id(session_id)
 
 
+def merge_liked_for_respond(
+    liked_ids: list[int],
+    disliked_ids: list[int],
+    vacancy_id: int,
+) -> tuple[list[int], list[int]]:
+    """Pure merge: ensure vacancy is liked; remove from disliked if present."""
+    liked = list(liked_ids or [])
+    disliked = list(disliked_ids or [])
+    if vacancy_id not in liked:
+        liked.append(vacancy_id)
+    if vacancy_id in disliked:
+        disliked = [x for x in disliked if x != vacancy_id]
+    return liked, disliked
+
+
+def remove_vacancy_from_liked_ids(liked_ids: list[int], vacancy_id: int) -> list[int]:
+    """Pure filter: drop vacancy_id from liked list."""
+    return [x for x in (liked_ids or []) if x != vacancy_id]
+
+
+async def ensure_liked_for_respond(
+    session: AsyncSession,
+    feed_session: VacancyFeedSession,
+    vacancy_id: int,
+) -> None:
+    """Mark vacancy as liked without advancing feed index (respond flows)."""
+    liked, disliked = merge_liked_for_respond(
+        list(feed_session.liked_ids),
+        list(feed_session.disliked_ids),
+        vacancy_id,
+    )
+    repo = VacancyFeedSessionRepository(session)
+    await repo.update(
+        feed_session,
+        liked_ids=liked,
+        disliked_ids=disliked,
+    )
+    await session.commit()
+
+
+async def remove_liked_on_apply_failure(
+    session: AsyncSession,
+    feed_session_id: int,
+    vacancy_id: int,
+) -> None:
+    """Remove vacancy from liked_ids when UI apply fails (rollback respond-like)."""
+    repo = VacancyFeedSessionRepository(session)
+    feed_session = await repo.get_by_id(feed_session_id)
+    if not feed_session:
+        return
+    new_liked = remove_vacancy_from_liked_ids(list(feed_session.liked_ids), vacancy_id)
+    if new_liked == list(feed_session.liked_ids):
+        return
+    await repo.update(feed_session, liked_ids=new_liked)
+    await session.commit()
+
+
 async def record_reaction(
     session: AsyncSession,
     feed_session: VacancyFeedSession,

@@ -105,6 +105,11 @@ feed-respond-ui-rate-limited = Daily UI apply limit reached. Try again tomorrow.
 feed-respond-ui-queued = ⏳ Apply queued (browser automation). Result will appear in this chat.
 feed-respond-ui-no-session = No browser session stored for applying.
 feed-respond-ui-task-result = Apply result (UI): { $outcome }
+feed-respond-enter-letter = <b>Cover letter</b>\n\nSend your text in the next message, or use the buttons below.
+feed-respond-letter-generate = ✨ Generate with AI
+feed-respond-letter-skip = Send without letter
+feed-respond-ai-not-available = AI respond requires browser-based apply (enable UI apply in settings).
+feed-respond-session-expired = This step expired. Open the vacancy card and tap Respond again.
 
 # ── Profile ──────────────────────────────────────────────
 profile-title = <b>👤 Profile</b>
@@ -989,6 +994,8 @@ work-exp-title = 💼 Work Experience
 
 # ── Feed buttons (F1, F2) ─────────────────────────────────────
 feed-btn-fits-me = ✅ Fits me
+feed-btn-fits-me-liked = 💚 Liked
+feed-btn-respond-ai-cover = 🤖 Respond with AI cover letter
 feed-btn-not-fit = ❌ Does not fit
 feed-btn-show-description = 📄 Show full description
 feed-btn-show-summary = 📝 Show summary

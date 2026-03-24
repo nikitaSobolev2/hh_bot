@@ -60,10 +60,12 @@ async def _apply_ui_async(
     resume_id: str,
     vacancy_url: str,
     feed_session_id: int,
+    cover_letter: str = "",
 ) -> dict:
     from src.bot.modules.autoparse import feed_services
     from src.bot.modules.autoparse.feed_handlers import (
         _feed_show_respond_button,
+        _feed_vacancy_keyboard_options,
         feed_vacancy_keyboard,
     )
     from src.repositories.autoparse import AutoparsedVacancyRepository
@@ -88,6 +90,10 @@ async def _apply_ui_async(
                     message_id,
                     get_text("feed-respond-ui-no-session", locale),
                 )
+                async with session_factory() as s2:
+                    await feed_services.remove_liked_on_apply_failure(
+                        s2, feed_session_id, autoparsed_vacancy_id
+                    )
                 return {"status": "error", "reason": "no_browser_session"}
 
             storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
@@ -98,6 +104,10 @@ async def _apply_ui_async(
                     message_id,
                     get_text("feed-respond-ui-no-session", locale),
                 )
+                async with session_factory() as s2:
+                    await feed_services.remove_liked_on_apply_failure(
+                        s2, feed_session_id, autoparsed_vacancy_id
+                    )
                 return {"status": "error", "reason": "decrypt_failed"}
 
             vac_repo = AutoparsedVacancyRepository(session)
@@ -127,6 +137,7 @@ async def _apply_ui_async(
                 resume_hh_id=resume_id,
                 config=config,
                 log_user_id=user_id,
+                cover_letter=cover_letter or "",
             )
         except Exception as exc:
             logger.exception("hh_ui apply failed", error=str(exc))
@@ -168,6 +179,15 @@ async def _apply_ui_async(
                 status=status,
             )
 
+        if status != "success":
+            async with session_factory() as s_unlike:
+                await feed_services.remove_liked_on_apply_failure(
+                    s_unlike, feed_session_id, autoparsed_vacancy_id
+                )
+            async with session_factory() as s_reload:
+                fr = VacancyFeedSessionRepository(s_reload)
+                feed_session = await fr.get_by_id(feed_session_id)
+
         i18n = I18nContext(locale)
 
         if not vacancy or not feed_session:
@@ -198,6 +218,7 @@ async def _apply_ui_async(
             i18n,
             current_index=feed_session.current_index,
             show_respond=_feed_show_respond_button(feed_session),
+            **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
         )
 
         await self.notify_user(
@@ -240,6 +261,7 @@ def apply_to_vacancy_ui_task(
     resume_id: str,
     vacancy_url: str,
     feed_session_id: int,
+    cover_letter: str = "",
 ) -> dict:
     return run_async(
         lambda sf: _apply_ui_async(
@@ -255,5 +277,6 @@ def apply_to_vacancy_ui_task(
             resume_id,
             vacancy_url,
             feed_session_id,
+            cover_letter,
         )
     )

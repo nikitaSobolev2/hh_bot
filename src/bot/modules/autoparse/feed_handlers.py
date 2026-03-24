@@ -8,7 +8,13 @@ import contextlib
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.autoparse import feed_services
@@ -103,6 +109,47 @@ def feed_respond_resume_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def feed_respond_letter_keyboard(
+    session_id: int,
+    vacancy_id: int,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("feed-respond-letter-generate"),
+                    callback_data=FeedCallback(
+                        action="respond_letter_generate",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("feed-respond-letter-skip"),
+                    callback_data=FeedCallback(
+                        action="respond_letter_skip",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=FeedCallback(
+                        action="respond_cancel",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                ),
+            ],
+        ]
+    )
+
+
 async def _run_list_resumes_ui_feed(
     storage_state: dict,
     user_id: int,
@@ -132,12 +179,14 @@ async def _send_feed_respond_resume_choice(
     i18n: I18nContext,
     *,
     show_refresh: bool,
+    respond_mode: str = "letter_then_apply",
 ) -> None:
     await state.set_state(FeedRespondForm.choosing_resume)
     await state.update_data(
         feed_session_id=feed_session.id,
         vacancy_id=vacancy.id,
         resume_ids=resume_ids,
+        respond_mode=respond_mode,
     )
     kb = feed_respond_resume_keyboard(
         feed_session.id,
@@ -159,6 +208,20 @@ def _feed_show_respond_button(feed_session: VacancyFeedSession) -> bool:
     return feed_session.hh_linked_account_id is not None
 
 
+def _feed_vacancy_keyboard_options(
+    feed_session: VacancyFeedSession,
+    vacancy_id: int,
+) -> dict:
+    """Shared flags for feed_vacancy_keyboard (liked state, AI respond row)."""
+    from src.config import settings
+
+    show = _feed_show_respond_button(feed_session)
+    return {
+        "vacancy_is_liked": vacancy_id in (feed_session.liked_ids or []),
+        "show_respond_ai": bool(show and settings.hh_ui_apply_enabled),
+    }
+
+
 def feed_vacancy_keyboard(
     session_id: int,
     vacancy_id: int,
@@ -168,6 +231,8 @@ def feed_vacancy_keyboard(
     *,
     current_index: int = 0,
     show_respond: bool = True,
+    vacancy_is_liked: bool = False,
+    show_respond_ai: bool = False,
 ) -> InlineKeyboardMarkup:
     from src.bot.modules.autoparse.callbacks import AutoparseCallback
 
@@ -193,7 +258,9 @@ def feed_vacancy_keyboard(
         ],
         [
             InlineKeyboardButton(
-                text=i18n.get("feed-btn-fits-me"),
+                text=i18n.get(
+                    "feed-btn-fits-me-liked" if vacancy_is_liked else "feed-btn-fits-me"
+                ),
                 callback_data=FeedCallback(
                     action="like", session_id=session_id, vacancy_id=vacancy_id
                 ).pack(),
@@ -216,7 +283,7 @@ def feed_vacancy_keyboard(
             ),
         ],
     ]
-    respond_row = [
+    respond_row: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
                 text=i18n.get("feed-btn-respond-hh"),
@@ -228,6 +295,19 @@ def feed_vacancy_keyboard(
             ),
         ],
     ]
+    if show_respond_ai:
+        respond_row.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("feed-btn-respond-ai-cover"),
+                    callback_data=FeedCallback(
+                        action="respond_ai_cover",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                ),
+            ]
+        )
     tail_rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
@@ -326,6 +406,7 @@ async def handle_feed_toggle_view(
         feed_session.id, vacancy.id, vacancy.url, i18n, mode,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -370,6 +451,7 @@ async def handle_feed_start(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -410,6 +492,7 @@ async def handle_feed_react(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -449,6 +532,7 @@ async def handle_feed_show_later(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -582,6 +666,7 @@ async def handle_feed_back_to_vacancy(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -634,6 +719,7 @@ async def handle_feed_prev_vacancy(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
 
     with contextlib.suppress(TelegramBadRequest):
@@ -687,14 +773,16 @@ async def handle_feed_pick_hh_account(
     await callback.answer(i18n.get("hh-account-selected"))
 
 
-@router.callback_query(FeedCallback.filter(F.action == "respond"))
-async def handle_feed_respond(
+async def _feed_respond_core(
     callback: CallbackQuery,
     callback_data: FeedCallback,
     session: AsyncSession,
     user: User,
     state: FSMContext,
     i18n: I18nContext,
+    *,
+    respond_mode: str,
+    log_event: str,
 ) -> None:
     from src.config import settings
     from src.services.hh.client import HhApiClient
@@ -723,12 +811,15 @@ async def handle_feed_respond(
         await callback.answer(i18n.get("feed-respond-vacancy-missing"), show_alert=True)
         return
 
+    await feed_services.ensure_liked_for_respond(session, feed_session, vacancy.id)
+
     logger.info(
-        "feed_respond_click",
+        log_event,
         user_id=user.id,
         session_id=callback_data.session_id,
         vacancy_id=vacancy.id,
         ui_apply=settings.hh_ui_apply_enabled,
+        respond_mode=respond_mode,
     )
 
     resume_ids: list[str] = []
@@ -879,6 +970,57 @@ async def handle_feed_respond(
         titles,
         i18n,
         show_refresh=settings.hh_ui_apply_enabled,
+        respond_mode=respond_mode,
+    )
+
+
+@router.callback_query(FeedCallback.filter(F.action == "respond"))
+async def handle_feed_respond(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.config import settings
+
+    mode = "letter_then_apply" if settings.hh_ui_apply_enabled else "api"
+    await _feed_respond_core(
+        callback,
+        callback_data,
+        session,
+        user,
+        state,
+        i18n,
+        respond_mode=mode,
+        log_event="feed_respond_click",
+    )
+
+
+@router.callback_query(FeedCallback.filter(F.action == "respond_ai_cover"))
+async def handle_feed_respond_ai_cover(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.config import settings
+
+    if not settings.hh_ui_apply_enabled:
+        await callback.answer(i18n.get("feed-respond-ai-not-available"), show_alert=True)
+        return
+    await _feed_respond_core(
+        callback,
+        callback_data,
+        session,
+        user,
+        state,
+        i18n,
+        respond_mode="ai_chain",
+        log_event="feed_respond_ai_click",
     )
 
 
@@ -1018,6 +1160,7 @@ async def handle_feed_respond_refresh_resumes(
         resume_ids.append(r.id)
         titles.append(r.title[:60])
 
+    respond_mode = str(data.get("respond_mode") or "letter_then_apply")
     await _send_feed_respond_resume_choice(
         callback.message,
         state,
@@ -1027,6 +1170,7 @@ async def handle_feed_respond_refresh_resumes(
         titles,
         i18n,
         show_refresh=True,
+        respond_mode=respond_mode,
     )
 
 
@@ -1057,6 +1201,7 @@ async def handle_feed_respond_cancel(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -1076,15 +1221,22 @@ async def handle_feed_respond_pick(
     from src.core.celery_async import run_celery_task
     from src.services.hh.client import HhApiError, apply_to_vacancy_with_resume
     from src.services.hh.token_service import ensure_access_token
+    from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
     from src.services.hh_ui.runner import normalize_hh_vacancy_url
+    from src.worker.tasks.cover_letter import generate_cover_letter_task
     from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
 
     data = await state.get_data()
     resume_ids = data.get("resume_ids") or []
-    await state.clear()
+    respond_mode = data.get("respond_mode")
+    if respond_mode is None:
+        respond_mode = "letter_then_apply" if settings.hh_ui_apply_enabled else "api"
+    else:
+        respond_mode = str(respond_mode)
 
     idx = callback_data.resume_idx
     if idx < 0 or idx >= len(resume_ids):
+        await state.clear()
         await callback.answer(i18n.get("feed-respond-bad-resume"), show_alert=True)
         return
 
@@ -1092,54 +1244,88 @@ async def handle_feed_respond_pick(
 
     feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
     if not feed_session or feed_session.is_completed or not feed_session.hh_linked_account_id:
+        await state.clear()
         await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
         return
 
     vacancy_repo = AutoparsedVacancyRepository(session)
     vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
     if not vacancy:
+        await state.clear()
         await callback.answer()
         return
 
     if settings.hh_ui_apply_enabled:
         attempt_repo = HhApplicationAttemptRepository(session)
         if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+            await state.clear()
             await callback.answer(i18n.get("feed-respond-ui-already-applied"), show_alert=True)
             return
-        from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
-
         if not await try_acquire_ui_apply_slot_async(user.id):
+            await state.clear()
             await callback.answer(i18n.get("feed-respond-ui-rate-limited"), show_alert=True)
             return
 
-        vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
-        await callback.answer()
-        await run_celery_task(
-            apply_to_vacancy_ui_task,
-            user.id,
-            callback.message.chat.id,
-            callback.message.message_id,
-            i18n.locale,
-            feed_session.hh_linked_account_id,
-            vacancy.id,
-            vacancy.hh_vacancy_id,
-            resume_id,
-            vacancy_url,
-            feed_session.id,
-        )
-        total = len(feed_session.vacancy_ids)
-        text = feed_services.build_vacancy_card(
-            vacancy, feed_session.current_index, total, i18n.locale
-        )
-        text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
-        keyboard = feed_vacancy_keyboard(
-            feed_session.id, vacancy.id, vacancy.url, i18n,
-            current_index=feed_session.current_index,
-            show_respond=_feed_show_respond_button(feed_session),
-        )
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-        return
+        if respond_mode == "letter_then_apply":
+            await state.set_state(FeedRespondForm.entering_cover_letter)
+            await state.update_data(
+                feed_session_id=feed_session.id,
+                vacancy_id=vacancy.id,
+                resume_id=resume_id,
+                hh_linked_account_id=feed_session.hh_linked_account_id,
+                prompt_message_id=callback.message.message_id,
+            )
+            await callback.answer()
+            with contextlib.suppress(TelegramBadRequest):
+                await callback.message.edit_text(
+                    i18n.get("feed-respond-enter-letter"),
+                    reply_markup=feed_respond_letter_keyboard(
+                        feed_session.id, vacancy.id, i18n
+                    ),
+                    parse_mode="HTML",
+                )
+            return
+
+        if respond_mode == "ai_chain":
+            await state.clear()
+            from src.bot.modules.autoparse import services as ap_service
+
+            vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+            apply_after = {
+                "user_id": user.id,
+                "chat_id": callback.message.chat.id,
+                "message_id": callback.message.message_id,
+                "locale": i18n.locale,
+                "hh_linked_account_id": feed_session.hh_linked_account_id,
+                "autoparsed_vacancy_id": vacancy.id,
+                "hh_vacancy_id": vacancy.hh_vacancy_id,
+                "resume_id": resume_id,
+                "vacancy_url": vacancy_url,
+                "feed_session_id": feed_session.id,
+            }
+            current = await ap_service.get_user_autoparse_settings(session, user.id)
+            cover_letter_style = current.get("cover_letter_style", "professional")
+            await callback.answer()
+            with contextlib.suppress(TelegramBadRequest):
+                await callback.message.edit_text(
+                    i18n.get("feed-cover-letter-generating"),
+                    parse_mode="HTML",
+                )
+            await run_celery_task(
+                generate_cover_letter_task,
+                user.id,
+                vacancy.id,
+                callback.message.chat.id,
+                callback.message.message_id,
+                i18n.locale,
+                cover_letter_style,
+                feed_session.id,
+                "feed_respond_apply",
+                apply_after=apply_after,
+            )
+            return
+
+    await state.clear()
 
     try:
         _, access = await ensure_access_token(session, feed_session.hh_linked_account_id)
@@ -1188,6 +1374,12 @@ async def handle_feed_respond_pick(
     )
     await session.commit()
 
+    if status != "success":
+        await feed_services.remove_liked_on_apply_failure(
+            session, feed_session.id, vacancy.id
+        )
+        feed_session = await feed_services.get_feed_session(session, feed_session.id) or feed_session
+
     total = len(feed_session.vacancy_ids)
     text = feed_services.build_vacancy_card(
         vacancy, feed_session.current_index, total, i18n.locale
@@ -1201,9 +1393,280 @@ async def handle_feed_respond_pick(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
         show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+async def _feed_letter_state_guard(
+    state: FSMContext,
+    callback_data: FeedCallback,
+) -> dict | None:
+    """Return FSM data if entering_cover_letter matches callback; else None."""
+    st = await state.get_state()
+    if st != FeedRespondForm.entering_cover_letter.state:
+        return None
+    data = await state.get_data()
+    if (
+        data.get("feed_session_id") != callback_data.session_id
+        or data.get("vacancy_id") != callback_data.vacancy_id
+    ):
+        return None
+    return data
+
+
+@router.callback_query(FeedCallback.filter(F.action == "respond_letter_skip"))
+async def handle_feed_respond_letter_skip(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.config import settings
+    from src.core.celery_async import run_celery_task
+    from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
+    from src.services.hh_ui.runner import normalize_hh_vacancy_url
+    from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+
+    data = await _feed_letter_state_guard(state, callback_data)
+    if not data:
+        await callback.answer(i18n.get("feed-respond-session-expired"), show_alert=True)
+        return
+
+    resume_id = str(data.get("resume_id") or "")
+    feed_session = await feed_services.get_feed_session(session, data["feed_session_id"])
+    if not feed_session or feed_session.is_completed or not feed_session.hh_linked_account_id:
+        await state.clear()
+        await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(int(data["vacancy_id"]))
+    if not vacancy:
+        await state.clear()
+        await callback.answer()
+        return
+
+    if not settings.hh_ui_apply_enabled:
+        await state.clear()
+        await callback.answer()
+        return
+
+    attempt_repo = HhApplicationAttemptRepository(session)
+    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+        await state.clear()
+        await callback.answer(i18n.get("feed-respond-ui-already-applied"), show_alert=True)
+        return
+    if not await try_acquire_ui_apply_slot_async(user.id):
+        await state.clear()
+        await callback.answer(i18n.get("feed-respond-ui-rate-limited"), show_alert=True)
+        return
+
+    vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+    await state.clear()
+    await callback.answer()
+    await run_celery_task(
+        apply_to_vacancy_ui_task,
+        user.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+        feed_session.hh_linked_account_id,
+        vacancy.id,
+        vacancy.hh_vacancy_id,
+        resume_id,
+        vacancy_url,
+        feed_session.id,
+        "",
+    )
+    total = len(feed_session.vacancy_ids)
+    text = feed_services.build_vacancy_card(
+        vacancy, feed_session.current_index, total, i18n.locale
+    )
+    text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+@router.callback_query(FeedCallback.filter(F.action == "respond_letter_generate"))
+async def handle_feed_respond_letter_generate(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.config import settings
+    from src.core.celery_async import run_celery_task
+    from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
+    from src.services.hh_ui.runner import normalize_hh_vacancy_url
+    from src.worker.tasks.cover_letter import generate_cover_letter_task
+
+    data = await _feed_letter_state_guard(state, callback_data)
+    if not data:
+        await callback.answer(i18n.get("feed-respond-session-expired"), show_alert=True)
+        return
+
+    resume_id = str(data.get("resume_id") or "")
+    feed_session = await feed_services.get_feed_session(session, data["feed_session_id"])
+    if not feed_session or feed_session.is_completed or not feed_session.hh_linked_account_id:
+        await state.clear()
+        await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(int(data["vacancy_id"]))
+    if not vacancy:
+        await state.clear()
+        await callback.answer()
+        return
+
+    if not settings.hh_ui_apply_enabled:
+        await state.clear()
+        await callback.answer()
+        return
+
+    attempt_repo = HhApplicationAttemptRepository(session)
+    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+        await state.clear()
+        await callback.answer(i18n.get("feed-respond-ui-already-applied"), show_alert=True)
+        return
+    if not await try_acquire_ui_apply_slot_async(user.id):
+        await state.clear()
+        await callback.answer(i18n.get("feed-respond-ui-rate-limited"), show_alert=True)
+        return
+
+    vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+    apply_after = {
+        "user_id": user.id,
+        "chat_id": callback.message.chat.id,
+        "message_id": callback.message.message_id,
+        "locale": i18n.locale,
+        "hh_linked_account_id": feed_session.hh_linked_account_id,
+        "autoparsed_vacancy_id": vacancy.id,
+        "hh_vacancy_id": vacancy.hh_vacancy_id,
+        "resume_id": resume_id,
+        "vacancy_url": vacancy_url,
+        "feed_session_id": feed_session.id,
+    }
+    from src.bot.modules.autoparse import services as ap_service
+
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    cover_letter_style = current.get("cover_letter_style", "professional")
+    await state.clear()
+    await callback.answer()
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("feed-cover-letter-generating"),
+            parse_mode="HTML",
+        )
+    await run_celery_task(
+        generate_cover_letter_task,
+        user.id,
+        vacancy.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+        cover_letter_style,
+        feed_session.id,
+        "feed_respond_apply",
+        apply_after=apply_after,
+    )
+
+
+@router.message(FeedRespondForm.entering_cover_letter, F.text)
+async def handle_feed_respond_letter_paste(
+    message: Message,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.config import settings
+    from src.core.celery_async import run_celery_task
+    from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
+    from src.services.hh_ui.runner import normalize_hh_vacancy_url
+    from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+
+    data = await state.get_data()
+    feed_session_id = data.get("feed_session_id")
+    vacancy_id = data.get("vacancy_id")
+    resume_id = str(data.get("resume_id") or "")
+    prompt_message_id = data.get("prompt_message_id")
+    if feed_session_id is None or vacancy_id is None or not resume_id:
+        await state.clear()
+        return
+
+    feed_session = await feed_services.get_feed_session(session, int(feed_session_id))
+    if not feed_session or feed_session.is_completed or not feed_session.hh_linked_account_id:
+        await state.clear()
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(int(vacancy_id))
+    if not vacancy:
+        await state.clear()
+        return
+
+    if not settings.hh_ui_apply_enabled:
+        await state.clear()
+        return
+
+    letter = (message.text or "").strip()
+    attempt_repo = HhApplicationAttemptRepository(session)
+    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+        await state.clear()
+        return
+    if not await try_acquire_ui_apply_slot_async(user.id):
+        await state.clear()
+        return
+
+    vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+    await state.clear()
+    await run_celery_task(
+        apply_to_vacancy_ui_task,
+        user.id,
+        message.chat.id,
+        int(prompt_message_id) if prompt_message_id is not None else message.message_id,
+        i18n.locale,
+        feed_session.hh_linked_account_id,
+        vacancy.id,
+        vacancy.hh_vacancy_id,
+        resume_id,
+        vacancy_url,
+        feed_session.id,
+        letter,
+    )
+    total = len(feed_session.vacancy_ids)
+    text = feed_services.build_vacancy_card(
+        vacancy, feed_session.current_index, total, i18n.locale
+    )
+    text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
+    keyboard = feed_vacancy_keyboard(
+        feed_session.id, vacancy.id, vacancy.url, i18n,
+        current_index=feed_session.current_index,
+        show_respond=_feed_show_respond_button(feed_session),
+        **_feed_vacancy_keyboard_options(feed_session, vacancy.id),
+    )
+    edit_id = int(prompt_message_id) if prompt_message_id is not None else message.message_id
+    with contextlib.suppress(TelegramBadRequest):
+        await message.bot.edit_message_text(
+            text,
+            chat_id=message.chat.id,
+            message_id=edit_id,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(FeedCallback.filter(F.action == "stop"))

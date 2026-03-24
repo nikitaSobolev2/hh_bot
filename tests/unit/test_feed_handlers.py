@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.bot.modules.autoparse.callbacks import FeedCallback
+
 
 def _make_callback(session_id: int, action: str, vacancy_id: int = 0):
     """Build a minimal CallbackQuery mock and matching callback_data for feed handler tests."""
@@ -456,3 +458,13 @@ async def test_handle_feed_back_to_vacancy_does_nothing_when_vacancy_not_found(
 
     callback.answer.assert_called_once()
     callback.message.edit_text.assert_not_called()
+
+
+def test_feed_callback_pack_roundtrip_respond_letter_actions():
+    for action in ("respond_ai_cover", "respond_letter_generate", "respond_letter_skip"):
+        cb = FeedCallback(action=action, session_id=1, vacancy_id=42)
+        packed = cb.pack()
+        parsed = FeedCallback.unpack(packed)
+        assert parsed.action == action
+        assert parsed.session_id == 1
+        assert parsed.vacancy_id == 42

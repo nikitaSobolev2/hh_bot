@@ -98,6 +98,7 @@ def generate_cover_letter_task(
     cover_letter_style: str = "professional",
     session_id: int = 0,
     source: str = "autoparse",
+    apply_after: dict | None = None,
 ) -> dict:
     return run_async(
         lambda sf: _generate_cover_letter_async(
@@ -111,6 +112,7 @@ def generate_cover_letter_task(
             cover_letter_style,
             session_id,
             source,
+            apply_after,
         )
     )
 
@@ -233,6 +235,7 @@ async def _generate_cover_letter_async(
     cover_letter_style: str,
     session_id: int,
     source: str = "autoparse",
+    apply_after: dict | None = None,
 ) -> dict:
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.cover_letter_vacancy import CoverLetterVacancyRepository
@@ -259,35 +262,40 @@ async def _generate_cover_letter_async(
         return {"status": "circuit_open"}
 
     source = source or "autoparse"
-    idempotency_key = f"cover_letter:{user_id}:{source}:{vacancy_id}"
+    if apply_after:
+        resume_for_key = str(apply_after.get("resume_id") or "")
+        idempotency_key = f"cover_letter_feed_apply:{user_id}:{vacancy_id}:{resume_for_key}"
+    else:
+        idempotency_key = f"cover_letter:{user_id}:{source}:{vacancy_id}"
     async with session_factory() as session:
-        existing = await CeleryTaskRepository(session).get_by_idempotency_key(idempotency_key)
-        if existing and existing.status == "completed":
-            stored_text = (existing.result_data or {}).get("generated_text")
-            if stored_text:
-                raw = _truncate_for_display(_normalize_dashes(stored_text))
-                display_text = _sanitize_for_telegram(raw)
-                if not display_text:
-                    from src.core.i18n import get_text
+        if not apply_after:
+            existing = await CeleryTaskRepository(session).get_by_idempotency_key(idempotency_key)
+            if existing and existing.status == "completed":
+                stored_text = (existing.result_data or {}).get("generated_text")
+                if stored_text:
+                    raw = _truncate_for_display(_normalize_dashes(stored_text))
+                    display_text = _sanitize_for_telegram(raw)
+                    if not display_text:
+                        from src.core.i18n import get_text
 
-                    display_text = get_text("feed-cover-letter-generated", locale)
-                display_text = _cover_letter_telegram_pre_html(display_text)
-                keyboard = _build_cover_letter_keyboard(
-                    session_id, vacancy_id, locale, standalone=(source == "standalone")
-                )
-                bot = task.create_bot()
-                try:
-                    await task.notify_user(
-                        bot,
-                        chat_id,
-                        message_id,
-                        display_text,
-                        reply_markup=keyboard,
-                        parse_mode="HTML",
+                        display_text = get_text("feed-cover-letter-generated", locale)
+                    display_text = _cover_letter_telegram_pre_html(display_text)
+                    keyboard = _build_cover_letter_keyboard(
+                        session_id, vacancy_id, locale, standalone=(source == "standalone")
                     )
-                finally:
-                    await bot.session.close()
-            return {"status": "already_completed"}
+                    bot = task.create_bot()
+                    try:
+                        await task.notify_user(
+                            bot,
+                            chat_id,
+                            message_id,
+                            display_text,
+                            reply_markup=keyboard,
+                            parse_mode="HTML",
+                        )
+                    finally:
+                        await bot.session.close()
+                return {"status": "already_completed"}
 
     async with session_factory() as session:
         we_repo = WorkExperienceRepository(session)
@@ -339,6 +347,63 @@ async def _generate_cover_letter_async(
         user_name=user_name,
         about_me=about_me,
     )
+
+    if apply_after:
+        try:
+            generated_text = await ai_client.generate_text(
+                user_content,
+                system_prompt=system_prompt,
+                timeout=180,
+                max_tokens=400,
+                temperature=0.6,
+            )
+            cb.record_success()
+        except Exception as exc:
+            cb.record_failure()
+            logger.error(
+                "Cover letter generation failed",
+                user_id=user_id,
+                vacancy_id=vacancy_id,
+                error=str(exc),
+            )
+            raise
+        generated_text = _normalize_dashes(_strip_agent_wrapper(generated_text))
+        bot = task.create_bot()
+        try:
+            from src.core.i18n import get_text
+            from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+
+            apply_to_vacancy_ui_task.delay(
+                apply_after["user_id"],
+                apply_after["chat_id"],
+                apply_after["message_id"],
+                apply_after["locale"],
+                apply_after["hh_linked_account_id"],
+                apply_after["autoparsed_vacancy_id"],
+                apply_after["hh_vacancy_id"],
+                apply_after["resume_id"],
+                apply_after["vacancy_url"],
+                apply_after["feed_session_id"],
+                generated_text,
+            )
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("feed-respond-ui-queued", locale),
+                parse_mode="HTML",
+            )
+            await task.mark_completed(
+                idempotency_key,
+                "cover_letter",
+                user_id,
+                session_factory,
+                result_data={"generated_text": generated_text, "chained_apply": True},
+            )
+            return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}
+        finally:
+            await bot.session.close()
+
     keyboard = _build_cover_letter_keyboard(
         session_id, vacancy_id, locale, standalone=(source == "standalone")
     )

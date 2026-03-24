@@ -12,11 +12,30 @@ from src.bot.modules.autoparse.feed_services import (
     compute_feed_results,
     create_feed_session,
     get_feed_session,
+    merge_liked_for_respond,
     move_vacancy_to_end,
     record_reaction,
+    remove_vacancy_from_liked_ids,
 )
 
 # ── Pure function tests ─────────────────────────────────────────────
+
+
+def test_merge_liked_for_respond_appends_and_removes_from_disliked():
+    liked, disliked = merge_liked_for_respond([1, 2], [5, 3], 3)
+    assert liked == [1, 2, 3]
+    assert disliked == [5]
+
+
+def test_merge_liked_for_respond_idempotent_when_already_liked():
+    liked, disliked = merge_liked_for_respond([1, 3], [5], 3)
+    assert liked == [1, 3]
+    assert disliked == [5]
+
+
+def test_remove_vacancy_from_liked_ids_filters():
+    assert remove_vacancy_from_liked_ids([1, 2, 3], 2) == [1, 3]
+    assert remove_vacancy_from_liked_ids([], 1) == []
 
 
 def test_compute_feed_results_returns_correct_counts(make_feed_session, make_vacancy):
