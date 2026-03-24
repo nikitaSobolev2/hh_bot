@@ -78,8 +78,8 @@ def _detect_login(page: Any) -> bool:
                 return True
         except Exception:
             continue
-    u = page.url
-    return "login" in u or "account/login" in u
+    u = (page.url or "").lower()
+    return "/account/login" in u or "/account/signup" in u
 
 
 def _detect_already_applied(page: Any) -> bool:

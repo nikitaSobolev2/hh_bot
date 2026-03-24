@@ -57,3 +57,23 @@ def test_login_assist_ready_when_second_tab_left_login() -> None:
     ]
     raw = _minimal_logged_in_cookies()
     assert _login_assist_ready(ctx, raw) is True
+
+
+def test_login_assist_ready_when_cdn_tab_has_footer_login_link_only() -> None:
+    """CDN/aux pages often include a[href*=account/login]; that must not block completion."""
+    raw = _minimal_logged_in_cookies()
+    p = MagicMock()
+    p.url = "https://cdn.hh.ru/asset.js"
+
+    def locator(sel: str) -> MagicMock:
+        m = MagicMock()
+        if "account/login" in sel or "href" in sel:
+            m.count.return_value = 1
+        else:
+            m.count.return_value = 0
+        return m
+
+    p.locator.side_effect = locator
+    ctx = MagicMock()
+    ctx.pages = [p]
+    assert _login_assist_ready(ctx, raw) is True

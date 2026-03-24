@@ -11,7 +11,26 @@ from playwright.sync_api import BrowserContext, sync_playwright
 
 from src.config import settings
 from src.services.hh_ui.browser_link import is_logged_in_storage_state, validate_playwright_storage_state
-from src.services.hh_ui.runner import _detect_captcha, _detect_login
+from src.services.hh_ui.runner import _detect_captcha
+
+# Do not use LOGIN_FORM's `a[href*="account/login"]`: CDN/aux tabs often include that link in
+# the footer, so every tab would look "on login" and login assist would never finish.
+_LOGIN_ASSIST_SCREEN_HINTS: tuple[str, ...] = (
+    '[data-qa="login"]',
+    "text=Вход в личный кабинет",
+)
+
+
+def _detect_login_assist(page: Any) -> bool:
+    """True if this tab is the real login screen (not a random page with a login link in chrome)."""
+    for hint in _LOGIN_ASSIST_SCREEN_HINTS:
+        try:
+            if page.locator(hint).count() > 0:
+                return True
+        except Exception:
+            continue
+    u = (page.url or "").lower()
+    return "/account/login" in u or "/account/signup" in u
 
 
 class LoginAssistOutcome(str, Enum):
@@ -25,7 +44,7 @@ def _any_page_off_login_screen(context: BrowserContext) -> bool:
     """True if at least one tab is not the login form (handles hh.ru opening login in a new tab)."""
     for pg in context.pages:
         try:
-            if not _detect_login(pg):
+            if not _detect_login_assist(pg):
                 return True
         except Exception:
             continue
@@ -45,9 +64,10 @@ def _any_page_has_captcha(context: BrowserContext) -> bool:
 def _login_assist_ready(context: BrowserContext, raw: dict[str, Any]) -> bool:
     """True when cookies look logged-in and at least one tab has left the login screen.
 
-    hh.ru may set hhtoken before credentials are submitted — require no login UI on *some* tab.
+    hh.ru may set hhtoken before credentials are submitted — require no real login UI on *some* tab.
     If the user completes login in a second tab, the first tab may still show /account/login;
-    polling only the initial page would never finish.
+    polling only the initial page would never finish. Footer links to account/login on CDN/aux
+    tabs must not count as "still on login" (see _detect_login_assist).
     """
     if not is_logged_in_storage_state(raw):
         return False
