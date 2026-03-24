@@ -293,6 +293,9 @@ async def _apply_ui_async(
     bind=True,
     base=HHBotTask,
     name="hh_ui.apply_to_vacancy",
+    # Dedicated Celery queue so only ``hh_ui`` workers run Playwright (see docker-compose
+    # ``celery_worker_hh_ui``). Avoids N general workers each spawning Chromium and OOMing small VMs.
+    queue="hh_ui",
     # Hard limit: worker child gets SIGKILL after ``time_limit`` (see Celery docs). Tune via
     # ``HH_UI_APPLY_TASK_TIME_LIMIT`` / ``HH_UI_APPLY_TASK_SOFT_TIME_LIMIT`` when hh.ru or Playwright runs slow.
     soft_time_limit=settings.hh_ui_apply_task_soft_time_limit,

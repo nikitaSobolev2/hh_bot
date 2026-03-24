@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && pip install --no-cache-dir websockify
 RUN chmod +x /app/docker/entrypoint-login-assist.sh
 
-# Default image: bot and general Celery workers (queue celery only; see docker-compose.yml).
+# Default image: bot and Celery workers (``celery`` + optional ``hh_ui`` queues; see docker-compose.yml).
 FROM base AS app
 
 CMD ["python", "-m", "src"]
