@@ -34,12 +34,12 @@ ALREADY_APPLIED_HINTS: tuple[str, ...] = (
     "text=Already responded",
 )
 
-# Captcha / bot challenge.
+# Captcha / bot challenge (avoid iframe[src*='captcha'] — matches unrelated URLs and causes false positives).
 CAPTCHA_HINTS: tuple[str, ...] = (
-    "iframe[src*='captcha']",
     "iframe[src*='smartcaptcha']",
+    "iframe[src*='hcaptcha.com']",
+    "iframe[src*='captcha.yandex']",
     '[data-qa="challenge-form"]',
-    "text=робот",
 )
 
 # Login / session expired.

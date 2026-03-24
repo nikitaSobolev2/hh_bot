@@ -21,6 +21,11 @@ HH_APPLICANT_FETCH_USER_AGENT = (
 )
 
 _RESUME_ID_RE = re.compile(r"/resume/([^/?#]+)")
+# Only match real embeds — bundles often contain the substring "captcha" next to iframes (analytics, etc.).
+_CAPTCHA_EMBED_RE = re.compile(
+    r"<(?:iframe|script)[^>]+src=[\"'][^\"']*(?:smartcaptcha|captcha\.yandex|hcaptcha\.com|challenges\.cloudflare\.com)[^\"']*[\"']",
+    re.IGNORECASE,
+)
 
 
 def httpx_cookies_from_storage_state(storage_state: dict[str, Any]) -> httpx.Cookies:
@@ -105,12 +110,15 @@ def html_suggests_login(html: str) -> bool:
 
 
 def html_suggests_captcha(html: str) -> bool:
+    """True only when a captcha widget URL is embedded (iframe/script src).
+
+    Do not use bare substrings like \"captcha\" or \"iframe\"+\"captcha\" — minified JS and
+    unrelated strings cause false positives on normal logged-in pages.
+    """
     low = html.lower()
-    if "smartcaptcha" in low or "hcaptcha" in low:
-        return True
-    if "iframe" in low and "captcha" in low:
-        return True
-    if "робот" in html and "challenge" in low:
+    if "resume-card-link" in low or 'data-qa="resume-title"' in low:
+        return False
+    if _CAPTCHA_EMBED_RE.search(html):
         return True
     return False
 

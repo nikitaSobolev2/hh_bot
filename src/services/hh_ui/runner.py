@@ -93,18 +93,14 @@ def _screenshot_url_with_storage(
 
 
 def _detect_captcha(page: Any) -> bool:
+    """Detect visible captcha widgets only — not bare \"smartcaptcha\" in page HTML/JSON."""
     for hint in sel.CAPTCHA_HINTS:
         try:
             if page.locator(hint).count() > 0:
                 return True
         except Exception:
             continue
-    content = ""
-    try:
-        content = page.content()
-    except Exception:
-        return False
-    return "smartcaptcha" in content.lower() or "hcaptcha" in content.lower()
+    return False
 
 
 def _detect_login(page: Any) -> bool:

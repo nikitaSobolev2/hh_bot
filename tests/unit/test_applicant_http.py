@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 
 from src.services.hh_ui.applicant_http import (
+    html_suggests_captcha,
     html_suggests_login,
     httpx_cookies_from_storage_state,
     parse_applicant_resumes_from_html,
@@ -35,6 +36,27 @@ def test_parse_applicant_resumes_empty() -> None:
     result = parse_applicant_resumes_from_html("<html><body></body></html>")
     assert result.outcome.value == "error"
     assert result.detail == "no_resume_links"
+
+
+def test_html_suggests_captcha_false_on_noise() -> None:
+    """iframe + word 'captcha' in JS must not imply a challenge (common false positive)."""
+    html = """
+    <html><body><iframe src="https://mc.yandex.ru/foo"></iframe>
+    <script>var x = "precaptcha_mode";</script></body></html>
+    """
+    assert html_suggests_captcha(html) is False
+
+
+def test_html_suggests_captcha_true_when_smartcaptcha_iframe() -> None:
+    html = (
+        '<iframe src="https://smartcaptcha.yandex.ru/captcha?foo=1" width="100"></iframe>'
+    )
+    assert html_suggests_captcha(html) is True
+
+
+def test_html_suggests_captcha_false_on_sample_applicant_html() -> None:
+    html = (_ROOT / "docs" / "applicant-resumes-block.html").read_text(encoding="utf-8")
+    assert html_suggests_captcha(html) is False
 
 
 def test_html_suggests_login_false_when_resume_list_present() -> None:
