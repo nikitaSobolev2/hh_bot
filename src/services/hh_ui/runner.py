@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import random
-import re
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -14,12 +13,16 @@ from playwright.sync_api import sync_playwright
 
 from src.core.logging import get_logger
 from src.services.hh_ui import selectors as sel
+from src.services.hh_ui.applicant_http import (
+    fetch_applicant_resumes_html,
+    html_suggests_captcha,
+    html_suggests_login,
+    parse_applicant_resumes_from_html,
+)
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 
 logger = get_logger(__name__)
-
-_RESUME_ID_RE = re.compile(r"/resume/([^/?#]+)")
 
 
 def _safe_url_host_path(url: str | None) -> str | None:
@@ -123,211 +126,80 @@ def _click_first_in_root(root: Locator, selectors: tuple[str, ...], timeout: int
     return False
 
 
-def _wait_response_modal_visible(page: Any, timeout_ms: int) -> None:
-    page.locator(sel.RESPONSE_MODAL_CONTENT).first.wait_for(state="visible", timeout=timeout_ms)
-    try:
-        page.get_by_text(sel.RESPONSE_MODAL_TITLE_TEXT, exact=False).first.wait_for(
-            state="visible",
-            timeout=min(5000, timeout_ms),
-        )
-    except PlaywrightTimeoutError:
-        pass
-
-
-def _collect_resumes_from_modal(page: Any) -> list[ResumeOption]:
-    """Parse radio name=resumeId + data-qa=resume-title inside the respond bottom sheet."""
-    out: list[ResumeOption] = []
-    for radio in page.locator(sel.RESUME_RADIO).all():
-        try:
-            rid = (radio.get_attribute("value") or "").strip()
-            if not rid:
-                continue
-            label = page.locator(f'label:has(input[name="resumeId"][value="{rid}"])').first
-            try:
-                title_loc = label.locator(sel.RESUME_TITLE_IN_MODAL).first
-                title_loc.wait_for(state="visible", timeout=3000)
-                title = (title_loc.inner_text() or "").strip() or rid
-            except Exception:
-                title = rid
-            out.append(ResumeOption(id=rid, title=title[:200]))
-        except Exception:
-            continue
-    return out
-
-
-def _close_response_modal(page: Any) -> None:
-    btn = page.locator(sel.RESPONSE_MODAL_CLOSE).first
-    try:
-        if btn.is_visible():
-            btn.click()
-            page.wait_for_timeout(400)
-    except Exception:
-        pass
-
-
-def _list_resumes_from_applicant_page(page: Any) -> ListResumesResult:
-    seen: dict[str, str] = {}
-    for link in page.locator(sel.RESUME_LIST_LINK).all():
-        try:
-            href = link.get_attribute("href") or ""
-        except Exception:
-            continue
-        m = _RESUME_ID_RE.search(href)
-        if not m:
-            continue
-        rid = m.group(1)
-        if rid in seen:
-            continue
-        try:
-            title = (link.inner_text() or "").strip() or rid
-        except Exception:
-            title = rid
-        seen[rid] = title[:200]
-
-    resumes = [ResumeOption(id=k, title=v) for k, v in sorted(seen.items())]
-    if not resumes:
-        return ListResumesResult(
-            resumes=[],
-            outcome=ApplyOutcome.ERROR,
-            detail="no_resume_links",
-        )
-    return ListResumesResult(resumes=resumes, outcome=ApplyOutcome.SUCCESS)
+def _wait_for_respond_resume_ui(page: Any, timeout_ms: int) -> None:
+    """Wait until resume picker appears: radios (preferred), bottom sheet, or sheet container."""
+    radio = page.locator('input[name="resumeId"]').first
+    sheet_content = page.locator(sel.RESPONSE_MODAL_CONTENT).first
+    sheet_outer = page.locator(sel.BOTTOM_SHEET_CONTAINER).first
+    radio.or_(sheet_content).or_(sheet_outer).wait_for(state="visible", timeout=timeout_ms)
 
 
 def list_resumes_ui(
     *,
     storage_state: dict[str, Any],
     config: HhUiApplyConfig,
-    vacancy_url: str | None = None,
     log_user_id: int | None = None,
 ) -> ListResumesResult:
-    """Load resume list for Telegram pick: prefer Magritte modal on vacancy page, else /applicant/resumes."""
-    safe_vacancy = _safe_url_host_path(vacancy_url) if vacancy_url else None
+    """Load applicant resume list via HTTP GET + HTML parse (session cookies from storage_state)."""
     logger.info(
         "list_resumes_ui_start",
         log_user_id=log_user_id,
-        vacancy_url_safe=safe_vacancy,
+        branch="applicant",
     )
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=config.headless)
-        try:
-            context = browser.new_context(storage_state=storage_state)
-            page = context.new_page()
-            timeout = config.action_timeout_ms
-
-            if vacancy_url and vacancy_url.startswith("https://"):
-                try:
-                    page.goto(
-                        vacancy_url,
-                        wait_until="domcontentloaded",
-                        timeout=config.navigation_timeout_ms,
-                    )
-                    _jitter(config)
-                    if _detect_login(page):
-                        logger.info(
-                            "list_resumes_ui_done",
-                            log_user_id=log_user_id,
-                            branch="modal",
-                            resume_count=0,
-                            outcome=ApplyOutcome.SESSION_EXPIRED.value,
-                            detail="login_form",
-                        )
-                        return ListResumesResult(
-                            resumes=[],
-                            outcome=ApplyOutcome.SESSION_EXPIRED,
-                            detail="login_form",
-                        )
-                    if _detect_captcha(page):
-                        logger.info(
-                            "list_resumes_ui_done",
-                            log_user_id=log_user_id,
-                            branch="modal",
-                            resume_count=0,
-                            outcome=ApplyOutcome.CAPTCHA.value,
-                            detail="captcha",
-                        )
-                        return ListResumesResult(
-                            resumes=[],
-                            outcome=ApplyOutcome.CAPTCHA,
-                            detail="captcha",
-                        )
-                    if _click_first(
-                        page,
-                        sel.VACANCY_APPLY_BUTTON,
-                        min(2000, timeout),
-                    ):
-                        _jitter(config)
-                        page.wait_for_timeout(400)
-                        _wait_response_modal_visible(page, timeout)
-                        modal_resumes = _collect_resumes_from_modal(page)
-                        _close_response_modal(page)
-                        if modal_resumes:
-                            logger.info(
-                                "list_resumes_ui_done",
-                                log_user_id=log_user_id,
-                                branch="modal",
-                                resume_count=len(modal_resumes),
-                                outcome=ApplyOutcome.SUCCESS.value,
-                                detail=None,
-                            )
-                            return ListResumesResult(
-                                resumes=modal_resumes,
-                                outcome=ApplyOutcome.SUCCESS,
-                            )
-                except Exception:
-                    pass
-
-            logger.info(
-                "list_resumes_ui_branch",
-                log_user_id=log_user_id,
-                branch="applicant_fallback",
-            )
-            page.goto(
-                sel.APPLICANT_RESUMES_URL,
-                wait_until="domcontentloaded",
-                timeout=config.navigation_timeout_ms,
-            )
-            _jitter(config)
-            if _detect_login(page):
-                logger.info(
-                    "list_resumes_ui_done",
-                    log_user_id=log_user_id,
-                    branch="applicant_fallback",
-                    resume_count=0,
-                    outcome=ApplyOutcome.SESSION_EXPIRED.value,
-                    detail="login_form",
-                )
-                return ListResumesResult(
-                    resumes=[],
-                    outcome=ApplyOutcome.SESSION_EXPIRED,
-                    detail="login_form",
-                )
-            if _detect_captcha(page):
-                logger.info(
-                    "list_resumes_ui_done",
-                    log_user_id=log_user_id,
-                    branch="applicant_fallback",
-                    resume_count=0,
-                    outcome=ApplyOutcome.CAPTCHA.value,
-                    detail="captcha",
-                )
-                return ListResumesResult(
-                    resumes=[],
-                    outcome=ApplyOutcome.CAPTCHA,
-                    detail="captcha",
-                )
-            result = _list_resumes_from_applicant_page(page)
-            logger.info(
-                "list_resumes_ui_done",
-                log_user_id=log_user_id,
-                branch="applicant_fallback",
-                resume_count=len(result.resumes),
-                outcome=result.outcome.value,
-                detail=result.detail,
-            )
-            return result
-        finally:
-            browser.close()
+    html, fetch_err = fetch_applicant_resumes_html(storage_state, config)
+    if fetch_err or not html:
+        detail = fetch_err or "empty_response"
+        logger.info(
+            "list_resumes_ui_done",
+            log_user_id=log_user_id,
+            branch="applicant",
+            resume_count=0,
+            outcome=ApplyOutcome.ERROR.value,
+            detail=detail,
+        )
+        return ListResumesResult(
+            resumes=[],
+            outcome=ApplyOutcome.ERROR,
+            detail=detail,
+        )
+    if html_suggests_login(html):
+        logger.info(
+            "list_resumes_ui_done",
+            log_user_id=log_user_id,
+            branch="applicant",
+            resume_count=0,
+            outcome=ApplyOutcome.SESSION_EXPIRED.value,
+            detail="login_form",
+        )
+        return ListResumesResult(
+            resumes=[],
+            outcome=ApplyOutcome.SESSION_EXPIRED,
+            detail="login_form",
+        )
+    if html_suggests_captcha(html):
+        logger.info(
+            "list_resumes_ui_done",
+            log_user_id=log_user_id,
+            branch="applicant",
+            resume_count=0,
+            outcome=ApplyOutcome.CAPTCHA.value,
+            detail="captcha",
+        )
+        return ListResumesResult(
+            resumes=[],
+            outcome=ApplyOutcome.CAPTCHA,
+            detail="captcha",
+        )
+    result = parse_applicant_resumes_from_html(html)
+    logger.info(
+        "list_resumes_ui_done",
+        log_user_id=log_user_id,
+        branch="applicant",
+        resume_count=len(result.resumes),
+        outcome=result.outcome.value,
+        detail=result.detail,
+    )
+    return result
 
 
 def apply_to_vacancy_ui(
@@ -489,7 +361,7 @@ def apply_to_vacancy_ui(
             selected = False
             modal_visible = False
             try:
-                _wait_response_modal_visible(page, config.action_timeout_ms)
+                _wait_for_respond_resume_ui(page, config.action_timeout_ms)
                 modal_visible = True
             except PlaywrightTimeoutError:
                 pass
@@ -502,24 +374,24 @@ def apply_to_vacancy_ui(
                 resume_ref=resume_ref,
             )
             select_mode = "none"
-            if modal_visible:
+            # Always try resume selection even if sheet wait failed (layout may still expose radios).
+            try:
+                radio = page.locator(f'input[name="resumeId"][value="{resume_hh_id}"]').first
+                radio.wait_for(state="attached", timeout=config.action_timeout_ms)
+                radio.check(force=True)
+                selected = True
+                select_mode = "radio"
+            except Exception:
                 try:
-                    radio = page.locator(f'input[name="resumeId"][value="{resume_hh_id}"]').first
-                    radio.wait_for(state="visible", timeout=config.action_timeout_ms)
-                    radio.check()
+                    lbl = page.locator(
+                        f'label:has(input[name="resumeId"][value="{resume_hh_id}"])'
+                    ).first
+                    lbl.wait_for(state="visible", timeout=config.action_timeout_ms)
+                    lbl.click(force=True)
                     selected = True
-                    select_mode = "radio"
+                    select_mode = "label"
                 except Exception:
-                    try:
-                        lbl = page.locator(
-                            f'label:has(input[name="resumeId"][value="{resume_hh_id}"])'
-                        ).first
-                        lbl.wait_for(state="visible", timeout=config.action_timeout_ms)
-                        lbl.click()
-                        selected = True
-                        select_mode = "label"
-                    except Exception:
-                        pass
+                    pass
 
             if not selected:
                 for s in sel.RESUME_SELECT:
@@ -532,6 +404,16 @@ def apply_to_vacancy_ui(
                         break
                     except Exception:
                         continue
+
+            if not selected:
+                card = page.locator(f'a[data-qa="resume-card-link-{resume_hh_id}"]').first
+                try:
+                    card.wait_for(state="visible", timeout=config.action_timeout_ms)
+                    card.click()
+                    selected = True
+                    select_mode = "resume_card"
+                except Exception:
+                    pass
 
             if not selected:
                 alt = page.locator(f'a[href*="/resume/{resume_hh_id}"]').first

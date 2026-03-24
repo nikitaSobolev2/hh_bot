@@ -105,7 +105,6 @@ def feed_respond_resume_keyboard(
 
 async def _run_list_resumes_ui_feed(
     storage_state: dict,
-    vacancy_url: str,
     user_id: int,
 ):
     from src.services.hh_ui.config import HhUiApplyConfig
@@ -117,7 +116,6 @@ async def _run_list_resumes_ui_feed(
             list_resumes_ui,
             storage_state=storage_state,
             config=cfg,
-            vacancy_url=vacancy_url,
             log_user_id=user_id,
         ),
         timeout=_LIST_RESUMES_TIMEOUT_S,
@@ -703,7 +701,6 @@ async def handle_feed_respond(
     from src.services.hh.crypto import HhTokenCipher
     from src.services.hh.token_service import ensure_access_token
     from src.services.hh_ui.outcomes import ApplyOutcome
-    from src.services.hh_ui.runner import normalize_hh_vacancy_url
     from src.services.hh_ui.storage import decrypt_browser_storage
 
     feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
@@ -771,9 +768,8 @@ async def handle_feed_respond(
                     i18n.get("feed-respond-loading-resumes"),
                     parse_mode="HTML",
                 )
-            vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
             try:
-                lr = await _run_list_resumes_ui_feed(storage, vacancy_url, user.id)
+                lr = await _run_list_resumes_ui_feed(storage, user.id)
             except asyncio.TimeoutError:
                 logger.warning(
                     "feed_respond_list_resumes_timeout",
@@ -894,7 +890,6 @@ async def handle_feed_respond_refresh_resumes(
     from src.config import settings
     from src.services.hh.crypto import HhTokenCipher
     from src.services.hh_ui.outcomes import ApplyOutcome
-    from src.services.hh_ui.runner import normalize_hh_vacancy_url
     from src.services.hh_ui.storage import decrypt_browser_storage
 
     if not settings.hh_ui_apply_enabled:
@@ -943,7 +938,6 @@ async def handle_feed_respond_refresh_resumes(
     await acc_repo.clear_resume_list_cache(acc)
     await session.flush()
 
-    vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
     await callback.answer()
     logger.info(
         "feed_respond_resume_cache_refresh",
@@ -958,7 +952,7 @@ async def handle_feed_respond_refresh_resumes(
         )
 
     try:
-        lr = await _run_list_resumes_ui_feed(storage, vacancy_url, user.id)
+        lr = await _run_list_resumes_ui_feed(storage, user.id)
     except asyncio.TimeoutError:
         logger.warning(
             "feed_respond_list_resumes_timeout",
@@ -1010,8 +1004,8 @@ async def handle_feed_respond_refresh_resumes(
     )
     await session.commit()
 
-    resume_ids: list[str] = []
-    titles: list[str] = []
+    resume_ids = []
+    titles = []
     for r in lr.resumes[:12]:
         resume_ids.append(r.id)
         titles.append(r.title[:60])

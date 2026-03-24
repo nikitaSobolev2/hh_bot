@@ -51,6 +51,8 @@ LOGIN_FORM: tuple[str, ...] = (
 
 # Magritte bottom sheet: "Резюме для отклика" (respond flow on vacancy page).
 RESPONSE_MODAL_CONTENT: str = '[data-qa="bottom-sheet-content"]'
+# Swipe container (often appears before/without inner content matching).
+BOTTOM_SHEET_CONTAINER: str = '[data-qa="bottom-sheet-container"]'
 RESPONSE_MODAL_TITLE_TEXT: str = "Резюме для отклика"
 RESPONSE_MODAL_CLOSE: str = '[data-qa="response-popup-close"]'
 # Radio list inside the sheet (value = resume id for API/UI apply).
@@ -71,6 +73,5 @@ RESUME_SUBMIT: tuple[str, ...] = (
     'button:has-text("Отправить")',
 )
 
-# Applicant resume list page.
+# Applicant resume list page (HTML fetch + parse in applicant_http).
 APPLICANT_RESUMES_URL = "https://hh.ru/applicant/resumes"
-RESUME_LIST_LINK = 'a[href*="/resume/"]'
