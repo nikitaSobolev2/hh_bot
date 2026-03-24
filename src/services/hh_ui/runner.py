@@ -18,6 +18,8 @@ from src.services.hh_ui.applicant_http import (
     html_suggests_captcha,
     html_suggests_login,
     parse_applicant_resumes_from_html,
+    url_is_applicant_resumes_document,
+    url_suggests_login_page,
 )
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
@@ -146,7 +148,7 @@ def list_resumes_ui(
         log_user_id=log_user_id,
         branch="applicant",
     )
-    html, fetch_err = fetch_applicant_resumes_html(storage_state, config)
+    html, fetch_err, final_url = fetch_applicant_resumes_html(storage_state, config)
     if fetch_err or not html:
         detail = fetch_err or "empty_response"
         logger.info(
@@ -162,7 +164,24 @@ def list_resumes_ui(
             outcome=ApplyOutcome.ERROR,
             detail=detail,
         )
-    if html_suggests_login(html):
+    if final_url and url_suggests_login_page(final_url):
+        logger.info(
+            "list_resumes_ui_done",
+            log_user_id=log_user_id,
+            branch="applicant",
+            resume_count=0,
+            outcome=ApplyOutcome.SESSION_EXPIRED.value,
+            detail="login_redirect",
+        )
+        return ListResumesResult(
+            resumes=[],
+            outcome=ApplyOutcome.SESSION_EXPIRED,
+            detail="login_redirect",
+        )
+    # On /applicant/resumes, HH often embeds footer links to account/login — html heuristics lie.
+    if (not final_url or not url_is_applicant_resumes_document(final_url)) and html_suggests_login(
+        html
+    ):
         logger.info(
             "list_resumes_ui_done",
             log_user_id=log_user_id,

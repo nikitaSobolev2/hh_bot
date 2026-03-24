@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -47,8 +48,11 @@ def httpx_cookies_from_storage_state(storage_state: dict[str, Any]) -> httpx.Coo
 def fetch_applicant_resumes_html(
     storage_state: dict[str, Any],
     config: HhUiApplyConfig,
-) -> tuple[str | None, str | None]:
-    """GET /applicant/resumes with session cookies. Returns (html, error_detail)."""
+) -> tuple[str | None, str | None, str | None]:
+    """GET /applicant/resumes with session cookies.
+
+    Returns (html, error_detail, final_url_after_redirects).
+    """
     cookies = httpx_cookies_from_storage_state(storage_state)
     timeout = max(config.navigation_timeout_ms / 1000.0, 5.0)
     headers = {
@@ -60,14 +64,37 @@ def fetch_applicant_resumes_html(
         with httpx.Client(cookies=cookies, follow_redirects=True, timeout=timeout) as client:
             r = client.get(sel.APPLICANT_RESUMES_URL, headers=headers)
         if r.status_code != 200:
-            return None, f"http_{r.status_code}"
-        return r.text, None
+            return None, f"http_{r.status_code}", str(r.url)
+        return r.text, None, str(r.url)
     except httpx.HTTPError as exc:
-        return None, str(exc)[:200]
+        return None, str(exc)[:200], None
+
+
+def url_suggests_login_page(url: str) -> bool:
+    """True if the HTTP client ended on a login/signup route (session expired)."""
+    u = (url or "").lower()
+    return "/account/login" in u or "/account/signup" in u
+
+
+def url_is_applicant_resumes_document(url: str) -> bool:
+    """True if the final URL is the applicant resume list (may be empty; still logged in)."""
+    try:
+        path = urlparse(url or "").path.lower().rstrip("/")
+        return path.endswith("/applicant/resumes")
+    except Exception:
+        return False
 
 
 def html_suggests_login(html: str) -> bool:
+    """Heuristic: login page HTML.
+
+    Authenticated /applicant/resumes often still contains footer links to account/login and
+    data-qa=\"login\" in the chrome — do not treat those as session expired.
+    """
     lower = html.lower()
+    # Resume list (or empty-state) on applicant pages.
+    if "resume-card-link" in lower or 'data-qa="resume-title"' in lower:
+        return False
     if "account/login" in lower:
         return True
     if "вход в личный кабинет" in lower:
