@@ -58,6 +58,40 @@ def _maybe_screenshot(page: Any, cfg: HhUiApplyConfig) -> bytes | None:
         return None
 
 
+def _screenshot_page_captcha(page: Any) -> bytes | None:
+    """Always capture the page when captcha is shown (not gated by screenshot_on_error)."""
+    try:
+        return page.screenshot(type="png", full_page=True)
+    except Exception:
+        return None
+
+
+def _screenshot_url_with_storage(
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+    url: str,
+) -> bytes | None:
+    """Open Chromium with the same Playwright storage_state and screenshot (e.g. HTTP-detected captcha)."""
+    with sync_playwright() as p:
+        browser = None
+        try:
+            browser = p.chromium.launch(headless=config.headless)
+            context = browser.new_context(storage_state=storage_state)
+            page = context.new_page()
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=config.navigation_timeout_ms,
+            )
+            _jitter(config)
+            return _screenshot_page_captcha(page)
+        except Exception:
+            return None
+        finally:
+            if browser is not None:
+                browser.close()
+
+
 def _detect_captcha(page: Any) -> bool:
     for hint in sel.CAPTCHA_HINTS:
         try:
@@ -196,6 +230,9 @@ def list_resumes_ui(
             detail="login_form",
         )
     if html_suggests_captcha(html):
+        captcha_shot = _screenshot_url_with_storage(
+            storage_state, config, sel.APPLICANT_RESUMES_URL
+        )
         logger.info(
             "list_resumes_ui_done",
             log_user_id=log_user_id,
@@ -208,6 +245,7 @@ def list_resumes_ui(
             resumes=[],
             outcome=ApplyOutcome.CAPTCHA,
             detail="captcha",
+            screenshot_bytes=captcha_shot,
         )
     result = parse_applicant_resumes_from_html(html)
     logger.info(
@@ -280,7 +318,7 @@ def apply_to_vacancy_ui(
                     detail="login_form",
                 )
             if _detect_captcha(page):
-                shot = _maybe_screenshot(page, config)
+                shot = _screenshot_page_captcha(page)
                 logger.info(
                     "apply_to_vacancy_ui_done",
                     log_user_id=log_user_id,
@@ -362,7 +400,7 @@ def apply_to_vacancy_ui(
                 )
 
             if _detect_captcha(page):
-                shot = _maybe_screenshot(page, config)
+                shot = _screenshot_page_captcha(page)
                 logger.info(
                     "apply_to_vacancy_ui_done",
                     log_user_id=log_user_id,

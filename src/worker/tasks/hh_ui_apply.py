@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from urllib.parse import urlparse
 
+from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import settings
@@ -184,6 +185,8 @@ async def _apply_ui_async(
         )
         if status == "success":
             text = f"{text}\n\n{get_text('feed-respond-success', locale)}"
+        elif result.outcome == ApplyOutcome.CAPTCHA:
+            text = f"{text}\n\n{get_text('feed-respond-ui-captcha', locale)}"
         else:
             detail = err_code or result.outcome.value
             text = f"{text}\n\n{get_text('feed-respond-error', locale, detail=detail)}"
@@ -204,6 +207,13 @@ async def _apply_ui_async(
             text,
             reply_markup=keyboard,
         )
+
+        if result.outcome == ApplyOutcome.CAPTCHA and result.screenshot_bytes:
+            with contextlib.suppress(Exception):
+                await bot.send_photo(
+                    chat_id,
+                    BufferedInputFile(result.screenshot_bytes, "hh_captcha.png"),
+                )
 
         return {"status": status, "outcome": result.outcome.value}
     finally:

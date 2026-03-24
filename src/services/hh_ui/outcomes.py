@@ -35,3 +35,4 @@ class ListResumesResult:
     resumes: list[ResumeOption]
     outcome: ApplyOutcome
     detail: str | None = None
+    screenshot_bytes: bytes | None = None

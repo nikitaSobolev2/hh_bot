@@ -8,7 +8,7 @@ import contextlib
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.autoparse import feed_services
@@ -800,6 +800,10 @@ async def handle_feed_respond(
                     await callback.message.edit_text(
                         i18n.get("feed-respond-ui-captcha"), parse_mode="HTML"
                     )
+                if lr.screenshot_bytes:
+                    await callback.message.answer_photo(
+                        BufferedInputFile(lr.screenshot_bytes, "hh_captcha.png"),
+                    )
                 return
             if lr.outcome == ApplyOutcome.SESSION_EXPIRED:
                 with contextlib.suppress(TelegramBadRequest):
@@ -983,6 +987,10 @@ async def handle_feed_respond_refresh_resumes(
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("feed-respond-ui-captcha"), parse_mode="HTML"
+            )
+        if lr.screenshot_bytes:
+            await callback.message.answer_photo(
+                BufferedInputFile(lr.screenshot_bytes, "hh_captcha.png"),
             )
         return
     if lr.outcome == ApplyOutcome.SESSION_EXPIRED:
