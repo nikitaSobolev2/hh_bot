@@ -89,6 +89,7 @@ feed-respond-vacancy-missing = Вакансия недоступна в этой
 feed-respond-no-resumes = На этом аккаунте hh.ru не найдено резюме.
 feed-respond-fetch-error = Не удалось загрузить резюме с hh.ru.
 feed-respond-pick-resume = <b>Выберите резюме для отклика:</b>
+feed-btn-refresh-resumes = Обновить список
 feed-respond-bad-resume = Некорректный выбор резюме.
 feed-respond-success = ✅ Отклик отправлен на hh.ru (проверьте отклики на сайте).
 feed-respond-error = ❌ Не удалось откликнуться: { $detail }

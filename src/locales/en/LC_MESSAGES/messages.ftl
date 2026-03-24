@@ -89,6 +89,7 @@ feed-respond-vacancy-missing = This vacancy is no longer available in the feed s
 feed-respond-no-resumes = No resumes found on this HeadHunter account.
 feed-respond-fetch-error = Could not load resumes from hh.ru.
 feed-respond-pick-resume = <b>Choose a resume to respond with:</b>
+feed-btn-refresh-resumes = Refresh list
 feed-respond-bad-resume = Invalid resume selection.
 feed-respond-success = ✅ Response sent on hh.ru (check your applications on the site).
 feed-respond-error = ❌ Could not respond: { $detail }

@@ -31,6 +31,131 @@ logger = get_logger(__name__)
 _LIST_RESUMES_TIMEOUT_S = 120.0
 
 
+def _resume_cache_to_lists(resume_list_cache: list | None) -> tuple[list[str], list[str]] | None:
+    if not resume_list_cache or not isinstance(resume_list_cache, list):
+        return None
+    ids: list[str] = []
+    titles: list[str] = []
+    for it in resume_list_cache[:12]:
+        if not isinstance(it, dict):
+            return None
+        rid = it.get("id")
+        if rid is None or str(rid).strip() == "":
+            return None
+        title = it.get("title")
+        if title is None:
+            title = str(rid)
+        ids.append(str(rid))
+        titles.append(str(title)[:60])
+    if not ids:
+        return None
+    return ids, titles
+
+
+def feed_respond_resume_keyboard(
+    session_id: int,
+    vacancy_id: int,
+    titles: list[str],
+    i18n: I18nContext,
+    *,
+    show_refresh: bool,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, title in enumerate(titles[:12]):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{idx + 1}. {title}"[:64],
+                    callback_data=FeedCallback(
+                        action="respond_pick",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                        resume_idx=idx,
+                    ).pack(),
+                )
+            ]
+        )
+    if show_refresh:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("feed-btn-refresh-resumes"),
+                    callback_data=FeedCallback(
+                        action="respond_refresh_resumes",
+                        session_id=session_id,
+                        vacancy_id=vacancy_id,
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-cancel"),
+                callback_data=FeedCallback(
+                    action="respond_cancel",
+                    session_id=session_id,
+                    vacancy_id=vacancy_id,
+                ).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _run_list_resumes_ui_feed(
+    storage_state: dict,
+    vacancy_url: str,
+    user_id: int,
+):
+    from src.services.hh_ui.config import HhUiApplyConfig
+    from src.services.hh_ui.runner import list_resumes_ui
+
+    cfg = HhUiApplyConfig.from_settings()
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            list_resumes_ui,
+            storage_state=storage_state,
+            config=cfg,
+            vacancy_url=vacancy_url,
+            log_user_id=user_id,
+        ),
+        timeout=_LIST_RESUMES_TIMEOUT_S,
+    )
+
+
+async def _send_feed_respond_resume_choice(
+    message,
+    state: FSMContext,
+    feed_session: VacancyFeedSession,
+    vacancy,
+    resume_ids: list[str],
+    titles: list[str],
+    i18n: I18nContext,
+    *,
+    show_refresh: bool,
+) -> None:
+    await state.set_state(FeedRespondForm.choosing_resume)
+    await state.update_data(
+        feed_session_id=feed_session.id,
+        vacancy_id=vacancy.id,
+        resume_ids=resume_ids,
+    )
+    kb = feed_respond_resume_keyboard(
+        feed_session.id,
+        vacancy.id,
+        titles,
+        i18n,
+        show_refresh=show_refresh,
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await message.edit_text(
+            i18n.get("feed-respond-pick-resume"),
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+
+
 def _feed_show_respond_button(feed_session: VacancyFeedSession) -> bool:
     """Respond requires a linked HH account on this feed session."""
     return feed_session.hh_linked_account_id is not None
@@ -577,9 +702,8 @@ async def handle_feed_respond(
     from src.services.hh.client import HhApiClient
     from src.services.hh.crypto import HhTokenCipher
     from src.services.hh.token_service import ensure_access_token
-    from src.services.hh_ui.config import HhUiApplyConfig
     from src.services.hh_ui.outcomes import ApplyOutcome
-    from src.services.hh_ui.runner import list_resumes_ui, normalize_hh_vacancy_url
+    from src.services.hh_ui.runner import normalize_hh_vacancy_url
     from src.services.hh_ui.storage import decrypt_browser_storage
 
     feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
@@ -628,71 +752,85 @@ async def handle_feed_respond(
         if not storage:
             await callback.answer(i18n.get("feed-respond-no-browser-session"), show_alert=True)
             return
-        # Telegram callback must be answered within ~10s; list_resumes_ui can take longer.
-        await callback.answer()
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                i18n.get("feed-respond-loading-resumes"),
-                parse_mode="HTML",
-            )
-        cfg = HhUiApplyConfig.from_settings()
-        vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
-        try:
-            lr = await asyncio.wait_for(
-                asyncio.to_thread(
-                    list_resumes_ui,
-                    storage_state=storage,
-                    config=cfg,
-                    vacancy_url=vacancy_url,
-                ),
-                timeout=_LIST_RESUMES_TIMEOUT_S,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "feed_respond_list_resumes_timeout",
+
+        cached = _resume_cache_to_lists(acc.resume_list_cache)
+        if cached:
+            resume_ids, titles = cached
+            await callback.answer()
+            logger.info(
+                "feed_respond_resume_cache_hit",
                 user_id=user.id,
-                vacancy_id=vacancy.id,
-                timeout_s=_LIST_RESUMES_TIMEOUT_S,
+                hh_linked_account_id=acc.id,
+                resume_count=len(resume_ids),
             )
+        else:
+            # Telegram callback must be answered within ~10s; list_resumes_ui can take longer.
+            await callback.answer()
             with contextlib.suppress(TelegramBadRequest):
                 await callback.message.edit_text(
-                    i18n.get("feed-respond-load-timeout"),
+                    i18n.get("feed-respond-loading-resumes"),
                     parse_mode="HTML",
                 )
-            return
-        except Exception as exc:
-            logger.exception(
-                "feed_respond_list_resumes_failed",
+            vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+            try:
+                lr = await _run_list_resumes_ui_feed(storage, vacancy_url, user.id)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "feed_respond_list_resumes_timeout",
+                    user_id=user.id,
+                    vacancy_id=vacancy.id,
+                    timeout_s=_LIST_RESUMES_TIMEOUT_S,
+                )
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-load-timeout"),
+                        parse_mode="HTML",
+                    )
+                return
+            except Exception as exc:
+                logger.exception(
+                    "feed_respond_list_resumes_failed",
+                    user_id=user.id,
+                    vacancy_id=vacancy.id,
+                    error=str(exc),
+                )
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+                    )
+                return
+            if lr.outcome == ApplyOutcome.CAPTCHA:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-ui-captcha"), parse_mode="HTML"
+                    )
+                return
+            if lr.outcome == ApplyOutcome.SESSION_EXPIRED:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-ui-session-expired"), parse_mode="HTML"
+                    )
+                return
+            if lr.outcome != ApplyOutcome.SUCCESS or not lr.resumes:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+                    )
+                return
+            logger.info(
+                "feed_respond_resume_cache_miss",
                 user_id=user.id,
-                vacancy_id=vacancy.id,
-                error=str(exc),
+                hh_linked_account_id=acc.id,
+                resume_count=len(lr.resumes),
             )
-            with contextlib.suppress(TelegramBadRequest):
-                await callback.message.edit_text(
-                    i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
-                )
-            return
-        if lr.outcome == ApplyOutcome.CAPTCHA:
-            with contextlib.suppress(TelegramBadRequest):
-                await callback.message.edit_text(
-                    i18n.get("feed-respond-ui-captcha"), parse_mode="HTML"
-                )
-            return
-        if lr.outcome == ApplyOutcome.SESSION_EXPIRED:
-            with contextlib.suppress(TelegramBadRequest):
-                await callback.message.edit_text(
-                    i18n.get("feed-respond-ui-session-expired"), parse_mode="HTML"
-                )
-            return
-        if lr.outcome != ApplyOutcome.SUCCESS or not lr.resumes:
-            with contextlib.suppress(TelegramBadRequest):
-                await callback.message.edit_text(
-                    i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
-                )
-            return
-        for r in lr.resumes[:12]:
-            resume_ids.append(r.id)
-            titles.append(r.title[:60])
+            await acc_repo.update_resume_list_cache(
+                acc,
+                [{"id": r.id, "title": r.title} for r in lr.resumes[:12]],
+            )
+            await session.commit()
+            for r in lr.resumes[:12]:
+                resume_ids.append(r.id)
+                titles.append(r.title[:60])
     else:
         try:
             _, access = await ensure_access_token(session, feed_session.hh_linked_account_id)
@@ -732,47 +870,162 @@ async def handle_feed_respond(
             )
         return
 
-    await state.set_state(FeedRespondForm.choosing_resume)
-    await state.update_data(
-        feed_session_id=feed_session.id,
-        vacancy_id=vacancy.id,
-        resume_ids=resume_ids,
+    await _send_feed_respond_resume_choice(
+        callback.message,
+        state,
+        feed_session,
+        vacancy,
+        resume_ids,
+        titles,
+        i18n,
+        show_refresh=settings.hh_ui_apply_enabled,
     )
 
-    rows: list[list[InlineKeyboardButton]] = []
-    for idx, title in enumerate(titles[:12]):
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{idx + 1}. {title}"[:64],
-                    callback_data=FeedCallback(
-                        action="respond_pick",
-                        session_id=feed_session.id,
-                        vacancy_id=vacancy.id,
-                        resume_idx=idx,
-                    ).pack(),
-                )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=i18n.get("btn-cancel"),
-                callback_data=FeedCallback(
-                    action="respond_cancel",
-                    session_id=feed_session.id,
-                    vacancy_id=vacancy.id,
-                ).pack(),
-            )
-        ]
+
+@router.callback_query(FeedCallback.filter(F.action == "respond_refresh_resumes"))
+async def handle_feed_respond_refresh_resumes(
+    callback: CallbackQuery,
+    callback_data: FeedCallback,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    from src.config import settings
+    from src.services.hh.crypto import HhTokenCipher
+    from src.services.hh_ui.outcomes import ApplyOutcome
+    from src.services.hh_ui.runner import normalize_hh_vacancy_url
+    from src.services.hh_ui.storage import decrypt_browser_storage
+
+    if not settings.hh_ui_apply_enabled:
+        await callback.answer()
+        return
+
+    if await state.get_state() != FeedRespondForm.choosing_resume.state:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    if (
+        data.get("feed_session_id") != callback_data.session_id
+        or data.get("vacancy_id") != callback_data.vacancy_id
+    ):
+        await callback.answer(i18n.get("feed-respond-bad-resume"), show_alert=True)
+        return
+
+    feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+    if not feed_session or feed_session.is_completed or not feed_session.hh_linked_account_id:
+        await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
+        return
+
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
+    if not vacancy:
+        await callback.answer()
+        return
+
+    acc_repo = HhLinkedAccountRepository(session)
+    acc = await acc_repo.get_by_id(feed_session.hh_linked_account_id)
+    if not acc or not acc.browser_storage_enc:
+        await callback.answer(i18n.get("feed-respond-no-browser-session"), show_alert=True)
+        return
+
+    try:
+        cipher = HhTokenCipher(settings.hh_token_encryption_key)
+        storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+    except Exception:
+        await callback.answer(i18n.get("hh-token-error"), show_alert=True)
+        return
+    if not storage:
+        await callback.answer(i18n.get("feed-respond-no-browser-session"), show_alert=True)
+        return
+
+    await acc_repo.clear_resume_list_cache(acc)
+    await session.flush()
+
+    vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+    await callback.answer()
+    logger.info(
+        "feed_respond_resume_cache_refresh",
+        user_id=user.id,
+        hh_linked_account_id=acc.id,
+        vacancy_id=vacancy.id,
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
-            i18n.get("feed-respond-pick-resume"),
-            reply_markup=kb,
+            i18n.get("feed-respond-loading-resumes"),
             parse_mode="HTML",
         )
+
+    try:
+        lr = await _run_list_resumes_ui_feed(storage, vacancy_url, user.id)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "feed_respond_list_resumes_timeout",
+            user_id=user.id,
+            vacancy_id=vacancy.id,
+            timeout_s=_LIST_RESUMES_TIMEOUT_S,
+        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-load-timeout"),
+                parse_mode="HTML",
+            )
+        return
+    except Exception as exc:
+        logger.exception(
+            "feed_respond_list_resumes_failed",
+            user_id=user.id,
+            vacancy_id=vacancy.id,
+            error=str(exc),
+        )
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+            )
+        return
+
+    if lr.outcome == ApplyOutcome.CAPTCHA:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-ui-captcha"), parse_mode="HTML"
+            )
+        return
+    if lr.outcome == ApplyOutcome.SESSION_EXPIRED:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-ui-session-expired"), parse_mode="HTML"
+            )
+        return
+    if lr.outcome != ApplyOutcome.SUCCESS or not lr.resumes:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+            )
+        return
+
+    await acc_repo.update_resume_list_cache(
+        acc,
+        [{"id": r.id, "title": r.title} for r in lr.resumes[:12]],
+    )
+    await session.commit()
+
+    resume_ids: list[str] = []
+    titles: list[str] = []
+    for r in lr.resumes[:12]:
+        resume_ids.append(r.id)
+        titles.append(r.title[:60])
+
+    await _send_feed_respond_resume_choice(
+        callback.message,
+        state,
+        feed_session,
+        vacancy,
+        resume_ids,
+        titles,
+        i18n,
+        show_refresh=True,
+    )
 
 
 @router.callback_query(FeedCallback.filter(F.action == "respond_cancel"))

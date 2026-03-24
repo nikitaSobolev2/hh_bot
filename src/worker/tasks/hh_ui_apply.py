@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -22,6 +23,18 @@ from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
+
+
+def _vacancy_url_safe_for_log(url: str) -> str | None:
+    if not url.startswith("https://"):
+        return None
+    try:
+        p = urlparse(url)
+        if not p.netloc:
+            return None
+        return f"{p.scheme}://{p.netloc}{p.path}"
+    except Exception:
+        return None
 
 
 def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
@@ -95,6 +108,15 @@ async def _apply_ui_async(
             vacancy_url or (vacancy.url if vacancy else None),
             hh_vacancy_id,
         )
+        logger.info(
+            "hh_ui_apply_task_start",
+            task_id=getattr(self.request, "id", None),
+            user_id=user_id,
+            vacancy_id=autoparsed_vacancy_id,
+            hh_linked_account_id=hh_linked_account_id,
+            resume_id_prefix=(resume_id[:12] if resume_id else None),
+            vacancy_url_safe=_vacancy_url_safe_for_log(url),
+        )
 
         try:
             result = await asyncio.to_thread(
@@ -103,10 +125,20 @@ async def _apply_ui_async(
                 vacancy_url=url,
                 resume_hh_id=resume_id,
                 config=config,
+                log_user_id=user_id,
             )
         except Exception as exc:
             logger.exception("hh_ui apply failed", error=str(exc))
             result = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
+
+        logger.info(
+            "hh_ui_apply_finished",
+            task_id=getattr(self.request, "id", None),
+            user_id=user_id,
+            vacancy_id=autoparsed_vacancy_id,
+            outcome=result.outcome.value,
+            detail=(result.detail or "")[:200] if result.detail else None,
+        )
 
         status, err_code = _map_outcome_to_status(result.outcome)
         excerpt = (result.detail or "")[:2000]
@@ -127,6 +159,13 @@ async def _apply_ui_async(
                 response_excerpt=excerpt or None,
             )
             await session.commit()
+            logger.info(
+                "hh_ui_apply_attempt_recorded",
+                task_id=getattr(self.request, "id", None),
+                user_id=user_id,
+                vacancy_id=autoparsed_vacancy_id,
+                status=status,
+            )
 
         i18n = I18nContext(locale)
 

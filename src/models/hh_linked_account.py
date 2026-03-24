@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, LargeBinary, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base
@@ -28,6 +29,10 @@ class HhLinkedAccount(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(default=None)
     browser_storage_enc: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     browser_storage_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, default=None
+    )
+    resume_list_cache: Mapped[list | None] = mapped_column(JSONB, default=None)
+    resume_list_cached_at: Mapped[datetime | None] = mapped_column(
         DateTime, default=None
     )
 

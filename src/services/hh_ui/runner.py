@@ -6,16 +6,35 @@ import random
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from playwright.sync_api import Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from src.core.logging import get_logger
 from src.services.hh_ui import selectors as sel
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 
+logger = get_logger(__name__)
+
 _RESUME_ID_RE = re.compile(r"/resume/([^/?#]+)")
+
+
+def _safe_url_host_path(url: str | None) -> str | None:
+    if not url or not isinstance(url, str):
+        return None
+    u = url.strip()
+    if not u.startswith("https://"):
+        return None
+    try:
+        p = urlparse(u)
+        if not p.netloc:
+            return None
+        return f"{p.scheme}://{p.netloc}{p.path}"
+    except Exception:
+        return None
 
 
 def _jitter(cfg: HhUiApplyConfig) -> None:
@@ -180,8 +199,15 @@ def list_resumes_ui(
     storage_state: dict[str, Any],
     config: HhUiApplyConfig,
     vacancy_url: str | None = None,
+    log_user_id: int | None = None,
 ) -> ListResumesResult:
     """Load resume list for Telegram pick: prefer Magritte modal on vacancy page, else /applicant/resumes."""
+    safe_vacancy = _safe_url_host_path(vacancy_url) if vacancy_url else None
+    logger.info(
+        "list_resumes_ui_start",
+        log_user_id=log_user_id,
+        vacancy_url_safe=safe_vacancy,
+    )
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=config.headless)
         try:
@@ -198,12 +224,28 @@ def list_resumes_ui(
                     )
                     _jitter(config)
                     if _detect_login(page):
+                        logger.info(
+                            "list_resumes_ui_done",
+                            log_user_id=log_user_id,
+                            branch="modal",
+                            resume_count=0,
+                            outcome=ApplyOutcome.SESSION_EXPIRED.value,
+                            detail="login_form",
+                        )
                         return ListResumesResult(
                             resumes=[],
                             outcome=ApplyOutcome.SESSION_EXPIRED,
                             detail="login_form",
                         )
                     if _detect_captcha(page):
+                        logger.info(
+                            "list_resumes_ui_done",
+                            log_user_id=log_user_id,
+                            branch="modal",
+                            resume_count=0,
+                            outcome=ApplyOutcome.CAPTCHA.value,
+                            detail="captcha",
+                        )
                         return ListResumesResult(
                             resumes=[],
                             outcome=ApplyOutcome.CAPTCHA,
@@ -220,6 +262,14 @@ def list_resumes_ui(
                         modal_resumes = _collect_resumes_from_modal(page)
                         _close_response_modal(page)
                         if modal_resumes:
+                            logger.info(
+                                "list_resumes_ui_done",
+                                log_user_id=log_user_id,
+                                branch="modal",
+                                resume_count=len(modal_resumes),
+                                outcome=ApplyOutcome.SUCCESS.value,
+                                detail=None,
+                            )
                             return ListResumesResult(
                                 resumes=modal_resumes,
                                 outcome=ApplyOutcome.SUCCESS,
@@ -227,6 +277,11 @@ def list_resumes_ui(
                 except Exception:
                     pass
 
+            logger.info(
+                "list_resumes_ui_branch",
+                log_user_id=log_user_id,
+                branch="applicant_fallback",
+            )
             page.goto(
                 sel.APPLICANT_RESUMES_URL,
                 wait_until="domcontentloaded",
@@ -234,18 +289,43 @@ def list_resumes_ui(
             )
             _jitter(config)
             if _detect_login(page):
+                logger.info(
+                    "list_resumes_ui_done",
+                    log_user_id=log_user_id,
+                    branch="applicant_fallback",
+                    resume_count=0,
+                    outcome=ApplyOutcome.SESSION_EXPIRED.value,
+                    detail="login_form",
+                )
                 return ListResumesResult(
                     resumes=[],
                     outcome=ApplyOutcome.SESSION_EXPIRED,
                     detail="login_form",
                 )
             if _detect_captcha(page):
+                logger.info(
+                    "list_resumes_ui_done",
+                    log_user_id=log_user_id,
+                    branch="applicant_fallback",
+                    resume_count=0,
+                    outcome=ApplyOutcome.CAPTCHA.value,
+                    detail="captcha",
+                )
                 return ListResumesResult(
                     resumes=[],
                     outcome=ApplyOutcome.CAPTCHA,
                     detail="captcha",
                 )
-            return _list_resumes_from_applicant_page(page)
+            result = _list_resumes_from_applicant_page(page)
+            logger.info(
+                "list_resumes_ui_done",
+                log_user_id=log_user_id,
+                branch="applicant_fallback",
+                resume_count=len(result.resumes),
+                outcome=result.outcome.value,
+                detail=result.detail,
+            )
+            return result
         finally:
             browser.close()
 
@@ -256,9 +336,21 @@ def apply_to_vacancy_ui(
     vacancy_url: str,
     resume_hh_id: str,
     config: HhUiApplyConfig,
+    log_user_id: int | None = None,
 ) -> ApplyResult:
     """Open vacancy page and submit respond via UI."""
+    safe_v = _safe_url_host_path(vacancy_url)
+    resume_ref = resume_hh_id[:12] if resume_hh_id else None
     if not vacancy_url.startswith("https://"):
+        logger.info(
+            "apply_to_vacancy_ui_done",
+            log_user_id=log_user_id,
+            step="validate_url",
+            vacancy_url_safe=safe_v,
+            resume_ref=resume_ref,
+            outcome=ApplyOutcome.ERROR.value,
+            detail="invalid_vacancy_url",
+        )
         return ApplyResult(
             outcome=ApplyOutcome.ERROR,
             detail="invalid_vacancy_url",
@@ -275,14 +367,37 @@ def apply_to_vacancy_ui(
                 timeout=config.navigation_timeout_ms,
             )
             _jitter(config)
+            logger.info(
+                "apply_to_vacancy_ui_step",
+                log_user_id=log_user_id,
+                step="after_goto",
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+            )
 
             if _detect_login(page):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.SESSION_EXPIRED.value,
+                    detail="login_form",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.SESSION_EXPIRED,
                     detail="login_form",
                 )
             if _detect_captcha(page):
                 shot = _maybe_screenshot(page, config)
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.CAPTCHA.value,
+                    detail="captcha",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.CAPTCHA,
                     detail="captcha",
@@ -290,6 +405,14 @@ def apply_to_vacancy_ui(
                 )
 
             if _detect_already_applied(page):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.ALREADY_RESPONDED.value,
+                    detail=None,
+                )
                 return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
 
             if not _click_first(
@@ -298,6 +421,14 @@ def apply_to_vacancy_ui(
                 min(2000, config.action_timeout_ms),
             ):
                 shot = _maybe_screenshot(page, config)
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.NO_APPLY_BUTTON.value,
+                    detail="no_apply_button",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.NO_APPLY_BUTTON,
                     detail="no_apply_button",
@@ -306,11 +437,34 @@ def apply_to_vacancy_ui(
 
             _jitter(config)
             page.wait_for_timeout(500)
+            logger.info(
+                "apply_to_vacancy_ui_step",
+                log_user_id=log_user_id,
+                step="after_respond_click",
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+            )
 
             if _detect_already_applied(page):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.ALREADY_RESPONDED.value,
+                    detail=None,
+                )
                 return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
 
             if _detect_employer_questions(page):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.EMPLOYER_QUESTIONS.value,
+                    detail="employer_questions",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
                     detail="employer_questions",
@@ -318,6 +472,14 @@ def apply_to_vacancy_ui(
 
             if _detect_captcha(page):
                 shot = _maybe_screenshot(page, config)
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.CAPTCHA.value,
+                    detail="captcha_after_click",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.CAPTCHA,
                     detail="captcha_after_click",
@@ -331,12 +493,22 @@ def apply_to_vacancy_ui(
                 modal_visible = True
             except PlaywrightTimeoutError:
                 pass
+            logger.info(
+                "apply_to_vacancy_ui_step",
+                log_user_id=log_user_id,
+                step="response_modal",
+                modal_visible=modal_visible,
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+            )
+            select_mode = "none"
             if modal_visible:
                 try:
                     radio = page.locator(f'input[name="resumeId"][value="{resume_hh_id}"]').first
                     radio.wait_for(state="visible", timeout=config.action_timeout_ms)
                     radio.check()
                     selected = True
+                    select_mode = "radio"
                 except Exception:
                     try:
                         lbl = page.locator(
@@ -345,6 +517,7 @@ def apply_to_vacancy_ui(
                         lbl.wait_for(state="visible", timeout=config.action_timeout_ms)
                         lbl.click()
                         selected = True
+                        select_mode = "label"
                     except Exception:
                         pass
 
@@ -355,6 +528,7 @@ def apply_to_vacancy_ui(
                         loc.wait_for(state="visible", timeout=config.action_timeout_ms)
                         loc.select_option(value=resume_hh_id)
                         selected = True
+                        select_mode = "select"
                         break
                     except Exception:
                         continue
@@ -365,21 +539,40 @@ def apply_to_vacancy_ui(
                     alt.wait_for(state="visible", timeout=config.action_timeout_ms)
                     alt.click()
                     selected = True
+                    select_mode = "link"
                 except Exception:
                     pass
 
             if not selected:
                 shot = _maybe_screenshot(page, config)
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.ERROR.value,
+                    detail="resume_not_selectable",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.ERROR,
                     detail="resume_not_selectable",
                     screenshot_bytes=shot,
                 )
 
+            logger.info(
+                "apply_to_vacancy_ui_step",
+                log_user_id=log_user_id,
+                step="resume_selected",
+                select_mode=select_mode,
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+            )
+
             _jitter(config)
 
             modal_root = page.locator(sel.RESPONSE_MODAL_CONTENT).first
             submitted = False
+            submit_where = "none"
             try:
                 if modal_root.is_visible():
                     submitted = _click_first_in_root(
@@ -387,6 +580,8 @@ def apply_to_vacancy_ui(
                         sel.RESUME_SUBMIT,
                         config.action_timeout_ms,
                     )
+                    if submitted:
+                        submit_where = "modal"
             except Exception:
                 pass
             if not submitted:
@@ -395,36 +590,96 @@ def apply_to_vacancy_ui(
                     sel.RESUME_SUBMIT,
                     config.action_timeout_ms,
                 )
+                if submitted:
+                    submit_where = "page"
             if not submitted:
                 shot = _maybe_screenshot(page, config)
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.ERROR.value,
+                    detail="submit_not_found",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.ERROR,
                     detail="submit_not_found",
                     screenshot_bytes=shot,
                 )
 
+            logger.info(
+                "apply_to_vacancy_ui_step",
+                log_user_id=log_user_id,
+                step="after_submit",
+                submit_where=submit_where,
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+            )
+
             _jitter(config)
             page.wait_for_timeout(500)
 
             if _detect_already_applied(page):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.ALREADY_RESPONDED.value,
+                    detail=None,
+                )
                 return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
 
             if _detect_employer_questions(page):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.EMPLOYER_QUESTIONS.value,
+                    detail="employer_questions_after_submit",
+                )
                 return ApplyResult(
                     outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
                     detail="employer_questions_after_submit",
                 )
 
+            logger.info(
+                "apply_to_vacancy_ui_done",
+                log_user_id=log_user_id,
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+                outcome=ApplyOutcome.SUCCESS.value,
+                detail=None,
+            )
             return ApplyResult(outcome=ApplyOutcome.SUCCESS)
         except PlaywrightTimeoutError as exc:
+            logger.info(
+                "apply_to_vacancy_ui_done",
+                log_user_id=log_user_id,
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+                outcome=ApplyOutcome.ERROR.value,
+                detail=f"timeout:{exc}"[:200],
+            )
             return ApplyResult(
                 outcome=ApplyOutcome.ERROR,
                 detail=f"timeout:{exc}",
             )
         except Exception as exc:
+            d = str(exc)[:500]
+            logger.info(
+                "apply_to_vacancy_ui_done",
+                log_user_id=log_user_id,
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+                outcome=ApplyOutcome.ERROR.value,
+                detail=d[:200],
+            )
             return ApplyResult(
                 outcome=ApplyOutcome.ERROR,
-                detail=str(exc)[:500],
+                detail=d,
             )
         finally:
             browser.close()

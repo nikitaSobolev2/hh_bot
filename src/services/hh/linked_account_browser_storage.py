@@ -37,7 +37,7 @@ async def persist_browser_storage_state_for_user(
     repo = HhLinkedAccountRepository(db_session)
     existing = await repo.get_by_user_and_hh_user_id(user_id, hh_uid)
     if existing:
-        await repo.update(
+        acc = await repo.update(
             existing,
             browser_storage_enc=enc_storage,
             browser_storage_updated_at=now,
@@ -46,7 +46,7 @@ async def persist_browser_storage_state_for_user(
         )
     else:
         ph_access, ph_refresh = placeholder_token_ciphertexts(cipher)
-        await repo.create(
+        acc = await repo.create(
             user_id=user_id,
             hh_user_id=hh_uid,
             label=None,
@@ -58,3 +58,4 @@ async def persist_browser_storage_state_for_user(
             browser_storage_enc=enc_storage,
             browser_storage_updated_at=now,
         )
+    await repo.clear_resume_list_cache(acc)
