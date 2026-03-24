@@ -153,7 +153,11 @@ async def _run_autorespond_async(
     from src.core.i18n import get_text
     from src.repositories.autoparse import AutoparseCompanyRepository
     from src.repositories.user import UserRepository
-    from src.services.autorespond_progress import clear_autorespond_done_counter, tick_autorespond_bar
+    from src.services.autorespond_progress import (
+        clear_autorespond_done_counter,
+        is_autorespond_cancelled_sync,
+        tick_autorespond_bar,
+    )
     from src.services.progress_service import ProgressService, create_progress_redis
     from src.worker.tasks.cover_letter import (
         generate_cover_letter_plaintext_for_autoparsed_vacancy,
@@ -316,6 +320,25 @@ async def _run_autorespond_async(
 
         try:
             for idx, vac in enumerate(capped, start=1):
+                if task_key and user.telegram_id and is_autorespond_cancelled_sync(
+                    user.telegram_id, task_key
+                ):
+                    logger.info(
+                        "autorespond_loop_cancelled",
+                        company_id=company_id,
+                        user_id=user.id,
+                        task_key=task_key,
+                        trigger=trigger,
+                        queued=queued,
+                    )
+                    return {
+                        "status": "cancelled",
+                        "queued": queued,
+                        "skipped": skipped,
+                        "failed": failed,
+                        "trigger": trigger,
+                    }
+
                 if vac.hh_vacancy_id in already_success:
                     skipped += 1
                     if ar_prog and progress_bot:

@@ -87,6 +87,24 @@ async def _apply_ui_async(
     )
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+    from src.services.autorespond_progress import is_autorespond_cancelled_sync
+
+    if (
+        autorespond_progress
+        and autorespond_progress.get("task_key")
+        and is_autorespond_cancelled_sync(int(chat_id), str(autorespond_progress["task_key"]))
+    ):
+        logger.info(
+            "hh_ui_apply_skipped_autorespond_cancelled",
+            user_id=user_id,
+            autoparsed_vacancy_id=autoparsed_vacancy_id,
+            task_key=autorespond_progress.get("task_key"),
+        )
+        return {
+            "status": "cancelled",
+            "vacancy_id": autoparsed_vacancy_id,
+            "reason": "autorespond_cancelled",
+        }
 
     bot = self.create_bot()
     try:

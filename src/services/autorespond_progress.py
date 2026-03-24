@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import redis as sync_redis
+
+from src.config import settings
 from src.services.progress_service import ProgressService, create_progress_redis
 
 _DONE_TTL_S = 4 * 3600
@@ -11,6 +14,29 @@ _DONE_TTL_S = 4 * 3600
 
 def autorespond_done_redis_key(chat_id: int, task_key: str) -> str:
     return f"progress:autorespond_done:{chat_id}:{task_key}"
+
+
+def autorespond_cancel_redis_key(chat_id: int, task_key: str) -> str:
+    return f"progress:autorespond_cancel:{chat_id}:{task_key}"
+
+
+def is_autorespond_cancelled_sync(chat_id: int, task_key: str) -> bool:
+    """Set by the progress Cancel button; checked by Celery child tasks (sync Redis)."""
+    key = autorespond_cancel_redis_key(chat_id, task_key)
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        return bool(r.get(key))
+    finally:
+        r.close()
+
+
+async def set_autorespond_cancelled(chat_id: int, task_key: str) -> None:
+    """Mark autorespond run as cancelled (child tasks exit without applying)."""
+    redis = create_progress_redis()
+    try:
+        await redis.set(autorespond_cancel_redis_key(chat_id, task_key), "1", ex=_DONE_TTL_S)
+    finally:
+        await redis.aclose()
 
 
 async def clear_autorespond_done_counter(chat_id: int, task_key: str) -> None:

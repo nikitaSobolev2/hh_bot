@@ -6,6 +6,10 @@ from aiogram.types import CallbackQuery
 from src.core.celery_async import run_sync_in_thread
 from src.core.i18n import I18nContext
 from src.models.user import User
+from src.services.autorespond_progress import (
+    clear_autorespond_done_counter,
+    set_autorespond_cancelled,
+)
 from src.services.progress_service import ProgressService, create_progress_redis
 from src.worker.app import celery_app
 
@@ -66,6 +70,10 @@ async def handle_progress_cancel(
                 show_alert=True,
             )
             return
+
+        # Stop chained autorespond work (cover_letter / hh_ui tasks) — parent may already be done.
+        await set_autorespond_cancelled(chat_id, task_key)
+        await clear_autorespond_done_counter(chat_id, task_key)
 
         await run_sync_in_thread(
             celery_app.control.revoke,

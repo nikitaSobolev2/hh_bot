@@ -341,6 +341,20 @@ async def _generate_cover_letter_async(
     if not cb.is_call_allowed():
         return {"status": "circuit_open"}
 
+    if apply_after:
+        ap = apply_after.get("autorespond_progress")
+        if ap:
+            from src.services.autorespond_progress import is_autorespond_cancelled_sync
+
+            if is_autorespond_cancelled_sync(int(apply_after["chat_id"]), str(ap["task_key"])):
+                logger.info(
+                    "cover_letter_skipped_autorespond_cancelled",
+                    user_id=user_id,
+                    vacancy_id=vacancy_id,
+                    task_key=ap.get("task_key"),
+                )
+                return {"status": "cancelled", "vacancy_id": vacancy_id, "locale": locale}
+
     source = source or "autoparse"
     if apply_after:
         resume_for_key = str(apply_after.get("resume_id") or "")
