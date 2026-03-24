@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # Admin — comma-separated Telegram user IDs for initial admin seeding
     admin_telegram_ids: str = ""
 
+    # DB-synced via admin (see sync_setting_to_runtime); default when unset in DB
+    task_autorespond_enabled: bool = False
+
     # HeadHunter OAuth (https://api.hh.ru/openapi/redoc)
     hh_client_id: str = ""
     hh_client_secret: str = ""

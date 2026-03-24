@@ -141,6 +141,20 @@ class ProgressService:
         )
         await self._refresh_message(force=False)
 
+    async def update_footer(self, task_key: str, lines: list[str]) -> None:
+        """Update optional footer lines shown under the task title (e.g. failure counts)."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["footer_lines"] = lines
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
     async def mark_retrying(self, task_key: str) -> None:
         """Mark task as retrying after an error. Shows retry message in the UI."""
         raw = await self._redis.get(self._task_key(task_key))
@@ -167,15 +181,18 @@ class ProgressService:
         self,
         task_key: str,
         shortage_note: str | None = None,
+        *,
+        complete_bars: bool = True,
     ) -> None:
         """Mark task complete; send summary and clean up when all tasks are done."""
         raw = await self._redis.get(self._task_key(task_key))
         if raw:
             state = json.loads(raw)
             state["status"] = "completed"
-            for bar in state["bars"]:
-                if bar["total"] > 0:
-                    bar["current"] = bar["total"]
+            if complete_bars:
+                for bar in state["bars"]:
+                    if bar["total"] > 0:
+                        bar["current"] = bar["total"]
             if shortage_note:
                 state["note"] = shortage_note
             await self._redis.set(
@@ -414,6 +431,8 @@ class ProgressService:
         lines = [f"<b>📋</b> {task_number}. {title}{done_mark}"]
         if is_retrying:
             lines.append(get_text("progress-retrying", self._locale))
+        if state.get("footer_lines"):
+            lines.extend(state["footer_lines"])
         if is_done and state.get("note"):
             lines.append(state["note"])
         for bar in state["bars"]:

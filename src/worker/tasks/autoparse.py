@@ -417,6 +417,7 @@ async def _run_autoparse_company_async(
                 to_analyze.append((vac, compat_input))
 
         new_count = 0
+        new_autorespond_vacancy_ids: list[int] = []
         for batch_start in range(0, len(to_analyze), _ANALYSIS_BATCH_SIZE):
             batch = to_analyze[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
             vac_dicts = [item[0] for item in batch]
@@ -435,6 +436,7 @@ async def _run_autoparse_company_async(
 
                 employer_repo = HHEmployerRepository(session)
                 area_repo = HHAreaRepository(session)
+                inserted: list = []
                 for vac_dict, compat_input in zip(vac_dicts, compat_inputs, strict=True):
                     analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
                     compat_score = analysis.compatibility_score if analysis else None
@@ -453,18 +455,21 @@ async def _run_autoparse_company_async(
                             area = await area_repo.get_or_create_by_hh_id(area_data)
                             area_id = area.id
 
-                    session.add(
-                        _build_autoparsed_vacancy(
-                            vac_dict,
-                            company_id,
-                            compat_score,
-                            ai_summary,
-                            ai_stack,
-                            employer_id=employer_id,
-                            area_id=area_id,
-                        )
+                    row = _build_autoparsed_vacancy(
+                        vac_dict,
+                        company_id,
+                        compat_score,
+                        ai_summary,
+                        ai_stack,
+                        employer_id=employer_id,
+                        area_id=area_id,
                     )
+                    session.add(row)
+                    inserted.append(row)
                 await session.commit()
+                new_autorespond_vacancy_ids.extend(
+                    int(r.id) for r in inserted if getattr(r, "id", None) is not None
+                )
 
             new_count += len(batch)
             if ai_client:
@@ -495,6 +500,31 @@ async def _run_autoparse_company_async(
 
         if new_count > 0 and user:
             deliver_autoparse_results.delay(company_id, user.id)
+
+        if (
+            notify_user_id is None
+            and new_count > 0
+            and user
+        ):
+            async with session_factory() as ar_session:
+                ar_settings = AppSettingRepository(ar_session)
+                if await ar_settings.get_value("task_autorespond_enabled", default=False):
+                    ar_company_repo = AutoparseCompanyRepository(ar_session)
+                    ar_co = await ar_company_repo.get_by_id(company_id)
+                    if (
+                        ar_co
+                        and ar_co.autorespond_enabled
+                        and ar_co.autorespond_resume_id
+                        and ar_co.autorespond_hh_linked_account_id
+                        and new_autorespond_vacancy_ids
+                    ):
+                        from src.worker.tasks.autorespond import run_autorespond_company
+
+                        run_autorespond_company.delay(
+                            company_id,
+                            vacancy_ids=new_autorespond_vacancy_ids,
+                            trigger="scheduled",
+                        )
 
         if notify_user_id is not None and user:
             await _send_run_completed_notification(

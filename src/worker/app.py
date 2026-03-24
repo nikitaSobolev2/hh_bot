@@ -22,6 +22,7 @@ celery_app = Celery(
         "src.worker.tasks.cover_letter",
         "src.worker.tasks.hh_ui_apply",
         "src.worker.tasks.hh_login_assist",
+        "src.worker.tasks.autorespond",
     ],
 )
 

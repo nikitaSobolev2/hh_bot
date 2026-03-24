@@ -132,6 +132,8 @@ def format_company_detail(
     company: AutoparseCompany,
     vacancies_count: int,
     i18n: I18nContext,
+    *,
+    autorespond_global: bool = False,
 ) -> str:
     status = (
         i18n.get("autoparse-status-enabled")
@@ -154,6 +156,29 @@ def format_company_detail(
         f"  {i18n.get('autoparse-detail-vacancies')}: {vacancies_count}",
         f"  {i18n.get('autoparse-detail-last-run')}: {last_run}",
     ]
+    if autorespond_global:
+        ar_on = i18n.get("yes") if company.autorespond_enabled else i18n.get("no")
+        mode_key = (
+            "autorespond-mode-title-only"
+            if company.autorespond_keyword_mode == "title_only"
+            else "autorespond-mode-title-keywords"
+        )
+        lim = company.autorespond_max_per_run
+        lim_s = i18n.get("autorespond-limit-all") if lim < 0 else str(lim)
+        resume_s = "—"
+        if company.autorespond_resume_id:
+            resume_s = f"{company.autorespond_resume_id[:8]}…"
+        lines.extend(
+            [
+                "",
+                f"<b>{i18n.get('autorespond-section-title')}</b>",
+                f"{i18n.get('autorespond-detail-enabled')}: {ar_on}",
+                f"{i18n.get('autorespond-detail-threshold')}: {company.autorespond_min_compat}%",
+                f"{i18n.get('autorespond-detail-mode')}: {i18n.get(mode_key)}",
+                f"{i18n.get('autorespond-detail-limit')}: {lim_s}",
+                f"{i18n.get('autorespond-detail-resume')}: {resume_s}",
+            ]
+        )
     return "\n".join(lines)
 
 

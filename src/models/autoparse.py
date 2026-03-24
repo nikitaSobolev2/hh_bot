@@ -30,6 +30,17 @@ class AutoparseCompany(Base):
     total_vacancies_found: Mapped[int] = mapped_column(Integer, default=0)
     include_reacted_in_feed: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    autorespond_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    autorespond_min_compat: Mapped[int] = mapped_column(Integer, default=50)
+    autorespond_keyword_mode: Mapped[str] = mapped_column(
+        String(32), default="title_and_keywords"
+    )
+    autorespond_max_per_run: Mapped[int] = mapped_column(Integer, default=20)
+    autorespond_resume_id: Mapped[str | None] = mapped_column(String(80), default=None)
+    autorespond_hh_linked_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hh_linked_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+
     user: Mapped[User] = relationship(back_populates="autoparse_companies")
     vacancies: Mapped[list[AutoparsedVacancy]] = relationship(
         back_populates="autoparse_company",

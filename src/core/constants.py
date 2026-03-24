@@ -127,6 +127,7 @@ class TaskName(StrEnum):
 class AppSettingKey(StrEnum):
     TASK_PARSING_ENABLED = "task_parsing_enabled"
     TASK_AUTOPARSE_ENABLED = "task_autoparse_enabled"
+    TASK_AUTORESPOND_ENABLED = "task_autorespond_enabled"
     TASK_KEYPHRASE_ENABLED = "task_keyphrase_enabled"
     TASK_INTERVIEW_ANALYSIS_ENABLED = "task_interview_analysis_enabled"
     TASK_IMPROVEMENT_FLOW_ENABLED = "task_improvement_flow_enabled"

@@ -5,6 +5,7 @@ class AutoparseCallback(CallbackData, prefix="ap"):
     action: str
     company_id: int = 0
     page: int = 0
+    aux_id: int = 0
 
 
 class AutoparseDownloadCallback(CallbackData, prefix="apd"):

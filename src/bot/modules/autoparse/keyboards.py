@@ -250,6 +250,7 @@ def autoparse_detail_keyboard(
     i18n: I18nContext,
     show_run_now: bool = False,
     show_show_now: bool = False,
+    show_autorespond: bool = False,
 ) -> InlineKeyboardMarkup:
     toggle_text = (
         i18n.get("autoparse-toggle-disabled")
@@ -304,6 +305,27 @@ def autoparse_detail_keyboard(
                 )
             ]
         )
+    if show_autorespond:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autorespond-btn-settings"),
+                    callback_data=AutoparseCallback(
+                        action="ar_menu", company_id=company.id
+                    ).pack(),
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autorespond-btn-run"),
+                    callback_data=AutoparseCallback(
+                        action="ar_run", company_id=company.id
+                    ).pack(),
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(
@@ -313,6 +335,88 @@ def autoparse_detail_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def autorespond_settings_keyboard(
+    company: AutoparseCompany,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    toggle_lbl = (
+        i18n.get("autorespond-disable")
+        if company.autorespond_enabled
+        else i18n.get("autorespond-enable")
+    )
+    mode_lbl = (
+        i18n.get("autorespond-mode-switch-keywords")
+        if company.autorespond_keyword_mode == "title_only"
+        else i18n.get("autorespond-mode-switch-title")
+    )
+    limits = [(10, 10), (20, 20), (30, 30), (50, 50), (-1, 9999)]
+    lim_row = []
+    for lim_val, pack_page in limits:
+        label = i18n.get("autorespond-limit-all") if lim_val < 0 else str(lim_val)
+        mark = "✓ " if company.autorespond_max_per_run == lim_val else ""
+        lim_row.append(
+            InlineKeyboardButton(
+                text=f"{mark}{label}",
+                callback_data=AutoparseCallback(
+                    action="ar_limit",
+                    company_id=company.id,
+                    page=pack_page,
+                ).pack(),
+            )
+        )
+    thr_row = []
+    for thr in (40, 50, 60, 70, 80):
+        mark = "✓ " if company.autorespond_min_compat == thr else ""
+        thr_row.append(
+            InlineKeyboardButton(
+                text=f"{mark}{thr}%",
+                callback_data=AutoparseCallback(
+                    action="ar_thr",
+                    company_id=company.id,
+                    page=thr,
+                ).pack(),
+            )
+        )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=toggle_lbl,
+                    callback_data=AutoparseCallback(
+                        action="ar_toggle", company_id=company.id
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=mode_lbl,
+                    callback_data=AutoparseCallback(
+                        action="ar_mode", company_id=company.id
+                    ).pack(),
+                )
+            ],
+            lim_row,
+            thr_row,
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autorespond-pick-resume"),
+                    callback_data=AutoparseCallback(
+                        action="ar_resume", company_id=company.id
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AutoparseCallback(
+                        action="detail", company_id=company.id
+                    ).pack(),
+                )
+            ],
+        ]
+    )
 
 
 def download_format_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
