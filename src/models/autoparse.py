@@ -115,6 +115,7 @@ class AutoparsedVacancy(Base):
     published_at: Mapped[datetime | None] = mapped_column(nullable=True)
     work_format: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     professional_roles: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    needs_employer_questions: Mapped[bool] = mapped_column(Boolean, default=False)
 
     autoparse_company: Mapped[AutoparseCompany] = relationship(back_populates="vacancies")
     employer: Mapped[HHEmployer | None] = relationship(

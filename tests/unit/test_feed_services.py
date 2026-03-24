@@ -311,6 +311,15 @@ def test_format_ui_apply_result_line_success_and_error():
     err = format_ui_apply_result_line("Dev", success=False, detail="ui:error", locale="en")
     assert "Dev" in err
     assert "ui:error" in err
+    eq = format_ui_apply_result_line(
+        "Dev",
+        success=False,
+        detail="ui:employer_questions",
+        status="needs_employer_questions",
+        locale="en",
+    )
+    assert "Dev" in eq
+    assert "employer questions" in eq.lower()
 
 
 @pytest.mark.asyncio

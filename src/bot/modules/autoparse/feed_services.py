@@ -278,6 +278,9 @@ def build_vacancy_card(
         label = get_text("autoparse-compatibility-label", locale)
         lines.append(f"\n🎯 {label}: {vacancy.compatibility_score:.0f}%")
 
+    if getattr(vacancy, "needs_employer_questions", False):
+        lines.append(f"\n📝 {get_text('feed-card-employer-questions', locale)}")
+
     if mode == "description":
         if vacancy.description:
             header_length = len("\n".join(lines))
@@ -331,10 +334,13 @@ def format_ui_apply_result_line(
     *,
     success: bool,
     detail: str | None,
+    status: str | None = None,
     locale: str = "ru",
 ) -> str:
     safe_title = html.escape(title)
     if success:
         return get_text("feed-results-ui-apply-ok", locale, title=safe_title)
+    if status == "needs_employer_questions":
+        return get_text("feed-results-ui-apply-employer-questions", locale, title=safe_title)
     d = html.escape(detail or "")
     return get_text("feed-results-ui-apply-err", locale, title=safe_title, detail=d)

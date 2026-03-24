@@ -1765,6 +1765,7 @@ async def _show_results(
                     title,
                     success=ok,
                     detail=detail,
+                    status=a.status,
                     locale=i18n.locale,
                 )
             )

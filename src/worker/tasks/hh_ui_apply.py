@@ -16,6 +16,7 @@ from src.core.constants import AppSettingKey
 from src.core.i18n import I18nContext, get_text
 from src.core.logging import get_logger
 from src.repositories.app_settings import AppSettingRepository
+from src.repositories.autoparse import AutoparsedVacancyRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.hh.crypto import HhTokenCipher
@@ -54,6 +55,8 @@ def _coerce_debug_screenshots_flag(raw: object) -> bool:
 
 def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
     """Return (status, error_code) for hh_application_attempts."""
+    if outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+        return "needs_employer_questions", "ui:employer_questions"
     if outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
         return "success", None if outcome == ApplyOutcome.SUCCESS else f"ui:{outcome.value}"
     if outcome == ApplyOutcome.RATE_LIMITED:
@@ -220,6 +223,15 @@ async def _apply_ui_async(
                 error_code=err_code,
                 response_excerpt=excerpt or None,
             )
+            vac_repo = AutoparsedVacancyRepository(session)
+            if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+                v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
+                if v_up:
+                    await vac_repo.update(v_up, needs_employer_questions=True)
+            elif result.outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
+                v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
+                if v_up and v_up.needs_employer_questions:
+                    await vac_repo.update(v_up, needs_employer_questions=False)
             await session.commit()
             logger.info(
                 "hh_ui_apply_attempt_recorded",
@@ -229,7 +241,7 @@ async def _apply_ui_async(
                 status=status,
             )
 
-        if status != "success":
+        if status != "success" and status != "needs_employer_questions":
             async with session_factory() as s_unlike:
                 await feed_services.remove_liked_on_apply_failure(
                     s_unlike, feed_session_id, autoparsed_vacancy_id
@@ -237,6 +249,12 @@ async def _apply_ui_async(
             async with session_factory() as s_reload:
                 fr = VacancyFeedSessionRepository(s_reload)
                 feed_session = await fr.get_by_id(feed_session_id)
+
+        async with session_factory() as s_vac:
+            vac_repo = AutoparsedVacancyRepository(s_vac)
+            v_fresh = await vac_repo.get_by_id(autoparsed_vacancy_id)
+            if v_fresh:
+                vacancy = v_fresh
 
         if silent_feed:
             return {"status": status, "outcome": result.outcome.value}
@@ -260,6 +278,8 @@ async def _apply_ui_async(
             text = f"{text}\n\n{get_text('feed-respond-success', locale)}"
         elif result.outcome == ApplyOutcome.CAPTCHA:
             text = f"{text}\n\n{get_text('feed-respond-ui-captcha', locale)}"
+        elif result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+            text = f"{text}\n\n{get_text('feed-respond-employer-questions', locale)}"
         else:
             detail = err_code or result.outcome.value
             text = f"{text}\n\n{get_text('feed-respond-error', locale, detail=detail)}"
