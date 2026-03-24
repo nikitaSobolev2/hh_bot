@@ -11,7 +11,7 @@ from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
@@ -27,6 +27,7 @@ from src.services.hh.linked_account_browser_storage import persist_browser_stora
 from src.services.hh.oauth_state import generate_state, store_state
 from src.services.hh.oauth_tokens import build_authorize_url
 from src.services.hh_ui.browser_link import validate_playwright_storage_state
+from src.services.hh_ui.storage import decrypt_browser_storage
 
 router = Router(name="hh_accounts")
 
@@ -39,6 +40,11 @@ _VALIDATION_ERROR_I18N = {
 
 def _utc_naive_now():
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _safe_storage_export_filename(hh_user_id: str) -> str:
+    part = "".join(c if c.isalnum() or c in "-_" else "_" for c in (hh_user_id or "")[:48])
+    return f"hh_storage_{part or 'account'}.json"
 
 
 def _oauth_configured() -> bool:
@@ -282,6 +288,46 @@ async def hh_browser_import_document(
 @router.message(HhBrowserImportForm.waiting_json)
 async def hh_browser_import_reminder(message: Message, i18n: I18nContext) -> None:
     await message.answer(i18n.get("hh-accounts-browser-import-send-file"))
+
+
+@router.callback_query(HhAccountCallback.filter(F.action == "download_storage"))
+async def hh_download_browser_storage(
+    callback: CallbackQuery,
+    callback_data: HhAccountCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    if not settings.hh_token_encryption_key:
+        await callback.answer(i18n.get("hh-link-not-available"), show_alert=True)
+        return
+    repo = HhLinkedAccountRepository(session)
+    acc = await repo.get_by_id(callback_data.account_id)
+    if not acc or acc.user_id != user.id:
+        await callback.answer(i18n.get("hh-account-not-found"), show_alert=True)
+        return
+    if not acc.browser_storage_enc:
+        await callback.answer(i18n.get("hh-accounts-download-storage-none"), show_alert=True)
+        return
+    cipher = HhTokenCipher(settings.hh_token_encryption_key)
+    try:
+        state = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+    except ValueError:
+        await callback.answer(i18n.get("hh-accounts-download-storage-failed"), show_alert=True)
+        return
+    if not state:
+        await callback.answer(i18n.get("hh-accounts-download-storage-none"), show_alert=True)
+        return
+    payload = json.dumps(state, ensure_ascii=False, indent=2)
+    doc = BufferedInputFile(
+        payload.encode("utf-8"),
+        filename=_safe_storage_export_filename(acc.hh_user_id),
+    )
+    await callback.message.answer_document(
+        doc,
+        caption=i18n.get("hh-accounts-download-storage-caption"),
+    )
+    await callback.answer()
 
 
 @router.callback_query(HhAccountCallback.filter(F.action == "remove"))

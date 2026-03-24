@@ -40,6 +40,10 @@ hh-accounts-add-hint = Откройте ссылку, войдите на hh.ru 
 hh-accounts-open-browser = 🔗 Открыть hh.ru
 hh-accounts-open = 🔗 Подключить HeadHunter
 hh-accounts-remove = 🗑 Отвязать
+hh-accounts-download-storage = 📥 JSON
+hh-accounts-download-storage-caption = Playwright storage_state (куки сессии — не передавайте чужим).
+hh-accounts-download-storage-none = Для этого аккаунта нет сохранённой браузерной сессии.
+hh-accounts-download-storage-failed = Не удалось расшифровать экспорт. Проверьте HH_TOKEN_ENCRYPTION_KEY на сервере.
 hh-oauth-not-configured = OAuth HeadHunter не настроен на сервере.
 hh-link-not-available = Аккаунт hh.ru не подключён: OAuth не настроен на сервере или отключён импорт браузерной сессии (нужны HH_UI_APPLY_ENABLED=true и HH_TOKEN_ENCRYPTION_KEY).
 hh-accounts-browser-import-hint =

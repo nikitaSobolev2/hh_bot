@@ -39,7 +39,7 @@ def hh_account_row_keyboard(
     builder = InlineKeyboardBuilder()
     for acc in accounts:
         label = (acc.label or acc.hh_user_id)[:30]
-        builder.row(
+        row: list[InlineKeyboardButton] = [
             InlineKeyboardButton(
                 text=f"✏️ {label}",
                 callback_data=HhAccountCallback(action="rename", account_id=acc.id).pack(),
@@ -48,7 +48,17 @@ def hh_account_row_keyboard(
                 text=i18n.get("hh-accounts-remove"),
                 callback_data=HhAccountCallback(action="remove", account_id=acc.id).pack(),
             ),
-        )
+        ]
+        if acc.browser_storage_enc:
+            row.append(
+                InlineKeyboardButton(
+                    text=i18n.get("hh-accounts-download-storage"),
+                    callback_data=HhAccountCallback(
+                        action="download_storage", account_id=acc.id
+                    ).pack(),
+                )
+            )
+        builder.row(*row)
     builder.row(
         InlineKeyboardButton(
             text=i18n.get("hh-accounts-add"),
