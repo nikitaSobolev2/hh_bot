@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.services.parser.keyword_match import matches_keyword_expression
+
 if TYPE_CHECKING:
     from src.models.autoparse import AutoparsedVacancy
 
@@ -12,10 +14,6 @@ AUTORESPOND_KEYWORD_TITLE_ONLY = "title_only"
 AUTORESPOND_KEYWORD_TITLE_AND_KEYWORDS = "title_and_keywords"
 
 AUTORESPOND_MAX_VALID = frozenset({10, 20, 30, 50, -1})
-
-
-def _keyword_tokens(keyword_filter: str) -> list[str]:
-    return [t.lower() for t in keyword_filter.split() if t.strip()]
 
 
 def vacancy_passes_compatibility(
@@ -34,19 +32,16 @@ def vacancy_passes_keyword_mode(
     company_keyword_filter: str,
     mode: str,
 ) -> bool:
-    """Apply company keyword_filter tokens; empty filter passes all."""
-    tokens = _keyword_tokens(company_keyword_filter)
-    if not tokens:
+    """Apply company keyword_filter expression (same syntax as parsing); empty passes all."""
+    expr = (company_keyword_filter or "").strip()
+    if not expr:
         return True
-    title = (vacancy.title or "").lower()
-    desc = (vacancy.description or "").lower()
+    title = vacancy.title or ""
     if mode == AUTORESPOND_KEYWORD_TITLE_ONLY:
-        return all(t in title for t in tokens)
-    if mode == AUTORESPOND_KEYWORD_TITLE_AND_KEYWORDS:
-        combined = f"{title} {desc}"
-        return all(t in combined for t in tokens)
+        return matches_keyword_expression(title, expr)
+    desc = vacancy.description or ""
     combined = f"{title} {desc}"
-    return all(t in combined for t in tokens)
+    return matches_keyword_expression(combined, expr)
 
 
 def filter_vacancies_for_autorespond(

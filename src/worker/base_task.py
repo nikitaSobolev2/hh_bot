@@ -21,6 +21,7 @@ import contextlib
 
 import structlog
 from celery import Task
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -193,6 +194,7 @@ class HHBotTask(Task):
     ) -> None:
         """Persist the idempotency key with status='completed'."""
         from src.models.task import BaseCeleryTask, CoverLetterTask, InterviewQATask
+        from src.repositories.task import CeleryTaskRepository
 
         task_cls = (
             CoverLetterTask
@@ -201,18 +203,37 @@ class HHBotTask(Task):
             if task_type == "interview_qa"
             else BaseCeleryTask
         )
-        async with session_factory() as session:
-            session.add(
-                task_cls(
-                    celery_task_id=self.request.id,
-                    task_type=task_type,
-                    user_id=user_id,
-                    status="completed",
-                    idempotency_key=idempotency_key,
-                    result_data=result_data or {},
+
+        async def _apply_completed(session: AsyncSession) -> None:
+            repo = CeleryTaskRepository(session)
+            existing = await repo.get_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                existing.celery_task_id = self.request.id
+                existing.status = "completed"
+                existing.user_id = user_id
+                existing.result_data = result_data or {}
+                existing.error_message = None
+            else:
+                session.add(
+                    task_cls(
+                        celery_task_id=self.request.id,
+                        task_type=task_type,
+                        user_id=user_id,
+                        status="completed",
+                        idempotency_key=idempotency_key,
+                        result_data=result_data or {},
+                    )
                 )
-            )
-            await session.commit()
+
+        async with session_factory() as session:
+            await _apply_completed(session)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                async with session_factory() as session2:
+                    await _apply_completed(session2)
+                    await session2.commit()
 
     async def mark_failed(
         self,
@@ -224,6 +245,7 @@ class HHBotTask(Task):
     ) -> None:
         """Persist the idempotency key with status='failed'."""
         from src.models.task import BaseCeleryTask, CoverLetterTask, InterviewQATask
+        from src.repositories.task import CeleryTaskRepository
 
         task_cls = (
             CoverLetterTask
@@ -232,18 +254,37 @@ class HHBotTask(Task):
             if task_type == "interview_qa"
             else BaseCeleryTask
         )
-        async with session_factory() as session:
-            session.add(
-                task_cls(
-                    celery_task_id=self.request.id,
-                    task_type=task_type,
-                    user_id=user_id,
-                    status="failed",
-                    idempotency_key=idempotency_key,
-                    error_message=error,
+
+        async def _apply_failed(session: AsyncSession) -> None:
+            repo = CeleryTaskRepository(session)
+            existing = await repo.get_by_idempotency_key(idempotency_key)
+            if existing is not None:
+                existing.celery_task_id = self.request.id
+                existing.status = "failed"
+                existing.user_id = user_id
+                existing.error_message = error
+                existing.result_data = None
+            else:
+                session.add(
+                    task_cls(
+                        celery_task_id=self.request.id,
+                        task_type=task_type,
+                        user_id=user_id,
+                        status="failed",
+                        idempotency_key=idempotency_key,
+                        error_message=error,
+                    )
                 )
-            )
-            await session.commit()
+
+        async with session_factory() as session:
+            await _apply_failed(session)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                async with session_factory() as session2:
+                    await _apply_failed(session2)
+                    await session2.commit()
 
     # ------------------------------------------------------------------
     # Per-user task lock (prevents duplicate concurrent submissions)

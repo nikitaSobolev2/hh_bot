@@ -123,3 +123,34 @@ class TestMatchesKeywordExpression:
             "Коммерческий опыт backend-разработки на PHP",
             "backend",
         )
+
+    def test_space_separated_implies_and_without_operators(self):
+        """``python django`` normalizes to ``python,django`` when no ``,|!``."""
+        assert matches_keyword_expression("Senior Python Django", "python django")
+        assert not matches_keyword_expression("Senior Python only", "python django")
+
+    def test_not_excludes_token(self):
+        assert matches_keyword_expression("Laravel backend engineer", "laravel!frontend")
+        assert not matches_keyword_expression(
+            "Laravel and frontend stack",
+            "laravel!frontend",
+        )
+
+    def test_combined_or_and_not(self):
+        """``react|backend,laravel!frontend`` — (react OR backend) AND laravel AND NOT frontend."""
+        assert matches_keyword_expression(
+            "Senior Laravel backend developer",
+            "react|backend,laravel!frontend",
+        )
+        assert matches_keyword_expression(
+            "React Native Laravel engineer",
+            "react|backend,laravel!frontend",
+        )
+        assert not matches_keyword_expression(
+            "Senior Laravel frontend developer",
+            "react|backend,laravel!frontend",
+        )
+
+    def test_not_only_branch(self):
+        assert matches_keyword_expression("Java backend", "!vue")
+        assert not matches_keyword_expression("Vue.js developer", "!vue")
