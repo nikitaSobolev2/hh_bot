@@ -99,7 +99,14 @@ async def adjust_balance(
 
 async def get_setting_value(session: AsyncSession, key: str, locale: str = "ru") -> object:
     repo = AppSettingRepository(session)
-    return await repo.get_value(key, default=get_text("admin-not-set", locale))
+    val = await repo.get_value(key, default=None)
+    if val is not None:
+        return val
+    from src.config import settings
+
+    if hasattr(settings, key):
+        return getattr(settings, key)
+    return get_text("admin-not-set", locale)
 
 
 async def toggle_setting(session: AsyncSession, key: str, user_id: int) -> bool:

@@ -28,6 +28,23 @@ celery_app = Celery(
 
 connect_signals(celery_app)
 
+
+def _register_worker_managed_settings_loader() -> None:
+    """Forked Celery workers must load DB app_settings (same as the bot process)."""
+
+    from celery.signals import worker_process_init
+
+    @worker_process_init.connect
+    def _load_managed_settings_on_worker_start(**_kwargs: object) -> None:
+        import asyncio
+
+        from src.core.db_managed_settings import load_managed_settings_to_runtime
+
+        asyncio.run(load_managed_settings_to_runtime())
+
+
+_register_worker_managed_settings_loader()
+
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],

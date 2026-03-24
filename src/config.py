@@ -15,6 +15,8 @@ class Settings(BaseSettings):
         env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        # Managed in Admin → App settings (DB), not .env
+        env_ignore=("HH_UI_APPLY_MAX_PER_DAY",),
     )
 
     # Telegram
@@ -57,6 +59,7 @@ class Settings(BaseSettings):
 
     # HeadHunter UI apply (Playwright) — optional; off by default
     hh_ui_apply_enabled: bool = False
+    # Daily cap per user (UTC): set via Admin → App settings (also synced to workers on startup).
     hh_ui_apply_max_per_day: int = 50
     hh_ui_navigation_timeout_ms: int = 60000
     hh_ui_action_timeout_ms: int = 30000
@@ -125,6 +128,16 @@ def sync_setting_to_runtime(key: str, value: object) -> None:
     if isinstance(value, bool):
         setattr(settings, key, value)
         return
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        setattr(settings, key, int(value))
+        return
+    current = getattr(settings, key)
+    if isinstance(current, int) and isinstance(value, str) and value.strip() != "":
+        try:
+            setattr(settings, key, int(value.strip()))
+        except ValueError:
+            setattr(settings, key, value)
+        return
     setattr(settings, key, str(value) if not isinstance(value, str) else value)

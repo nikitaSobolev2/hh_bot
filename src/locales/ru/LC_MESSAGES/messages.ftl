@@ -490,6 +490,10 @@ admin-setting-edit =
 admin-setting-updated = <b>⚙️ { $label }</b> обновлено.
 admin-setting-unknown = Неизвестная настройка
 admin-setting-select-use-buttons = Используйте кнопки ниже для выбора значения.
+admin-hh-ui-unlimited = Без лимита
+admin-hh-ui-custom = Свое число…
+admin-hh-ui-max-custom-prompt = Введите целое число: <b>0</b> — без лимита откликов в сутки (UTC), или <b>1–100000</b> — свой лимит.
+admin-hh-ui-max-invalid = Неверное значение. Введите целое от 0 до 100000 (0 = без лимита).
 admin-autoparse-target-all = Все доступные
 admin-user-not-found-short = Пользователь не найден.
 admin-balance-description = Изменено администратором #{ $admin_id }

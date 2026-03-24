@@ -16,3 +16,15 @@ def test_sync_setting_to_runtime_preserves_bool_task_autorespond() -> None:
         assert isinstance(settings.task_autorespond_enabled, bool)
     finally:
         settings.task_autorespond_enabled = original
+
+
+def test_sync_setting_to_runtime_preserves_int_hh_ui_apply_max() -> None:
+    original = settings.hh_ui_apply_max_per_day
+    try:
+        sync_setting_to_runtime("hh_ui_apply_max_per_day", 42)
+        assert settings.hh_ui_apply_max_per_day == 42
+        assert isinstance(settings.hh_ui_apply_max_per_day, int)
+        sync_setting_to_runtime("hh_ui_apply_max_per_day", "99")
+        assert settings.hh_ui_apply_max_per_day == 99
+    finally:
+        settings.hh_ui_apply_max_per_day = original

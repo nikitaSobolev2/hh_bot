@@ -18,7 +18,10 @@ from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.services.hh.client import HhApiClient, HhApiError, apply_to_vacancy_with_resume
 from src.services.hh.token_service import ensure_access_token
-from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_sync
+from src.services.hh_ui.rate_limit import (
+    current_ui_apply_count_sync,
+    try_acquire_ui_apply_slot_sync,
+)
 from src.services.hh_ui.runner import normalize_hh_vacancy_url
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
@@ -334,6 +337,9 @@ async def _run_autorespond_async(
                             company_id=company_id,
                             user_id=user.id,
                             queued=queued,
+                            partial_batch=queued > 0,
+                            hh_ui_apply_count_today=current_ui_apply_count_sync(user.id),
+                            hh_ui_apply_max_per_day=int(settings.hh_ui_apply_max_per_day),
                         )
                         if task_key and user.telegram_id:
                             await clear_autorespond_done_counter(user.telegram_id, task_key)

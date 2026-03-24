@@ -32,10 +32,22 @@ MANAGED_SETTINGS = [
         "select",
         [(10, "10"), (30, "30"), (50, "50"), (5000, "admin-autoparse-target-all")],
     ),
+    (
+        "hh_ui_apply_max_per_day",
+        "HH UI: max applies per user per day (UTC)",
+        "select",
+        [
+            (10, "10"),
+            (20, "20"),
+            (50, "50"),
+            (0, "admin-hh-ui-unlimited"),
+        ],
+    ),
     ("hh_ui_debug_playwright_screenshots", "Debug Playwright Screenshots (save on errors)", "toggle"),
 ]
 
 AUTOPARSE_TARGET_VALID = {10, 30, 50, 5000}
+HH_UI_APPLY_MAX_PRESET_VALUES = {0, 10, 20, 50}
 
 
 def admin_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
@@ -199,6 +211,17 @@ def setting_detail_keyboard(
                         text=btn_text,
                         callback_data=AdminSettingCallback(
                             action="select_value", key=key, value=str(val)
+                        ).pack(),
+                    )
+                ]
+            )
+        if key == "hh_ui_apply_max_per_day":
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=i18n.get("admin-hh-ui-custom"),
+                        callback_data=AdminSettingCallback(
+                            action="custom_value", key=key
                         ).pack(),
                     )
                 ]

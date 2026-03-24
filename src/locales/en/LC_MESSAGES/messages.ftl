@@ -490,6 +490,10 @@ admin-setting-edit =
 admin-setting-updated = <b>⚙️ { $label }</b> updated.
 admin-setting-unknown = Unknown setting
 admin-setting-select-use-buttons = Use the buttons below to select a value.
+admin-hh-ui-unlimited = Unlimited
+admin-hh-ui-custom = Custom…
+admin-hh-ui-max-custom-prompt = Send an integer: <b>0</b> = unlimited applies per day (UTC), or <b>1–100000</b> for a custom cap.
+admin-hh-ui-max-invalid = Invalid value. Send an integer from 0 to 100000 (0 = unlimited).
 admin-autoparse-target-all = All available
 admin-user-not-found-short = User not found.
 admin-balance-description = Adjusted by admin #{ $admin_id }

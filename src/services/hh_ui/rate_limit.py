@@ -59,3 +59,21 @@ def try_acquire_ui_apply_slot_sync(user_id: int) -> bool:
         return True
     finally:
         r.close()
+
+
+def current_ui_apply_count_sync(user_id: int) -> int:
+    """How many UI apply slots were consumed today (Redis counter), without incrementing."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        raw = r.get(_key(user_id))
+        return int(raw) if raw is not None else 0
+    finally:
+        r.close()
+
+
+def remaining_ui_apply_slots_sync(user_id: int) -> int | None:
+    """Slots left for today under ``hh_ui_apply_max_per_day``; ``None`` if unlimited (limit <= 0)."""
+    limit = int(settings.hh_ui_apply_max_per_day)
+    if limit <= 0:
+        return None
+    return max(0, limit - current_ui_apply_count_sync(user_id))

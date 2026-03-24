@@ -9,6 +9,7 @@ from src.bot.modules.admin import services as admin_service
 from src.bot.modules.admin.callbacks import AdminCallback, AdminSettingCallback, AdminUserCallback
 from src.bot.modules.admin.keyboards import (
     AUTOPARSE_TARGET_VALID,
+    HH_UI_APPLY_MAX_PRESET_VALUES,
     admin_menu_keyboard,
     back_to_settings_keyboard,
     setting_detail_keyboard,
@@ -28,6 +29,16 @@ from src.models.user import User
 router = Router(name="admin")
 router.callback_query.filter(AdminFilter())
 router.message.filter(AdminFilter())
+
+
+def _format_admin_setting_display(key: str, current: object, i18n: I18nContext) -> str:
+    if key == "hh_ui_apply_max_per_day":
+        try:
+            n = int(current) if isinstance(current, (int, float)) else int(str(current).strip())
+        except (ValueError, TypeError):
+            n = 50
+        return i18n.get("admin-hh-ui-unlimited") if n == 0 else str(n)
+    return str(current)
 
 
 async def show_admin_panel(callback: CallbackQuery, i18n: I18nContext) -> None:
@@ -287,7 +298,10 @@ async def admin_setting_actions(
 
         key, label, stype, choices = meta[0], meta[1], meta[2], meta[3]
         current = await admin_service.get_setting_value(session, key, locale=locale)
-        display = admin_service.mask_if_sensitive(key, str(current))
+        if key == "hh_ui_apply_max_per_day":
+            display = _format_admin_setting_display(key, current, i18n)
+        else:
+            display = admin_service.mask_if_sensitive(key, str(current))
         await callback.message.edit_text(
             i18n.get("admin-setting-current", label=label, value=display),
             reply_markup=setting_detail_keyboard(key, stype, i18n, choices=choices),
@@ -295,30 +309,54 @@ async def admin_setting_actions(
 
     elif action == "select_value":
         key = callback_data.key
-        if key != "autoparse_target_count":
+        if key == "autoparse_target_count":
+            try:
+                val = int(callback_data.value)
+            except ValueError:
+                await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+                return
+            if val not in AUTOPARSE_TARGET_VALID:
+                await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+                return
+            await admin_service.update_setting(session, key, str(val), user.id)
+        elif key == "hh_ui_apply_max_per_day":
+            try:
+                val = int(callback_data.value)
+            except ValueError:
+                await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+                return
+            if val not in HH_UI_APPLY_MAX_PRESET_VALUES:
+                await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+                return
+            await admin_service.update_setting(session, key, str(val), user.id)
+        else:
             await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
             return
-        try:
-            val = int(callback_data.value)
-        except ValueError:
-            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
-            return
-        if val not in AUTOPARSE_TARGET_VALID:
-            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
-            return
-        await admin_service.update_setting(session, key, str(val), user.id)
         msg = i18n.get("admin-setting-set", value=callback_data.value)
         await callback.answer(msg, show_alert=True)
         meta = admin_service.find_setting_meta(key)
         if meta:
             current = await admin_service.get_setting_value(session, key, locale=locale)
-            display = str(current)
+            display = _format_admin_setting_display(key, current, i18n) if key == "hh_ui_apply_max_per_day" else str(current)
             await callback.message.edit_text(
                 i18n.get("admin-setting-current", label=meta[1], value=display),
                 reply_markup=setting_detail_keyboard(
                     meta[0], meta[2], i18n, choices=meta[3]
                 ),
             )
+        return
+
+    elif action == "custom_value":
+        if callback_data.key != "hh_ui_apply_max_per_day":
+            await callback.answer(i18n.get("admin-setting-unknown"), show_alert=True)
+            return
+        await state.update_data(setting_key=callback_data.key)
+        await state.set_state(AdminSettingForm.waiting_value)
+        await callback.message.edit_text(
+            i18n.get("admin-hh-ui-max-custom-prompt"),
+            reply_markup=back_to_settings_keyboard(i18n),
+        )
+        await callback.answer()
         return
 
     elif action == "toggle":
@@ -357,10 +395,28 @@ async def handle_setting_value(
     message: Message, user: User, state: FSMContext, session: AsyncSession, i18n: I18nContext
 ) -> None:
     data = await state.get_data()
-    await state.clear()
     key = data.get("setting_key", "")
+    raw = (message.text or "").strip()
 
-    await admin_service.update_setting(session, key, message.text.strip(), user.id)
+    if key == "hh_ui_apply_max_per_day":
+        try:
+            n = int(raw)
+        except ValueError:
+            await message.answer(
+                i18n.get("admin-hh-ui-max-invalid"),
+                reply_markup=back_to_settings_keyboard(i18n),
+            )
+            return
+        if n < 0 or n > 100_000:
+            await message.answer(
+                i18n.get("admin-hh-ui-max-invalid"),
+                reply_markup=back_to_settings_keyboard(i18n),
+            )
+            return
+        raw = str(n)
+
+    await state.clear()
+    await admin_service.update_setting(session, key, raw, user.id)
 
     meta = admin_service.find_setting_meta(key)
     label = meta[1] if meta else key

@@ -6,18 +6,9 @@ logger = get_logger(__name__)
 
 
 async def _load_db_settings() -> None:
-    from src.bot.modules.admin.keyboards import MANAGED_SETTINGS
-    from src.config import sync_setting_to_runtime
-    from src.db.engine import async_session_factory
-    from src.repositories.app_settings import AppSettingRepository
+    from src.core.db_managed_settings import load_managed_settings_to_runtime
 
-    async with async_session_factory() as session:
-        repo = AppSettingRepository(session)
-        for item in MANAGED_SETTINGS:
-            key = item[0]
-            val = await repo.get_value(key)
-            if val is not None:
-                sync_setting_to_runtime(key, val)
+    await load_managed_settings_to_runtime()
 
 
 async def main() -> None:
