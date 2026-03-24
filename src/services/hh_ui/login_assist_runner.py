@@ -21,6 +21,23 @@ class LoginAssistOutcome(str, Enum):
     ERROR = "error"
 
 
+def _login_assist_ready(page: Any, raw: dict[str, Any]) -> bool:
+    """True when cookies look logged-in *and* we are not still on the login screen.
+
+    hh.ru may set hhtoken / partial cookies before credentials are submitted; do not
+    treat that as success while the login form or /account/login URL is still active.
+    """
+    if _detect_login(page):
+        return False
+    if not is_logged_in_storage_state(raw):
+        return False
+    try:
+        validate_playwright_storage_state(raw)
+    except ValueError:
+        return False
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class HhLoginAssistRunnerConfig:
     login_url: str
@@ -73,23 +90,8 @@ def run_login_assist_sync(
                         time.sleep(config.poll_interval_seconds)
                         continue
 
-                    if is_logged_in_storage_state(raw):
-                        try:
-                            validate_playwright_storage_state(raw)
-                        except ValueError as exc:
-                            last_error = str(exc)
-                            time.sleep(config.poll_interval_seconds)
-                            continue
+                    if _login_assist_ready(page, raw):
                         return raw, LoginAssistOutcome.SUCCESS, None
-
-                    if not _detect_login(page):
-                        try:
-                            raw = context.storage_state()
-                            if is_logged_in_storage_state(raw):
-                                validate_playwright_storage_state(raw)
-                                return raw, LoginAssistOutcome.SUCCESS, None
-                        except ValueError:
-                            pass
 
                     time.sleep(config.poll_interval_seconds)
 
