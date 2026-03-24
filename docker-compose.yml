@@ -77,6 +77,11 @@ services:
     command: celery -A src.worker.app worker --loglevel=info --concurrency=2 -Q celery
     deploy:
       replicas: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # One Playwright/Chromium at a time per replica (raise CELERY_HH_UI_CONCURRENCY on larger hosts).
   celery_worker_hh_ui:
@@ -102,11 +107,6 @@ services:
       - --concurrency=${CELERY_HH_UI_CONCURRENCY:-1}
       - -Q
       - hh_ui
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
     logging:
       driver: json-file
       options:
