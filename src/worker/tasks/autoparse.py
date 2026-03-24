@@ -37,7 +37,14 @@ def _redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url)
 
 
-@celery_app.task(bind=True, base=HHBotTask, name="autoparse.dispatch_all", max_retries=1)
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="autoparse.dispatch_all",
+    max_retries=1,
+    soft_time_limit=120,
+    time_limit=180,
+)
 def dispatch_all_autoparse(self) -> dict:
     return run_async(lambda sf: _dispatch_all_async(sf))
 
@@ -721,7 +728,14 @@ async def _update_compat_unseen_async(
         await task.release_user_task_lock(user_id, "update_compat_unseen")
 
 
-@celery_app.task(bind=True, base=HHBotTask, name="autoparse.deliver_results", max_retries=3)
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="autoparse.deliver_results",
+    max_retries=3,
+    soft_time_limit=600,
+    time_limit=660,
+)
 def deliver_autoparse_results(self, company_id: int, user_id: int, force_now: bool = False) -> dict:
     return run_async(lambda sf: _deliver_results_async(sf, self, company_id, user_id, force_now))
 

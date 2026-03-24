@@ -13,7 +13,8 @@ from src.config import settings
 from src.core.logging import get_logger
 from src.models.autoparse import AutoparsedVacancy
 from src.repositories.app_settings import AppSettingRepository
-from src.repositories.autoparse import AutoparsedVacancyRepository
+from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
+from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.services.hh.client import HhApiClient, HhApiError, apply_to_vacancy_with_resume
 from src.services.hh.token_service import ensure_access_token
@@ -34,12 +35,7 @@ async def _load_candidates(
 ) -> list[AutoparsedVacancy]:
     repo = AutoparsedVacancyRepository(session)
     if vacancy_ids:
-        out: list[AutoparsedVacancy] = []
-        for vid in vacancy_ids:
-            v = await repo.get_by_id(vid)
-            if v and v.autoparse_company_id == company_id:
-                out.append(v)
-        return out
+        return await repo.get_by_ids_for_company(company_id, vacancy_ids)
     stmt = (
         select(AutoparsedVacancy)
         .where(AutoparsedVacancy.autoparse_company_id == company_id)
@@ -53,6 +49,67 @@ async def _load_candidates(
     return [v for v in rows if v.created_at and v.created_at >= task_started_at]
 
 
+async def _unreacted_autoparsed_vacancy_ids(
+    session_factory: async_sessionmaker[AsyncSession],
+    company_id: int,
+    user_id: int,
+) -> list[int]:
+    """Autoparsed vacancy PKs for this company that the user has not liked/disliked in any feed."""
+    async with session_factory() as session:
+        feed_repo = VacancyFeedSessionRepository(session)
+        reacted = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
+        stmt = select(AutoparsedVacancy.id).where(
+            AutoparsedVacancy.autoparse_company_id == company_id,
+        )
+        if reacted:
+            stmt = stmt.where(AutoparsedVacancy.id.notin_(list(reacted)))
+        stmt = stmt.order_by(AutoparsedVacancy.id.desc())
+        result = await session.execute(stmt)
+        return [int(row[0]) for row in result.all()]
+
+
+async def _run_autorespond_after_manual_parse_async(
+    session_factory: async_sessionmaker[AsyncSession],
+    company_id: int,
+    user_id: int,
+) -> dict:
+    """After manual autoparse completes: enqueue autorespond for all unreacted vacancies."""
+    async with session_factory() as session:
+        settings_repo = AppSettingRepository(session)
+        if not await settings_repo.get_value("task_autorespond_enabled", default=False):
+            return {"status": "skipped", "reason": "autorespond_disabled_global"}
+        company_repo = AutoparseCompanyRepository(session)
+        company = await company_repo.get_by_id(company_id)
+        if not company or company.is_deleted or company.user_id != user_id:
+            return {"status": "skipped", "reason": "company_invalid"}
+        if not company.autorespond_enabled:
+            return {"status": "skipped", "reason": "autorespond_disabled_company"}
+        if not company.autorespond_resume_id or not company.autorespond_hh_linked_account_id:
+            return {"status": "skipped", "reason": "autorespond_not_configured"}
+
+    ids = await _unreacted_autoparsed_vacancy_ids(session_factory, company_id, user_id)
+    if not ids:
+        logger.info(
+            "manual_chain_no_unreacted",
+            company_id=company_id,
+            user_id=user_id,
+        )
+        return {"status": "no_unreacted", "vacancy_ids": []}
+
+    run_autorespond_company.delay(
+        company_id,
+        vacancy_ids=ids,
+        trigger="manual_unreacted",
+    )
+    logger.info(
+        "manual_chain_autorespond_enqueued",
+        company_id=company_id,
+        user_id=user_id,
+        count=len(ids),
+    )
+    return {"status": "enqueued", "vacancy_count": len(ids), "vacancy_ids": ids}
+
+
 async def _run_autorespond_async(
     session_factory: async_sessionmaker[AsyncSession],
     celery_task: object | None,
@@ -61,11 +118,18 @@ async def _run_autorespond_async(
     trigger: str,
     task_started_at: datetime | None,
 ) -> dict:
+    from src.bot.modules.autoparse import services as ap_service
+    from src.core.constants import AppSettingKey
     from src.core.i18n import get_text
     from src.repositories.autoparse import AutoparseCompanyRepository
     from src.repositories.user import UserRepository
     from src.services.progress_service import ProgressService, create_progress_redis
+    from src.worker.tasks.cover_letter import (
+        generate_cover_letter_plaintext_for_autoparsed_vacancy,
+        generate_cover_letter_task,
+    )
     from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+    from src.services.ai.client import AIClient
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -90,6 +154,12 @@ async def _run_autorespond_async(
         hh_acc_id = company.autorespond_hh_linked_account_id
         resume_id = company.autorespond_resume_id
 
+        ap_settings = await ap_service.get_user_autoparse_settings(session, user.id)
+        cover_letter_style = ap_settings.get("cover_letter_style", "professional")
+        cover_task_enabled = bool(
+            await settings_repo.get_value(AppSettingKey.TASK_COVER_LETTER_ENABLED, default=True)
+        )
+
         raw = await _load_candidates(session, company_id, vacancy_ids, task_started_at)
         filtered = autorespond_logic.filter_vacancies_for_autorespond(
             raw,
@@ -99,6 +169,17 @@ async def _run_autorespond_async(
         )
         filtered.sort(key=lambda v: -v.id)
         capped = autorespond_logic.apply_max_cap(filtered, company.autorespond_max_per_run)
+
+        attempt_repo = HhApplicationAttemptRepository(session)
+        already_success: set[str] = set()
+        if capped:
+            already_success = await attempt_repo.hh_vacancy_ids_with_successful_apply(
+                user.id,
+                resume_id,
+                [v.hh_vacancy_id for v in capped],
+            )
+
+        cover_ai_client: AIClient | None = None
 
         queued = 0
         skipped = 0
@@ -133,17 +214,15 @@ async def _run_autorespond_async(
 
         try:
             for idx, vac in enumerate(capped, start=1):
-                async with session_factory() as check_session:
-                    ar = HhApplicationAttemptRepository(check_session)
-                    if await ar.has_successful_apply(user.id, vac.hh_vacancy_id, resume_id):
-                        skipped += 1
-                        if progress and task_key:
-                            await progress.update_bar(task_key, 0, idx, len(capped))
-                            await progress.update_footer(
-                                task_key,
-                                [get_text("autorespond-progress-failed", locale, count=failed)],
-                            )
-                        continue
+                if vac.hh_vacancy_id in already_success:
+                    skipped += 1
+                    if progress and task_key:
+                        await progress.update_bar(task_key, 0, idx, len(capped))
+                        await progress.update_footer(
+                            task_key,
+                            [get_text("autorespond-progress-failed", locale, count=failed)],
+                        )
+                    continue
 
                 if settings.hh_ui_apply_enabled:
                     if not try_acquire_ui_apply_slot_sync(user.id):
@@ -171,22 +250,66 @@ async def _run_autorespond_async(
                             "trigger": trigger,
                         }
                     vacancy_url = normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id)
-                    apply_to_vacancy_ui_task.delay(
-                        user.id,
-                        user.telegram_id,
-                        0,
-                        locale,
-                        hh_acc_id,
-                        vac.id,
-                        vac.hh_vacancy_id,
-                        resume_id,
-                        vacancy_url,
-                        0,
-                        "",
-                        silent_feed=True,
-                    )
+                    if cover_task_enabled:
+                        generate_cover_letter_task.delay(
+                            user.id,
+                            vac.id,
+                            user.telegram_id,
+                            0,
+                            locale,
+                            cover_letter_style,
+                            0,
+                            "autorespond_apply",
+                            apply_after={
+                                "user_id": user.id,
+                                "chat_id": user.telegram_id,
+                                "message_id": 0,
+                                "locale": locale,
+                                "hh_linked_account_id": hh_acc_id,
+                                "autoparsed_vacancy_id": vac.id,
+                                "hh_vacancy_id": vac.hh_vacancy_id,
+                                "resume_id": resume_id,
+                                "vacancy_url": vacancy_url,
+                                "feed_session_id": 0,
+                            },
+                            silent_feed=True,
+                        )
+                    else:
+                        apply_to_vacancy_ui_task.delay(
+                            user.id,
+                            user.telegram_id,
+                            0,
+                            locale,
+                            hh_acc_id,
+                            vac.id,
+                            vac.hh_vacancy_id,
+                            resume_id,
+                            vacancy_url,
+                            0,
+                            "",
+                            silent_feed=True,
+                        )
                     queued += 1
                 else:
+                    letter_for_api: str | None = None
+                    if cover_task_enabled:
+                        try:
+                            if cover_ai_client is None:
+                                cover_ai_client = AIClient()
+                            letter_for_api = await generate_cover_letter_plaintext_for_autoparsed_vacancy(
+                                session_factory,
+                                user.id,
+                                vac.id,
+                                cover_letter_style,
+                                ai_client=cover_ai_client,
+                            )
+                        except Exception as gen_exc:
+                            logger.warning(
+                                "autorespond_cover_letter_failed",
+                                company_id=company_id,
+                                vacancy_id=vac.id,
+                                error=str(gen_exc)[:300],
+                            )
                     try:
                         async with session_factory() as token_session:
                             _, access = await ensure_access_token(token_session, hh_acc_id)
@@ -201,6 +324,7 @@ async def _run_autorespond_async(
                                 client,
                                 vacancy_id=vac.hh_vacancy_id,
                                 resume_id=resume_id,
+                                letter=letter_for_api,
                             )
                             status = "success"
                             if isinstance(body, dict):
@@ -296,4 +420,44 @@ def run_autorespond_company(
 
     return run_async(
         lambda sf: _run_autorespond_async(sf, self, company_id, vacancy_ids, trigger, ts)
+    )
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="autoparse.chain_autorespond_after_manual_parse",
+    soft_time_limit=120,
+    time_limit=150,
+)
+def run_autorespond_after_manual_parse(
+    self,
+    prev_result: dict | None,
+    company_id: int,
+    user_id: int,
+) -> dict:
+    """Chain step after `run_autoparse_company`: autorespond for all unreacted vacancies."""
+    if not isinstance(prev_result, dict):
+        logger.info(
+            "chain_autorespond_skipped",
+            company_id=company_id,
+            user_id=user_id,
+            reason="bad_prev",
+        )
+        return {"status": "skipped", "reason": "bad_prev"}
+    if prev_result.get("status") != "completed":
+        logger.info(
+            "chain_autorespond_skipped",
+            company_id=company_id,
+            user_id=user_id,
+            autoparse_status=prev_result.get("status"),
+        )
+        return {
+            "status": "skipped",
+            "reason": "autoparse_not_completed",
+            "autoparse": prev_result,
+        }
+
+    return run_async(
+        lambda sf: _run_autorespond_after_manual_parse_async(sf, company_id, user_id)
     )

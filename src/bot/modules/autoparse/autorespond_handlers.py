@@ -387,7 +387,16 @@ async def ar_run(
     if not company.autorespond_resume_id or not company.autorespond_hh_linked_account_id:
         await callback.answer(i18n.get("autorespond-configure-first"), show_alert=True)
         return
-    from src.worker.tasks.autorespond import run_autorespond_company
+    from celery import chain
 
-    await run_celery_task(run_autorespond_company, company.id, None, "manual")
-    await callback.answer(i18n.get("autorespond-queued"), show_alert=True)
+    from src.core.celery_async import run_sync_in_thread
+    from src.worker.tasks.autoparse import run_autoparse_company
+    from src.worker.tasks.autorespond import run_autorespond_after_manual_parse
+
+    await run_sync_in_thread(
+        lambda: chain(
+            run_autoparse_company.s(company.id, user.id),
+            run_autorespond_after_manual_parse.s(company.id, user.id),
+        ).delay()
+    )
+    await callback.answer(i18n.get("autorespond-manual-pipeline-queued"), show_alert=True)

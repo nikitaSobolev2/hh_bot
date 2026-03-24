@@ -735,6 +735,7 @@ autorespond-no-hh-account = No linked HH account.
 autorespond-resume-cache-empty = Open the feed or refresh resumes first (resume list is empty).
 autorespond-saved = Settings saved.
 autorespond-queued = Autorespond task queued.
+autorespond-manual-pipeline-queued = Manual parse started; then autorespond (with cover letters) will run for unreacted vacancies.
 autorespond-enable-first = Enable autorespond for this company first.
 autorespond-configure-first = Pick resume and HH account first.
 autorespond-worker-disabled-hint = ⚠️ Autorespond jobs are off globally — enable “Autorespond Task” in Admin → App Settings to run.

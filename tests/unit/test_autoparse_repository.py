@@ -67,6 +67,25 @@ async def test_get_below_min_compat_for_user_includes_none_and_below_threshold()
 
 
 @pytest.mark.asyncio
+async def test_get_by_ids_for_company_preserves_ids_order():
+    """Rows from DB are mapped back in the order of the requested *ids* list."""
+    mock_session = MagicMock()
+    v1 = MagicMock()
+    v1.id = 1
+    v2 = MagicMock()
+    v2.id = 2
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [v2, v1]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+
+    repo = AutoparsedVacancyRepository(mock_session)
+    out = await repo.get_by_ids_for_company(10, [1, 2])
+    assert [v.id for v in out] == [1, 2]
+
+
+@pytest.mark.asyncio
 async def test_get_below_min_compat_for_user_excludes_reacted():
     """get_below_min_compat_for_user adds notin when exclude_vacancy_ids provided."""
     mock_session = MagicMock()

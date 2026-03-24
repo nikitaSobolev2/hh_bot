@@ -735,6 +735,7 @@ autorespond-no-hh-account = Нет привязанного аккаунта HH.
 autorespond-resume-cache-empty = Сначала откройте ленту или обновите список резюме (кэш пуст).
 autorespond-saved = Настройки сохранены.
 autorespond-queued = Задача автоответа поставлена в очередь.
+autorespond-manual-pipeline-queued = Запущен ручной парсинг; затем автоответ (с письмами) по вакансиям без реакции в ленте.
 autorespond-enable-first = Сначала включите автоответ для этой компании.
 autorespond-configure-first = Сначала выберите резюме и аккаунт HH.
 autorespond-worker-disabled-hint = ⚠️ Автоответ выключён глобально — включите «Задача автоответа» в Админ → Настройки приложения.

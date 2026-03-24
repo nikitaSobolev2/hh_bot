@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import html
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
@@ -13,6 +14,9 @@ from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from src.services.ai.client import AIClient
 
 _AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
 COVER_LETTER_DISPLAY_MAX = 2000
@@ -77,6 +81,79 @@ def _strip_agent_wrapper(text: str) -> str:
             break
 
     return result.rstrip()
+
+
+async def generate_cover_letter_plaintext_for_autoparsed_vacancy(
+    session_factory,
+    user_id: int,
+    vacancy_id: int,
+    cover_letter_style: str,
+    *,
+    ai_client: AIClient | None = None,
+) -> str:
+    """Non-streaming cover letter for an AutoparsedVacancy (shared by feed chain and autorespond API)."""
+    from src.bot.modules.autoparse import services as ap_service
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.repositories.user import UserRepository
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import (
+        WorkExperienceEntry,
+        build_cover_letter_system_prompt,
+        build_cover_letter_user_content,
+    )
+
+    async with session_factory() as session:
+        we_repo = WorkExperienceRepository(session)
+        raw_experiences = await we_repo.get_active_by_user(user_id)
+        vacancy_repo = AutoparsedVacancyRepository(session)
+        vacancy = await vacancy_repo.get_by_id(vacancy_id)
+
+    if not vacancy:
+        raise ValueError("vacancy_not_found")
+
+    async with session_factory() as session:
+        settings = await ap_service.get_user_autoparse_settings(session, user_id)
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+    user_name = (settings.get("user_name") or "").strip()
+    if not user_name and user:
+        user_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    if not user_name:
+        user_name = "Кандидат"
+    about_me = (settings.get("about_me") or "").strip()
+
+    experiences = [
+        WorkExperienceEntry(
+            company_name=e.company_name,
+            stack=e.stack,
+            title=e.title,
+            period=e.period,
+            achievements=e.achievements,
+            duties=e.duties,
+        )
+        for e in raw_experiences
+    ]
+
+    style = (cover_letter_style or "professional").strip() or "professional"
+    client = ai_client or AIClient()
+    system_prompt = build_cover_letter_system_prompt(style)
+    user_content = build_cover_letter_user_content(
+        work_experiences=experiences,
+        vacancy_title=vacancy.title,
+        company_name=vacancy.company_name,
+        vacancy_description=vacancy.description or "",
+        user_name=user_name,
+        about_me=about_me,
+    )
+    generated_text = await client.generate_text(
+        user_content,
+        system_prompt=system_prompt,
+        timeout=180,
+        max_tokens=400,
+        temperature=0.6,
+    )
+    return _normalize_dashes(_strip_agent_wrapper(generated_text))
 
 
 @celery_app.task(
@@ -340,25 +417,14 @@ async def _generate_cover_letter_async(
     ]
 
     style = (cover_letter_style or "professional").strip() or "professional"
-    ai_client = AIClient()
-    system_prompt = build_cover_letter_system_prompt(style)
-    user_content = build_cover_letter_user_content(
-        work_experiences=experiences,
-        vacancy_title=vacancy.title,
-        company_name=vacancy.company_name,
-        vacancy_description=vacancy.description or "",
-        user_name=user_name,
-        about_me=about_me,
-    )
 
     if apply_after:
         try:
-            generated_text = await ai_client.generate_text(
-                user_content,
-                system_prompt=system_prompt,
-                timeout=180,
-                max_tokens=400,
-                temperature=0.6,
+            generated_text = await generate_cover_letter_plaintext_for_autoparsed_vacancy(
+                session_factory,
+                user_id,
+                vacancy_id,
+                style,
             )
             cb.record_success()
         except Exception as exc:
@@ -370,7 +436,6 @@ async def _generate_cover_letter_async(
                 error=str(exc),
             )
             raise
-        generated_text = _normalize_dashes(_strip_agent_wrapper(generated_text))
         from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
 
         apply_to_vacancy_ui_task.delay(
@@ -409,6 +474,17 @@ async def _generate_cover_letter_async(
             result_data={"generated_text": generated_text, "chained_apply": True},
         )
         return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}
+
+    ai_client = AIClient()
+    system_prompt = build_cover_letter_system_prompt(style)
+    user_content = build_cover_letter_user_content(
+        work_experiences=experiences,
+        vacancy_title=vacancy.title,
+        company_name=vacancy.company_name,
+        vacancy_description=vacancy.description or "",
+        user_name=user_name,
+        about_me=about_me,
+    )
 
     keyboard = _build_cover_letter_keyboard(
         session_id, vacancy_id, locale, standalone=(source == "standalone")

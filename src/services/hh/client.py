@@ -160,6 +160,7 @@ async def apply_to_vacancy_with_resume(
     *,
     vacancy_id: str,
     resume_id: str,
+    letter: str | None = None,
 ) -> tuple[int, dict[str, Any] | str]:
     vac = await client.get_vacancy(vacancy_id)
     action = pick_response_negotiation_action(vac)
@@ -178,5 +179,8 @@ async def apply_to_vacancy_with_resume(
                 v = item.get("value")
                 if k is not None and v is not None:
                     form[str(k)] = str(v)
+    lt = (letter or "").strip()
+    if lt:
+        form["letter"] = lt
     status, body = await client.request_action_url(url, method=method, form=form)
     return status, body

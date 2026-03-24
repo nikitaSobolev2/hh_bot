@@ -199,6 +199,22 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_by_ids_for_company(
+        self,
+        company_id: int,
+        ids: list[int],
+    ) -> list[AutoparsedVacancy]:
+        """Fetch vacancies by PK list scoped to a company; preserve *ids* order."""
+        if not ids:
+            return []
+        stmt = select(AutoparsedVacancy).where(
+            AutoparsedVacancy.id.in_(ids),
+            AutoparsedVacancy.autoparse_company_id == company_id,
+        )
+        result = await self._session.execute(stmt)
+        by_id = {v.id: v for v in result.scalars().all()}
+        return [by_id[i] for i in ids if i in by_id]
+
     async def get_new_since(
         self,
         company_id: int,
