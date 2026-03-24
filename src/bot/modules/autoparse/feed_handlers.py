@@ -12,6 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.autoparse import feed_services
+from src.core.logging import get_logger
 from src.bot.modules.autoparse.callbacks import FeedCallback
 from src.bot.modules.autoparse.states import FeedRespondForm
 from src.core.i18n import I18nContext
@@ -23,6 +24,11 @@ from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
 router = Router(name="feed")
+
+logger = get_logger(__name__)
+
+# Playwright resume list can be slow; show loading UI and cap wait so the user is not stuck silent.
+_LIST_RESUMES_TIMEOUT_S = 120.0
 
 
 def _feed_show_respond_button(feed_session: VacancyFeedSession) -> bool:
@@ -573,7 +579,7 @@ async def handle_feed_respond(
     from src.services.hh.token_service import ensure_access_token
     from src.services.hh_ui.config import HhUiApplyConfig
     from src.services.hh_ui.outcomes import ApplyOutcome
-    from src.services.hh_ui.runner import list_resumes_ui
+    from src.services.hh_ui.runner import list_resumes_ui, normalize_hh_vacancy_url
     from src.services.hh_ui.storage import decrypt_browser_storage
 
     feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
@@ -587,8 +593,22 @@ async def handle_feed_respond(
     vacancy_repo = AutoparsedVacancyRepository(session)
     vacancy = await vacancy_repo.get_by_id(callback_data.vacancy_id)
     if not vacancy:
-        await callback.answer()
+        logger.warning(
+            "feed_respond_vacancy_missing",
+            user_id=user.id,
+            session_id=callback_data.session_id,
+            vacancy_id=callback_data.vacancy_id,
+        )
+        await callback.answer(i18n.get("feed-respond-vacancy-missing"), show_alert=True)
         return
+
+    logger.info(
+        "feed_respond_click",
+        user_id=user.id,
+        session_id=callback_data.session_id,
+        vacancy_id=vacancy.id,
+        ui_apply=settings.hh_ui_apply_enabled,
+    )
 
     resume_ids: list[str] = []
     titles: list[str] = []
@@ -610,10 +630,43 @@ async def handle_feed_respond(
             return
         # Telegram callback must be answered within ~10s; list_resumes_ui can take longer.
         await callback.answer()
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-loading-resumes"),
+                parse_mode="HTML",
+            )
         cfg = HhUiApplyConfig.from_settings()
+        vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
         try:
-            lr = await asyncio.to_thread(list_resumes_ui, storage_state=storage, config=cfg)
-        except Exception:
+            lr = await asyncio.wait_for(
+                asyncio.to_thread(
+                    list_resumes_ui,
+                    storage_state=storage,
+                    config=cfg,
+                    vacancy_url=vacancy_url,
+                ),
+                timeout=_LIST_RESUMES_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "feed_respond_list_resumes_timeout",
+                user_id=user.id,
+                vacancy_id=vacancy.id,
+                timeout_s=_LIST_RESUMES_TIMEOUT_S,
+            )
+            with contextlib.suppress(TelegramBadRequest):
+                await callback.message.edit_text(
+                    i18n.get("feed-respond-load-timeout"),
+                    parse_mode="HTML",
+                )
+            return
+        except Exception as exc:
+            logger.exception(
+                "feed_respond_list_resumes_failed",
+                user_id=user.id,
+                vacancy_id=vacancy.id,
+                error=str(exc),
+            )
             with contextlib.suppress(TelegramBadRequest):
                 await callback.message.edit_text(
                     i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
@@ -648,6 +701,11 @@ async def handle_feed_respond(
             return
 
         await callback.answer()
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-loading-resumes"),
+                parse_mode="HTML",
+            )
         client = HhApiClient(access)
         try:
             data = await client.get_resumes_mine(per_page=20)

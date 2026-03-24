@@ -52,7 +52,8 @@ async def _apply_ui_async(
         _feed_show_respond_button,
         feed_vacancy_keyboard,
     )
-    from src.repositories.autoparse import AutoparsedVacancyRepository, VacancyFeedSessionRepository
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
     bot = self.create_bot()
     try:

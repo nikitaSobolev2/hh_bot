@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import BrowserContext, sync_playwright
 
 from src.config import settings
 from src.services.hh_ui.browser_link import is_logged_in_storage_state, validate_playwright_storage_state
@@ -21,21 +21,41 @@ class LoginAssistOutcome(str, Enum):
     ERROR = "error"
 
 
-def _login_assist_ready(page: Any, raw: dict[str, Any]) -> bool:
-    """True when cookies look logged-in *and* we are not still on the login screen.
+def _any_page_off_login_screen(context: BrowserContext) -> bool:
+    """True if at least one tab is not the login form (handles hh.ru opening login in a new tab)."""
+    for pg in context.pages:
+        try:
+            if not _detect_login(pg):
+                return True
+        except Exception:
+            continue
+    return False
 
-    hh.ru may set hhtoken / partial cookies before credentials are submitted; do not
-    treat that as success while the login form or /account/login URL is still active.
+
+def _any_page_has_captcha(context: BrowserContext) -> bool:
+    for pg in context.pages:
+        try:
+            if _detect_captcha(pg):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _login_assist_ready(context: BrowserContext, raw: dict[str, Any]) -> bool:
+    """True when cookies look logged-in and at least one tab has left the login screen.
+
+    hh.ru may set hhtoken before credentials are submitted — require no login UI on *some* tab.
+    If the user completes login in a second tab, the first tab may still show /account/login;
+    polling only the initial page would never finish.
     """
-    if _detect_login(page):
-        return False
     if not is_logged_in_storage_state(raw):
         return False
     try:
         validate_playwright_storage_state(raw)
     except ValueError:
         return False
-    return True
+    return _any_page_off_login_screen(context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +100,7 @@ def run_login_assist_sync(
                 )
 
                 while time.monotonic() < deadline:
-                    if _detect_captcha(page):
+                    if _any_page_has_captcha(context):
                         return None, LoginAssistOutcome.CAPTCHA, None
 
                     try:
@@ -90,7 +110,7 @@ def run_login_assist_sync(
                         time.sleep(config.poll_interval_seconds)
                         continue
 
-                    if _login_assist_ready(page, raw):
+                    if _login_assist_ready(context, raw):
                         return raw, LoginAssistOutcome.SUCCESS, None
 
                     time.sleep(config.poll_interval_seconds)

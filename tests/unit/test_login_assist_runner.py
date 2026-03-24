@@ -20,27 +20,40 @@ def _minimal_logged_in_cookies() -> dict:
     }
 
 
+def _page(url: str, login_form_count: int = 0) -> MagicMock:
+    p = MagicMock()
+    p.url = url
+    p.locator.return_value.count.return_value = login_form_count
+    return p
+
+
 def test_login_assist_not_ready_on_account_login_url() -> None:
-    page = MagicMock()
-    page.url = "https://hh.ru/account/login"
-    page.locator.return_value.count.return_value = 0
+    ctx = MagicMock()
+    ctx.pages = [_page("https://hh.ru/account/login")]
     raw = _minimal_logged_in_cookies()
-    assert _login_assist_ready(page, raw) is False
+    assert _login_assist_ready(ctx, raw) is False
 
 
 def test_login_assist_ready_after_login_url_gone() -> None:
-    page = MagicMock()
-    page.url = "https://hh.ru/"
-    page.locator.return_value.count.return_value = 0
+    ctx = MagicMock()
+    ctx.pages = [_page("https://hh.ru/")]
     raw = _minimal_logged_in_cookies()
-    assert _login_assist_ready(page, raw) is True
+    assert _login_assist_ready(ctx, raw) is True
 
 
 def test_login_assist_not_ready_when_login_form_visible() -> None:
-    page = MagicMock()
-    page.url = "https://hh.ru/account/applicant"
-    loc = MagicMock()
-    loc.count.return_value = 1
-    page.locator.return_value = loc
+    ctx = MagicMock()
+    ctx.pages = [_page("https://hh.ru/account/applicant", login_form_count=1)]
     raw = _minimal_logged_in_cookies()
-    assert _login_assist_ready(page, raw) is False
+    assert _login_assist_ready(ctx, raw) is False
+
+
+def test_login_assist_ready_when_second_tab_left_login() -> None:
+    """First tab still on /account/login; user logged in on another tab (common on hh.ru)."""
+    ctx = MagicMock()
+    ctx.pages = [
+        _page("https://hh.ru/account/login"),
+        _page("https://hh.ru/"),
+    ]
+    raw = _minimal_logged_in_cookies()
+    assert _login_assist_ready(ctx, raw) is True

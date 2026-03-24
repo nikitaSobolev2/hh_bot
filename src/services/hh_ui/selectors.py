@@ -49,7 +49,15 @@ LOGIN_FORM: tuple[str, ...] = (
     'a[href*="account/login"]',
 )
 
-# Resume picker in modal (try in order).
+# Magritte bottom sheet: "Резюме для отклика" (respond flow on vacancy page).
+RESPONSE_MODAL_CONTENT: str = '[data-qa="bottom-sheet-content"]'
+RESPONSE_MODAL_TITLE_TEXT: str = "Резюме для отклика"
+RESPONSE_MODAL_CLOSE: str = '[data-qa="response-popup-close"]'
+# Radio list inside the sheet (value = resume id for API/UI apply).
+RESUME_RADIO: str = 'input[type="radio"][name="resumeId"]'
+RESUME_TITLE_IN_MODAL: str = '[data-qa="resume-title"]'
+
+# Resume picker in modal (try in order) — legacy <select> layouts.
 RESUME_SELECT: tuple[str, ...] = (
     'select[data-qa="resume-select"]',
     "select[name='resumeId']",
@@ -59,6 +67,7 @@ RESUME_SELECT: tuple[str, ...] = (
 RESUME_SUBMIT: tuple[str, ...] = (
     'button[data-qa="vacancy-response-submit"]',
     'button[type="submit"]:has-text("Откликнуться")',
+    'button:has-text("Откликнуться")',
     'button:has-text("Отправить")',
 )
 
