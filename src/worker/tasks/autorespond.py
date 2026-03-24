@@ -114,7 +114,14 @@ async def _run_autorespond_after_manual_parse_async(
             return {"status": "skipped", "reason": "company_invalid"}
         if not company.autorespond_enabled:
             return {"status": "skipped", "reason": "autorespond_disabled_company"}
-        if not company.autorespond_resume_id or not company.autorespond_hh_linked_account_id:
+        if not company.autorespond_hh_linked_account_id:
+            return {"status": "skipped", "reason": "autorespond_not_configured"}
+        from src.repositories.hh_linked_account import HhLinkedAccountRepository
+        from src.services.ai.resume_selection import normalize_hh_resume_cache_items
+
+        hh_acc_repo = HhLinkedAccountRepository(session)
+        hh_acc = await hh_acc_repo.get_by_id(company.autorespond_hh_linked_account_id)
+        if not hh_acc or not normalize_hh_resume_cache_items(hh_acc.resume_list_cache):
             return {"status": "skipped", "reason": "autorespond_not_configured"}
 
     ids = await _unreacted_autoparsed_vacancy_ids(session_factory, company_id, user_id)
@@ -164,7 +171,12 @@ async def _run_autorespond_async(
         generate_cover_letter_task,
     )
     from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+    from src.repositories.hh_linked_account import HhLinkedAccountRepository
     from src.services.ai.client import AIClient
+    from src.services.ai.resume_selection import (
+        normalize_hh_resume_cache_items,
+        resolve_resume_id_for_autorespond_vacancy,
+    )
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -196,7 +208,7 @@ async def _run_autorespond_async(
                 reason="disabled_company",
             )
             return {"status": "disabled_company"}
-        if not company.autorespond_resume_id or not company.autorespond_hh_linked_account_id:
+        if not company.autorespond_hh_linked_account_id:
             logger.info(
                 "autorespond_exit",
                 company_id=company_id,
@@ -217,7 +229,25 @@ async def _run_autorespond_async(
             return {"status": "user_not_found"}
 
         hh_acc_id = company.autorespond_hh_linked_account_id
-        resume_id = company.autorespond_resume_id
+        hh_acc_repo = HhLinkedAccountRepository(session)
+        hh_linked = await hh_acc_repo.get_by_id(hh_acc_id)
+        if not hh_linked:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="hh_account_not_found",
+            )
+            return {"status": "not_configured"}
+        resume_items = normalize_hh_resume_cache_items(hh_linked.resume_list_cache)
+        if not resume_items:
+            logger.info(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="resume_cache_empty",
+            )
+            return {"status": "not_configured"}
 
         ap_settings = await ap_service.get_user_autoparse_settings(session, user.id)
         cover_letter_style = ap_settings.get("cover_letter_style", "professional")
@@ -271,9 +301,8 @@ async def _run_autorespond_async(
         attempt_repo = HhApplicationAttemptRepository(session)
         already_success: set[str] = set()
         if capped:
-            already_success = await attempt_repo.hh_vacancy_ids_with_successful_apply(
+            already_success = await attempt_repo.hh_vacancy_ids_with_successful_apply_any_resume(
                 user.id,
-                resume_id,
                 [v.hh_vacancy_id for v in capped],
             )
 
@@ -384,6 +413,28 @@ async def _run_autorespond_async(
                             "failed": failed,
                             "trigger": trigger,
                         }
+                    if len(resume_items) > 1 and cover_ai_client is None:
+                        cover_ai_client = AIClient()
+                    resume_id = await resolve_resume_id_for_autorespond_vacancy(
+                        cover_ai_client,
+                        vac,
+                        resume_items,
+                        stored_autorespond_resume_id=company.autorespond_resume_id,
+                    )
+                    if not resume_id:
+                        skipped += 1
+                        if ar_prog and progress_bot:
+                            await tick_autorespond_bar(
+                                bot=progress_bot,
+                                chat_id=user.telegram_id,
+                                task_key=ar_prog["task_key"],
+                                total=ar_prog["total"],
+                                locale=ar_prog["locale"],
+                                footer_failed_line=get_text(
+                                    "autorespond-progress-failed", locale, count=failed
+                                ),
+                            )
+                        continue
                     vacancy_url = normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id)
                     if cover_task_enabled:
                         apply_after_payload = {
@@ -430,6 +481,28 @@ async def _run_autorespond_async(
                         )
                     queued += 1
                 else:
+                    if len(resume_items) > 1 and cover_ai_client is None:
+                        cover_ai_client = AIClient()
+                    resume_id = await resolve_resume_id_for_autorespond_vacancy(
+                        cover_ai_client,
+                        vac,
+                        resume_items,
+                        stored_autorespond_resume_id=company.autorespond_resume_id,
+                    )
+                    if not resume_id:
+                        skipped += 1
+                        if ar_prog and progress_bot:
+                            await tick_autorespond_bar(
+                                bot=progress_bot,
+                                chat_id=user.telegram_id,
+                                task_key=ar_prog["task_key"],
+                                total=ar_prog["total"],
+                                locale=ar_prog["locale"],
+                                footer_failed_line=get_text(
+                                    "autorespond-progress-failed", locale, count=failed
+                                ),
+                            )
+                        continue
                     letter_for_api: str | None = None
                     if cover_task_enabled:
                         try:

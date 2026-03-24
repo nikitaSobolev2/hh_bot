@@ -53,6 +53,27 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
         rows = result.scalars().all()
         return {str(r) for r in rows if r is not None}
 
+    async def hh_vacancy_ids_with_successful_apply_any_resume(
+        self,
+        user_id: int,
+        hh_vacancy_ids: list[str],
+    ) -> set[str]:
+        """Vacancies the user already responded to successfully (any resume)."""
+        if not hh_vacancy_ids:
+            return set()
+        stmt = (
+            select(HhApplicationAttempt.hh_vacancy_id)
+            .where(
+                HhApplicationAttempt.user_id == user_id,
+                HhApplicationAttempt.hh_vacancy_id.in_(hh_vacancy_ids),
+                HhApplicationAttempt.status == "success",
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        rows = result.scalars().all()
+        return {str(r) for r in rows if r is not None}
+
     async def list_for_feed_session_summary(
         self,
         user_id: int,

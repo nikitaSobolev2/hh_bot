@@ -166,9 +166,7 @@ def format_company_detail(
         )
         lim = company.autorespond_max_per_run
         lim_s = i18n.get("autorespond-limit-all") if lim < 0 else str(lim)
-        resume_s = "—"
-        if company.autorespond_resume_id:
-            resume_s = f"{company.autorespond_resume_id[:8]}…"
+        fb = f"{company.autorespond_resume_id[:8]}…" if company.autorespond_resume_id else "—"
         lines.extend(
             [
                 "",
@@ -177,7 +175,8 @@ def format_company_detail(
                 f"{i18n.get('autorespond-detail-threshold')}: {company.autorespond_min_compat}%",
                 f"{i18n.get('autorespond-detail-mode')}: {i18n.get(mode_key)}",
                 f"{i18n.get('autorespond-detail-limit')}: {lim_s}",
-                f"{i18n.get('autorespond-detail-resume')}: {resume_s}",
+                f"{i18n.get('autorespond-detail-resume-explain')}",
+                f"{i18n.get('autorespond-detail-resume-fallback-id', fallback=fb)}",
             ]
         )
         if autorespond_task_enabled is False:

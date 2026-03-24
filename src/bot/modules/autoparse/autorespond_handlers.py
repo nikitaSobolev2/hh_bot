@@ -306,7 +306,7 @@ async def ar_resume_acc(
         ]
     )
     await callback.message.edit_text(
-        i18n.get("autorespond-pick-resume"),
+        i18n.get("autorespond-pick-default-resume"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         parse_mode="HTML",
     )
@@ -384,7 +384,15 @@ async def ar_run(
     if not company.autorespond_enabled:
         await callback.answer(i18n.get("autorespond-enable-first"), show_alert=True)
         return
-    if not company.autorespond_resume_id or not company.autorespond_hh_linked_account_id:
+    if not company.autorespond_hh_linked_account_id:
+        await callback.answer(i18n.get("autorespond-configure-first"), show_alert=True)
+        return
+    from src.repositories.hh_linked_account import HhLinkedAccountRepository
+    from src.services.ai.resume_selection import normalize_hh_resume_cache_items
+
+    acc_repo = HhLinkedAccountRepository(session)
+    acc = await acc_repo.get_by_id(company.autorespond_hh_linked_account_id)
+    if not acc or not normalize_hh_resume_cache_items(acc.resume_list_cache):
         await callback.answer(i18n.get("autorespond-configure-first"), show_alert=True)
         return
     from celery import chain

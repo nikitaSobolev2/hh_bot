@@ -521,17 +521,21 @@ async def _run_autoparse_company_async(
                     if (
                         ar_co
                         and ar_co.autorespond_enabled
-                        and ar_co.autorespond_resume_id
                         and ar_co.autorespond_hh_linked_account_id
                         and new_autorespond_vacancy_ids
                     ):
+                        from src.repositories.hh_linked_account import HhLinkedAccountRepository
+                        from src.services.ai.resume_selection import normalize_hh_resume_cache_items
                         from src.worker.tasks.autorespond import run_autorespond_company
 
-                        run_autorespond_company.delay(
-                            company_id,
-                            vacancy_ids=new_autorespond_vacancy_ids,
-                            trigger="scheduled",
-                        )
+                        ar_acc_repo = HhLinkedAccountRepository(ar_session)
+                        ar_acc = await ar_acc_repo.get_by_id(ar_co.autorespond_hh_linked_account_id)
+                        if ar_acc and normalize_hh_resume_cache_items(ar_acc.resume_list_cache):
+                            run_autorespond_company.delay(
+                                company_id,
+                                vacancy_ids=new_autorespond_vacancy_ids,
+                                trigger="scheduled",
+                            )
 
         if notify_user_id is not None and user:
             await _send_run_completed_notification(

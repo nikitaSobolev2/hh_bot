@@ -1604,3 +1604,37 @@ def build_recommendation_letter_prompt(
         f"2. Не выдумывай конкретные цифры — используй реальный опыт из блока выше.\n"
         f"3. Только текст письма, без заголовков вроде 'Рекомендательное письмо'."
     )
+
+
+def build_resume_choice_system_prompt() -> str:
+    """System prompt: pick one HH resume id for a vacancy (JSON only)."""
+    return (
+        "Ты помогаешь выбрать одно резюме кандидата на HeadHunter для отклика на вакансию.\n"
+        "По названию и описанию вакансии и списку доступных резюме (id и название) "
+        "выбери ОДНО резюме, которое лучше всего соответствует вакансии по роли, стеку и опыту.\n"
+        "Ответь ТОЛЬКО одним JSON-объектом без markdown и без текста до или после:\n"
+        '{"resume_id":"<точный id из списка>"}\n'
+        "Поле resume_id должно совпадать с одним из id из списка посимвольно."
+    )
+
+
+def build_resume_choice_user_content(
+    vacancy_title: str,
+    vacancy_description: str,
+    resume_lines: list[tuple[str, str]],
+) -> str:
+    """*resume_lines*: (resume_id, title) for the user message."""
+    title = (vacancy_title or "").strip() or "—"
+    desc = (vacancy_description or "").strip()
+    if len(desc) > 12000:
+        desc = desc[:12000] + "\n…"
+    lines = [_wrap_user_input("vacancy_title", title)]
+    lines.append(_wrap_user_input("vacancy_description", desc or "—"))
+    numbered = "\n".join(
+        f'{i}. id={rid!r} — {tit}' for i, (rid, tit) in enumerate(resume_lines, start=1)
+    )
+    lines.append(
+        "Доступные резюме кандидата (выбери ровно один id):\n"
+        f"<resumes>\n{numbered}\n</resumes>"
+    )
+    return "\n\n".join(lines)

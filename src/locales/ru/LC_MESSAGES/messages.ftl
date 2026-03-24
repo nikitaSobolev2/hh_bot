@@ -722,7 +722,8 @@ autorespond-detail-enabled = Включено
 autorespond-detail-threshold = Мин. совместимость
 autorespond-detail-mode = Режим ключевых слов
 autorespond-detail-limit = Макс. за запуск
-autorespond-detail-resume = Резюме
+autorespond-detail-resume-explain = Если на HH несколько резюме — AI выбирает подходящее под каждую вакансию. Если одно — оно всегда используется. Если AI не сработал или вернул неверный id — используется резюме по умолчанию ниже.
+autorespond-detail-resume-fallback-id = Резюме по умолчанию (запасное): { $fallback }
 autorespond-mode-title-only = Только заголовок
 autorespond-mode-title-keywords = Заголовок + описание
 autorespond-limit-all = Все
@@ -732,8 +733,12 @@ autorespond-enable = ▶️ Включить автоответ
 autorespond-disable = ⏸️ Выключить автоответ
 autorespond-mode-switch-title = Режим: только заголовок
 autorespond-mode-switch-keywords = Режим: заголовок + описание
-autorespond-pick-account = Выберите аккаунт HH:
-autorespond-pick-resume = Выберите резюме
+autorespond-pick-account = Выберите аккаунт HH для автоответа. Список резюме уже должен быть загружен в бот (откройте ленту вакансий или обновите список резюме).
+autorespond-pick-resume = Аккаунт и резюме по умолчанию
+autorespond-pick-default-resume =
+    Выберите резюме по умолчанию для автоответа.
+    Оно используется, если на HH одно резюме или AI не смог выбрать (ошибка или неверный ответ).
+    При нескольких резюме AI обычно подбирает лучшее под вакансию.
 autorespond-disabled-global = Автоответ отключён глобально (админ).
 autorespond-no-hh-account = Нет привязанного аккаунта HH.
 autorespond-resume-cache-empty = Сначала откройте ленту или обновите список резюме (кэш пуст).
@@ -741,7 +746,7 @@ autorespond-saved = Настройки сохранены.
 autorespond-queued = Задача автоответа поставлена в очередь.
 autorespond-manual-pipeline-queued = Запущен ручной парсинг; затем автоответ (с письмами) по вакансиям без реакции в ленте.
 autorespond-enable-first = Сначала включите автоответ для этой компании.
-autorespond-configure-first = Сначала выберите резюме и аккаунт HH.
+autorespond-configure-first = Привяжите аккаунт HH, обновите список резюме и укажите резюме по умолчанию (Автоответ → Аккаунт и резюме по умолчанию).
 autorespond-worker-disabled-hint = ⚠️ Автоответ выключён глобально — включите «Задача автоответа» в Админ → Настройки приложения.
 autoparse-run-now = ▶️ Запустить сейчас
 autoparse-run-started = ✅ Парсинг запущен!

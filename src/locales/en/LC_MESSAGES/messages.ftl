@@ -722,7 +722,8 @@ autorespond-detail-enabled = Enabled
 autorespond-detail-threshold = Min. compatibility
 autorespond-detail-mode = Keyword mode
 autorespond-detail-limit = Max per run
-autorespond-detail-resume = Resume
+autorespond-detail-resume-explain = With several resumes on HH, AI picks one per vacancy. With a single resume, it is always used. If AI fails or returns an invalid resume id, the default resume you set below is used.
+autorespond-detail-resume-fallback-id = Stored default resume (fallback): { $fallback }
 autorespond-mode-title-only = Title only
 autorespond-mode-title-keywords = Title + description
 autorespond-limit-all = All
@@ -732,8 +733,12 @@ autorespond-enable = ▶️ Enable autorespond
 autorespond-disable = ⏸️ Disable autorespond
 autorespond-mode-switch-title = Mode: title only
 autorespond-mode-switch-keywords = Mode: title + description
-autorespond-pick-account = Select an HH account:
-autorespond-pick-resume = Select a resume
+autorespond-pick-account = Select the HH account for autorespond. The resume list must already be loaded in the bot (open the vacancy feed or refresh resumes once).
+autorespond-pick-resume = Account & default resume
+autorespond-pick-default-resume =
+    Choose the default resume for autorespond.
+    It is used when you have only one resume on HH, or when AI cannot choose a resume (error or invalid answer).
+    If you have several resumes, AI usually picks the best match per vacancy.
 autorespond-disabled-global = Autorespond is disabled globally (admin).
 autorespond-no-hh-account = No linked HH account.
 autorespond-resume-cache-empty = Open the feed or refresh resumes first (resume list is empty).
@@ -741,7 +746,7 @@ autorespond-saved = Settings saved.
 autorespond-queued = Autorespond task queued.
 autorespond-manual-pipeline-queued = Manual parse started; then autorespond (with cover letters) will run for unreacted vacancies.
 autorespond-enable-first = Enable autorespond for this company first.
-autorespond-configure-first = Pick resume and HH account first.
+autorespond-configure-first = Link an HH account, refresh the resume list, and set a default resume (Autorespond → Account & default resume).
 autorespond-worker-disabled-hint = ⚠️ Autorespond jobs are off globally — enable “Autorespond Task” in Admin → App Settings to run.
 autoparse-run-now = ▶️ Run now
 autoparse-run-started = ✅ Parsing started!
