@@ -34,6 +34,11 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Force Playwright applies onto ``hh_ui`` (see docker-compose ``celery_worker_hh_ui``).
+    # Relying only on @task(queue=...) is not enough for routing in all Celery versions.
+    task_routes={
+        "hh_ui.apply_to_vacancy": {"queue": "hh_ui"},
+    },
     task_track_started=True,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
