@@ -32,6 +32,7 @@ MANAGED_SETTINGS = [
         "select",
         [(10, "10"), (30, "30"), (50, "50"), (5000, "admin-autoparse-target-all")],
     ),
+    ("hh_ui_debug_playwright_screenshots", "Debug Playwright Screenshots (save on errors)", "toggle"),
 ]
 
 AUTOPARSE_TARGET_VALID = {10, 30, 50, 5000}

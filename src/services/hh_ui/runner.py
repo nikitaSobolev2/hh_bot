@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import random
+import re
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -22,6 +25,7 @@ from src.services.hh_ui.applicant_http import (
     url_suggests_login_page,
 )
 from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.playwright_support import CHROMIUM_LAUNCH_ARGS, dispose_sync_browser_context
 from src.services.hh_ui.vacancy_response_popup import try_apply_via_popup
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 
@@ -59,6 +63,54 @@ def _maybe_screenshot(page: Any, cfg: HhUiApplyConfig) -> bytes | None:
         return None
 
 
+_DEBUG_SAVE_OUTCOMES = frozenset(
+    {
+        ApplyOutcome.ERROR,
+        ApplyOutcome.NO_APPLY_BUTTON,
+        ApplyOutcome.SESSION_EXPIRED,
+        ApplyOutcome.CAPTCHA,
+        ApplyOutcome.EMPLOYER_QUESTIONS,
+        ApplyOutcome.RATE_LIMITED,
+    }
+)
+
+
+def _save_playwright_debug_disk(
+    config: HhUiApplyConfig,
+    *,
+    page: Any | None,
+    result: ApplyResult,
+    stem: str,
+) -> None:
+    """Persist PNG when admin enables debug and outcome is a failure class."""
+    if not config.debug_screenshot_dir:
+        return
+    if result.outcome not in _DEBUG_SAVE_OUTCOMES:
+        return
+    try:
+        root = Path(config.debug_screenshot_dir)
+        root.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%f")
+        safe = re.sub(r"[^\w.-]+", "_", stem)[:120]
+        dest = root / f"{ts}_{safe}.png"
+        if result.screenshot_bytes:
+            dest.write_bytes(result.screenshot_bytes)
+        elif page is not None:
+            page.screenshot(path=str(dest), type="png", full_page=True)
+        logger.info(
+            "playwright_debug_screenshot_saved",
+            path=str(dest),
+            outcome=result.outcome.value,
+            stem=stem[:80],
+        )
+    except Exception as exc:
+        logger.warning(
+            "playwright_debug_screenshot_failed",
+            stem=stem[:80],
+            error=str(exc)[:200],
+        )
+
+
 def _screenshot_page_captcha(page: Any) -> bytes | None:
     """Always capture the page when captcha is shown (not gated by screenshot_on_error)."""
     try:
@@ -75,8 +127,12 @@ def _screenshot_url_with_storage(
     """Open Chromium with the same Playwright storage_state and screenshot (e.g. HTTP-detected captcha)."""
     with sync_playwright() as p:
         browser = None
+        context = None
         try:
-            browser = p.chromium.launch(headless=config.headless)
+            browser = p.chromium.launch(
+                headless=config.headless,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
             context = browser.new_context(storage_state=storage_state)
             page = context.new_page()
             page.goto(
@@ -89,8 +145,7 @@ def _screenshot_url_with_storage(
         except Exception:
             return None
         finally:
-            if browser is not None:
-                browser.close()
+            dispose_sync_browser_context(context, browser)
 
 
 def _detect_captcha(page: Any) -> bool:
@@ -324,8 +379,13 @@ def apply_to_vacancy_ui(
         )
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=config.headless)
+        browser = None
+        context = None
         try:
+            browser = p.chromium.launch(
+                headless=config.headless,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
             context = browser.new_context(storage_state=storage_state)
             page = context.new_page()
             page.goto(
@@ -342,6 +402,10 @@ def apply_to_vacancy_ui(
                 resume_ref=resume_ref,
             )
 
+            def _finish(result: ApplyResult, stem: str) -> ApplyResult:
+                _save_playwright_debug_disk(config, page=page, result=result, stem=stem)
+                return result
+
             if _detect_login(page):
                 logger.info(
                     "apply_to_vacancy_ui_done",
@@ -351,9 +415,12 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.SESSION_EXPIRED.value,
                     detail="login_form",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.SESSION_EXPIRED,
-                    detail="login_form",
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.SESSION_EXPIRED,
+                        detail="login_form",
+                    ),
+                    "login_form",
                 )
             if _detect_captcha(page):
                 shot = _screenshot_page_captcha(page)
@@ -365,10 +432,13 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.CAPTCHA.value,
                     detail="captcha",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.CAPTCHA,
-                    detail="captcha",
-                    screenshot_bytes=shot,
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.CAPTCHA,
+                        detail="captcha",
+                        screenshot_bytes=shot,
+                    ),
+                    "captcha_initial",
                 )
 
             if _detect_already_applied(page):
@@ -380,7 +450,10 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.ALREADY_RESPONDED.value,
                     detail=None,
                 )
-                return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
+                return _finish(
+                    ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED),
+                    "already_applied_initial",
+                )
 
             if config.use_popup_api:
                 popup_result = try_apply_via_popup(
@@ -400,7 +473,7 @@ def apply_to_vacancy_ui(
                         outcome=popup_result.outcome.value,
                         detail=(popup_result.detail or "")[:200] if popup_result.detail else None,
                     )
-                    return popup_result
+                    return _finish(popup_result, "popup_api")
 
             if not _click_first(
                 page,
@@ -416,10 +489,13 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.NO_APPLY_BUTTON.value,
                     detail="no_apply_button",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.NO_APPLY_BUTTON,
-                    detail="no_apply_button",
-                    screenshot_bytes=shot,
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.NO_APPLY_BUTTON,
+                        detail="no_apply_button",
+                        screenshot_bytes=shot,
+                    ),
+                    "no_apply_button",
                 )
 
             _jitter(config)
@@ -441,7 +517,10 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.ALREADY_RESPONDED.value,
                     detail=None,
                 )
-                return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
+                return _finish(
+                    ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED),
+                    "already_applied_after_click",
+                )
 
             if _detect_employer_questions(page):
                 logger.info(
@@ -452,9 +531,12 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.EMPLOYER_QUESTIONS.value,
                     detail="employer_questions",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
-                    detail="employer_questions",
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
+                        detail="employer_questions",
+                    ),
+                    "employer_questions",
                 )
 
             if _detect_captcha(page):
@@ -467,10 +549,13 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.CAPTCHA.value,
                     detail="captcha_after_click",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.CAPTCHA,
-                    detail="captcha_after_click",
-                    screenshot_bytes=shot,
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.CAPTCHA,
+                        detail="captcha_after_click",
+                        screenshot_bytes=shot,
+                    ),
+                    "captcha_after_click",
                 )
 
             selected = False
@@ -550,10 +635,13 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.ERROR.value,
                     detail="resume_not_selectable",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.ERROR,
-                    detail="resume_not_selectable",
-                    screenshot_bytes=shot,
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.ERROR,
+                        detail="resume_not_selectable",
+                        screenshot_bytes=shot,
+                    ),
+                    "resume_not_selectable",
                 )
 
             logger.info(
@@ -600,10 +688,13 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.ERROR.value,
                     detail="submit_not_found",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.ERROR,
-                    detail="submit_not_found",
-                    screenshot_bytes=shot,
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.ERROR,
+                        detail="submit_not_found",
+                        screenshot_bytes=shot,
+                    ),
+                    "submit_not_found",
                 )
 
             logger.info(
@@ -627,7 +718,10 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.ALREADY_RESPONDED.value,
                     detail=None,
                 )
-                return ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED)
+                return _finish(
+                    ApplyResult(outcome=ApplyOutcome.ALREADY_RESPONDED),
+                    "already_applied_after_submit",
+                )
 
             if _detect_employer_questions(page):
                 logger.info(
@@ -638,9 +732,12 @@ def apply_to_vacancy_ui(
                     outcome=ApplyOutcome.EMPLOYER_QUESTIONS.value,
                     detail="employer_questions_after_submit",
                 )
-                return ApplyResult(
-                    outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
-                    detail="employer_questions_after_submit",
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
+                        detail="employer_questions_after_submit",
+                    ),
+                    "employer_questions_after_submit",
                 )
 
             logger.info(
@@ -651,7 +748,7 @@ def apply_to_vacancy_ui(
                 outcome=ApplyOutcome.SUCCESS.value,
                 detail=None,
             )
-            return ApplyResult(outcome=ApplyOutcome.SUCCESS)
+            return _finish(ApplyResult(outcome=ApplyOutcome.SUCCESS), "success")
         except PlaywrightTimeoutError as exc:
             logger.info(
                 "apply_to_vacancy_ui_done",
@@ -661,10 +758,17 @@ def apply_to_vacancy_ui(
                 outcome=ApplyOutcome.ERROR.value,
                 detail=f"timeout:{exc}"[:200],
             )
-            return ApplyResult(
+            r = ApplyResult(
                 outcome=ApplyOutcome.ERROR,
                 detail=f"timeout:{exc}",
             )
+            _save_playwright_debug_disk(
+                config,
+                page=locals().get("page"),
+                result=r,
+                stem="playwright_timeout",
+            )
+            return r
         except Exception as exc:
             d = str(exc)[:500]
             logger.info(
@@ -675,12 +779,19 @@ def apply_to_vacancy_ui(
                 outcome=ApplyOutcome.ERROR.value,
                 detail=d[:200],
             )
-            return ApplyResult(
+            r = ApplyResult(
                 outcome=ApplyOutcome.ERROR,
                 detail=d,
             )
+            _save_playwright_debug_disk(
+                config,
+                page=locals().get("page"),
+                result=r,
+                stem="playwright_exception",
+            )
+            return r
         finally:
-            browser.close()
+            dispose_sync_browser_context(context, browser)
 
 
 def vacancy_url_from_hh_id(hh_vacancy_id: str) -> str:

@@ -182,6 +182,9 @@ class AppSettingKey(StrEnum):
     CB_PREP_TEST_FAILURE_THRESHOLD = "cb_interview_prep_test_failure_threshold"
     CB_PREP_TEST_RECOVERY_TIMEOUT = "cb_interview_prep_test_recovery_timeout"
 
+    # Playwright: save PNGs on failed/error flows (admin toggle; path from env)
+    HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS = "hh_ui_debug_playwright_screenshots"
+
 
 # ---------------------------------------------------------------------------
 # Scraper / HH.ru

@@ -149,6 +149,7 @@ async def _run_autorespond_async(
     from src.core.i18n import get_text
     from src.repositories.autoparse import AutoparseCompanyRepository
     from src.repositories.user import UserRepository
+    from src.services.autorespond_progress import clear_autorespond_done_counter, tick_autorespond_bar
     from src.services.progress_service import ProgressService, create_progress_redis
     from src.worker.tasks.cover_letter import (
         generate_cover_letter_plaintext_for_autoparsed_vacancy,
@@ -277,6 +278,7 @@ async def _run_autorespond_async(
 
         progress: object | None = None
         task_key: str | None = None
+        progress_bot = None
         cid = getattr(celery_task, "request", None)
         celery_id = str(getattr(cid, "id", None) or "local") if celery_task else "local"
         show_progress = bool(
@@ -287,8 +289,8 @@ async def _run_autorespond_async(
         )
         if show_progress:
             task_key = f"autorespond:{company_id}:{celery_id}"
-            bot = celery_task.create_bot()  # type: ignore[union-attr]
-            progress = ProgressService(bot, user.telegram_id, create_progress_redis(), locale)
+            progress_bot = celery_task.create_bot()  # type: ignore[union-attr]
+            progress = ProgressService(progress_bot, user.telegram_id, create_progress_redis(), locale)
             await progress.start_task(
                 task_key=task_key,
                 title=company.vacancy_title,
@@ -301,15 +303,27 @@ async def _run_autorespond_async(
                 [get_text("autorespond-progress-failed", locale, count=failed)],
             )
 
+        total_v = len(capped)
+        ar_prog = (
+            {"task_key": task_key, "total": total_v, "locale": locale}
+            if (task_key and progress and progress_bot)
+            else None
+        )
+
         try:
             for idx, vac in enumerate(capped, start=1):
                 if vac.hh_vacancy_id in already_success:
                     skipped += 1
-                    if progress and task_key:
-                        await progress.update_bar(task_key, 0, idx, len(capped))
-                        await progress.update_footer(
-                            task_key,
-                            [get_text("autorespond-progress-failed", locale, count=failed)],
+                    if ar_prog and progress_bot:
+                        await tick_autorespond_bar(
+                            bot=progress_bot,
+                            chat_id=user.telegram_id,
+                            task_key=ar_prog["task_key"],
+                            total=ar_prog["total"],
+                            locale=ar_prog["locale"],
+                            footer_failed_line=get_text(
+                                "autorespond-progress-failed", locale, count=failed
+                            ),
                         )
                     continue
 
@@ -321,6 +335,8 @@ async def _run_autorespond_async(
                             user_id=user.id,
                             queued=queued,
                         )
+                        if task_key and user.telegram_id:
+                            await clear_autorespond_done_counter(user.telegram_id, task_key)
                         if progress and task_key:
                             await progress.finish_task(
                                 task_key,
@@ -340,6 +356,20 @@ async def _run_autorespond_async(
                         }
                     vacancy_url = normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id)
                     if cover_task_enabled:
+                        apply_after_payload = {
+                            "user_id": user.id,
+                            "chat_id": user.telegram_id,
+                            "message_id": 0,
+                            "locale": locale,
+                            "hh_linked_account_id": hh_acc_id,
+                            "autoparsed_vacancy_id": vac.id,
+                            "hh_vacancy_id": vac.hh_vacancy_id,
+                            "resume_id": resume_id,
+                            "vacancy_url": vacancy_url,
+                            "feed_session_id": 0,
+                        }
+                        if ar_prog:
+                            apply_after_payload["autorespond_progress"] = ar_prog
                         generate_cover_letter_task.delay(
                             user.id,
                             vac.id,
@@ -349,18 +379,7 @@ async def _run_autorespond_async(
                             cover_letter_style,
                             0,
                             "autorespond_apply",
-                            apply_after={
-                                "user_id": user.id,
-                                "chat_id": user.telegram_id,
-                                "message_id": 0,
-                                "locale": locale,
-                                "hh_linked_account_id": hh_acc_id,
-                                "autoparsed_vacancy_id": vac.id,
-                                "hh_vacancy_id": vac.hh_vacancy_id,
-                                "resume_id": resume_id,
-                                "vacancy_url": vacancy_url,
-                                "feed_session_id": 0,
-                            },
+                            apply_after=apply_after_payload,
                             silent_feed=True,
                         )
                     else:
@@ -377,6 +396,7 @@ async def _run_autorespond_async(
                             0,
                             "",
                             silent_feed=True,
+                            autorespond_progress=ar_prog,
                         )
                     queued += 1
                 else:
@@ -454,20 +474,29 @@ async def _run_autorespond_async(
                         failed += 1
                         skipped += 1
 
-                if progress and task_key:
-                    await progress.update_bar(task_key, 0, idx, len(capped))
-                    await progress.update_footer(
-                        task_key,
-                        [get_text("autorespond-progress-failed", locale, count=failed)],
-                    )
+                    if ar_prog and progress_bot:
+                        await tick_autorespond_bar(
+                            bot=progress_bot,
+                            chat_id=user.telegram_id,
+                            task_key=ar_prog["task_key"],
+                            total=ar_prog["total"],
+                            locale=ar_prog["locale"],
+                            footer_failed_line=get_text(
+                                "autorespond-progress-failed", locale, count=failed
+                            ),
+                        )
 
-            if progress and task_key:
-                await progress.finish_task(task_key)
         except Exception:
-            if progress and task_key:
+            if progress and task_key and user.telegram_id:
+                with contextlib.suppress(Exception):
+                    await clear_autorespond_done_counter(user.telegram_id, task_key)
                 with contextlib.suppress(Exception):
                     await progress.finish_task(task_key, complete_bars=False)
             raise
+        finally:
+            if progress_bot:
+                with contextlib.suppress(Exception):
+                    await progress_bot.session.close()
 
         logger.info(
             "autorespond_completed",

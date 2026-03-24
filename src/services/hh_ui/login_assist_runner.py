@@ -11,6 +11,7 @@ from playwright.sync_api import BrowserContext, sync_playwright
 
 from src.config import settings
 from src.services.hh_ui.browser_link import is_logged_in_storage_state, validate_playwright_storage_state
+from src.services.hh_ui.playwright_support import CHROMIUM_LAUNCH_ARGS, dispose_sync_browser_context
 from src.services.hh_ui.runner import _detect_captcha
 
 # Do not use LOGIN_FORM's `a[href*="account/login"]`: CDN/aux tabs often include that link in
@@ -109,8 +110,13 @@ def run_login_assist_sync(
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=config.headless)
+            browser = None
+            context = None
             try:
+                browser = p.chromium.launch(
+                    headless=config.headless,
+                    args=list(CHROMIUM_LAUNCH_ARGS),
+                )
                 context = browser.new_context()
                 page = context.new_page()
                 page.goto(
@@ -137,6 +143,6 @@ def run_login_assist_sync(
 
                 return None, LoginAssistOutcome.TIMEOUT, last_error
             finally:
-                browser.close()
+                dispose_sync_browser_context(context, browser)
     except Exception as exc:
         return None, LoginAssistOutcome.ERROR, str(exc)[:500]

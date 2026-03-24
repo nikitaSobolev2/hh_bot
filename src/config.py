@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from pathlib import Path
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+# Default dir for admin “debug Playwright screenshots” (mount a volume here in Docker).
+_DEFAULT_PLAYWRIGHT_DEBUG_DIR = BASE_DIR / "data" / "playwright_debug"
 
 
 class Settings(BaseSettings):
@@ -61,6 +66,12 @@ class Settings(BaseSettings):
     hh_ui_screenshot_on_error: bool = False
     # Prefer POST /applicant/vacancy_response/popup via in-page fetch before modal automation.
     hh_ui_apply_use_popup_api: bool = True
+    # Celery wall-clock limits for ``hh_ui.apply_to_vacancy`` (Playwright; may wait on slow pages).
+    hh_ui_apply_task_soft_time_limit: int = Field(default=480, ge=60, le=3600)
+    hh_ui_apply_task_time_limit: int = Field(default=600, ge=120, le=7200)
+    # DB-synced via admin toggle (see AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS)
+    hh_ui_debug_playwright_screenshots: bool = False
+    hh_ui_debug_screenshot_dir: str = str(_DEFAULT_PLAYWRIGHT_DEBUG_DIR)
 
     # HH server-side login assist (Playwright on worker; optional noVNC — see docs/HH_LOGIN_ASSIST.md)
     hh_login_assist_enabled: bool = False
@@ -94,6 +105,14 @@ class Settings(BaseSettings):
         if not self.admin_telegram_ids:
             return []
         return [int(x.strip()) for x in self.admin_telegram_ids.split(",") if x.strip()]
+
+    @model_validator(mode="after")
+    def _hh_ui_apply_task_limits_order(self) -> Settings:
+        if self.hh_ui_apply_task_time_limit <= self.hh_ui_apply_task_soft_time_limit:
+            raise ValueError(
+                "hh_ui_apply_task_time_limit must be greater than hh_ui_apply_task_soft_time_limit"
+            )
+        return self
 
 
 settings = Settings()  # type: ignore[call-arg]

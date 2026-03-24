@@ -64,6 +64,9 @@ services:
       target: app
     restart: unless-stopped
     env_file: .env
+    volumes:
+      # Persist Playwright debug screenshots (admin: Debug Playwright Screenshots)
+      - ./data/playwright_debug:/app/data/playwright_debug
     depends_on:
       postgres:
         condition: service_healthy

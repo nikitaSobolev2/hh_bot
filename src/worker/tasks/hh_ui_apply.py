@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlparse
 
 from aiogram.types import BufferedInputFile
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import settings
+from src.core.constants import AppSettingKey
 from src.core.i18n import I18nContext, get_text
 from src.core.logging import get_logger
+from src.repositories.app_settings import AppSettingRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.hh.crypto import HhTokenCipher
@@ -36,6 +40,16 @@ def _vacancy_url_safe_for_log(url: str) -> str | None:
         return f"{p.scheme}://{p.netloc}{p.path}"
     except Exception:
         return None
+
+
+def _coerce_debug_screenshots_flag(raw: object) -> bool:
+    if raw is True:
+        return True
+    if raw is False or raw is None:
+        return False
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("true", "1", "yes")
+    return bool(raw)
 
 
 def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
@@ -63,6 +77,7 @@ async def _apply_ui_async(
     cover_letter: str = "",
     *,
     silent_feed: bool = False,
+    autorespond_progress: dict | None = None,
 ) -> dict:
     from src.bot.modules.autoparse import feed_services
     from src.bot.modules.autoparse.feed_handlers import (
@@ -76,7 +91,6 @@ async def _apply_ui_async(
     bot = self.create_bot()
     try:
         cipher = HhTokenCipher(settings.hh_token_encryption_key)
-        config = HhUiApplyConfig.from_settings()
 
         async with session_factory() as session:
             acc_repo = HhLinkedAccountRepository(session)
@@ -118,6 +132,20 @@ async def _apply_ui_async(
             vacancy = await vac_repo.get_by_id(autoparsed_vacancy_id)
             feed_repo = VacancyFeedSessionRepository(session)
             feed_session = await feed_repo.get_by_id(feed_session_id)
+
+            settings_repo = AppSettingRepository(session)
+            debug_raw = await settings_repo.get_value(
+                AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS,
+                default=False,
+            )
+            debug_screenshots = _coerce_debug_screenshots_flag(debug_raw)
+            config = HhUiApplyConfig.from_settings()
+            if debug_screenshots:
+                Path(settings.hh_ui_debug_screenshot_dir).mkdir(parents=True, exist_ok=True)
+                config = replace(
+                    config,
+                    debug_screenshot_dir=settings.hh_ui_debug_screenshot_dir,
+                )
 
         url = normalize_hh_vacancy_url(
             vacancy_url or (vacancy.url if vacancy else None),
@@ -245,6 +273,18 @@ async def _apply_ui_async(
 
         return {"status": status, "outcome": result.outcome.value}
     finally:
+        if autorespond_progress and autorespond_progress.get("task_key"):
+            with contextlib.suppress(Exception):
+                from src.services.autorespond_progress import tick_autorespond_bar
+
+                await tick_autorespond_bar(
+                    bot=bot,
+                    chat_id=chat_id,
+                    task_key=str(autorespond_progress["task_key"]),
+                    total=int(autorespond_progress["total"]),
+                    locale=str(autorespond_progress.get("locale") or locale),
+                    footer_failed_line=None,
+                )
         with contextlib.suppress(Exception):
             await bot.session.close()
 
@@ -253,8 +293,10 @@ async def _apply_ui_async(
     bind=True,
     base=HHBotTask,
     name="hh_ui.apply_to_vacancy",
-    soft_time_limit=360,
-    time_limit=420,
+    # Hard limit: worker child gets SIGKILL after ``time_limit`` (see Celery docs). Tune via
+    # ``HH_UI_APPLY_TASK_TIME_LIMIT`` / ``HH_UI_APPLY_TASK_SOFT_TIME_LIMIT`` when hh.ru or Playwright runs slow.
+    soft_time_limit=settings.hh_ui_apply_task_soft_time_limit,
+    time_limit=settings.hh_ui_apply_task_time_limit,
 )
 def apply_to_vacancy_ui_task(
     self,
@@ -270,6 +312,7 @@ def apply_to_vacancy_ui_task(
     feed_session_id: int,
     cover_letter: str = "",
     silent_feed: bool = False,
+    autorespond_progress: dict | None = None,
 ) -> dict:
     return run_async(
         lambda sf: _apply_ui_async(
@@ -287,5 +330,6 @@ def apply_to_vacancy_ui_task(
             feed_session_id,
             cover_letter,
             silent_feed=silent_feed,
+            autorespond_progress=autorespond_progress,
         )
     )

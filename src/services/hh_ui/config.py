@@ -16,6 +16,8 @@ class HhUiApplyConfig:
     headless: bool
     screenshot_on_error: bool
     use_popup_api: bool
+    # When set, persist PNGs on error / failure outcomes (admin DB toggle + worker builds path).
+    debug_screenshot_dir: str | None = None
 
     @classmethod
     def from_settings(cls) -> HhUiApplyConfig:
@@ -27,4 +29,5 @@ class HhUiApplyConfig:
             headless=bool(settings.hh_ui_headless),
             screenshot_on_error=bool(settings.hh_ui_screenshot_on_error),
             use_popup_api=bool(settings.hh_ui_apply_use_popup_api),
+            debug_screenshot_dir=None,
         )

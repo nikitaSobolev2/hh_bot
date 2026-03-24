@@ -8,6 +8,9 @@ hh_browser_storage_state.json
 logs/
 reports/
 
+# Playwright debug PNGs (admin toggle); keep data/playwright_debug/.gitkeep
+data/playwright_debug/*.png
+
 __pycache__/
 *.pyc
 *.pyo

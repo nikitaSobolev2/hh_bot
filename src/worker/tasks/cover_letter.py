@@ -435,6 +435,23 @@ async def _generate_cover_letter_async(
                 vacancy_id=vacancy_id,
                 error=str(exc),
             )
+            ap = apply_after.get("autorespond_progress")
+            max_r = int(getattr(task, "max_retries", 0) or 0)
+            if ap and getattr(task.request, "retries", 0) >= max_r:
+                from src.services.autorespond_progress import tick_autorespond_bar
+
+                tick_bot = task.create_bot()
+                try:
+                    await tick_autorespond_bar(
+                        bot=tick_bot,
+                        chat_id=int(apply_after["chat_id"]),
+                        task_key=str(ap["task_key"]),
+                        total=int(ap["total"]),
+                        locale=str(ap.get("locale") or locale),
+                        footer_failed_line=None,
+                    )
+                finally:
+                    await tick_bot.session.close()
             raise
         from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
 
@@ -451,6 +468,7 @@ async def _generate_cover_letter_async(
             apply_after["feed_session_id"],
             generated_text,
             silent_feed,
+            autorespond_progress=apply_after.get("autorespond_progress"),
         )
         if not silent_feed:
             from src.core.i18n import get_text
