@@ -12,6 +12,7 @@ from src.bot.modules.autoparse.feed_services import (
     complete_feed_session,
     compute_feed_results,
     create_feed_session,
+    employer_questions_pending_for_feed,
     format_ui_apply_result_line,
     get_feed_session,
     merge_liked_for_respond,
@@ -152,6 +153,38 @@ def test_build_vacancy_card_includes_compatibility_score(make_vacancy):
     card = build_vacancy_card(vacancy, index=0, total=1)
 
     assert "85" in card
+
+
+def test_build_vacancy_card_shows_employer_questions_when_kwarg_true(make_vacancy):
+    vacancy = make_vacancy(ai_summary="AI summary line")
+    vacancy.needs_employer_questions = False
+    card = build_vacancy_card(
+        vacancy,
+        index=0,
+        total=1,
+        locale="en",
+        employer_questions_pending=True,
+    )
+    assert "AI summary line" in card
+    assert "Employer questions pending" in card
+    assert card.rfind("AI summary line") < card.rfind("Employer questions pending")
+
+
+@pytest.mark.asyncio
+async def test_employer_questions_pending_for_feed_from_latest_attempt(make_vacancy):
+    vacancy = make_vacancy()
+    vacancy.needs_employer_questions = False
+    vacancy.hh_vacancy_id = "42"
+    session = MagicMock()
+    with patch(
+        "src.bot.modules.autoparse.feed_services.HhApplicationAttemptRepository"
+    ) as mock_repo_cls:
+        mock_repo = MagicMock()
+        mock_repo.latest_attempt_status_for_user_vacancy = AsyncMock(
+            return_value="needs_employer_questions"
+        )
+        mock_repo_cls.return_value = mock_repo
+        assert await employer_questions_pending_for_feed(session, 1, vacancy) is True
 
 
 def test_build_vacancy_card_skips_missing_optional_fields(make_vacancy):

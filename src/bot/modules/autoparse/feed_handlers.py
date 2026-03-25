@@ -38,6 +38,26 @@ logger = get_logger(__name__)
 _LIST_RESUMES_TIMEOUT_S = 120.0
 
 
+async def _feed_vacancy_card_text(
+    session: AsyncSession,
+    user: User,
+    vacancy,
+    index: int,
+    total: int,
+    locale: str,
+    mode: str = "summary",
+) -> str:
+    pending = await feed_services.employer_questions_pending_for_feed(session, user.id, vacancy)
+    return feed_services.build_vacancy_card(
+        vacancy,
+        index,
+        total,
+        locale,
+        mode,
+        employer_questions_pending=pending,
+    )
+
+
 def _resume_cache_to_lists(resume_list_cache: list | None) -> tuple[list[str], list[str]] | None:
     if not resume_list_cache or not isinstance(resume_list_cache, list):
         return None
@@ -400,8 +420,8 @@ async def handle_feed_toggle_view(
 
     total = len(feed_session.vacancy_ids)
     mode = callback_data.mode
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale, mode
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale, mode
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n, mode,
@@ -447,7 +467,9 @@ async def handle_feed_start(
         return
 
     total = len(feed_session.vacancy_ids)
-    text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
+    )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
@@ -488,7 +510,9 @@ async def handle_feed_react(
         await callback.answer()
         return
 
-    text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
+    )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
@@ -504,6 +528,7 @@ async def handle_feed_react(
 async def _feed_show_next_vacancy_or_results(
     callback: CallbackQuery,
     session: AsyncSession,
+    user: User,
     feed_session: VacancyFeedSession,
     i18n: I18nContext,
     *,
@@ -521,8 +546,8 @@ async def _feed_show_next_vacancy_or_results(
         await callback.answer()
         return
 
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id,
@@ -575,7 +600,7 @@ async def _feed_enqueue_ai_chain_and_advance(
     if not feed_session:
         await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
         return
-    await _feed_show_next_vacancy_or_results(callback, session, feed_session, i18n)
+    await _feed_show_next_vacancy_or_results(callback, session, user, feed_session, i18n)
     await run_celery_task(
         generate_cover_letter_task,
         user.id,
@@ -594,6 +619,7 @@ async def _feed_enqueue_ai_chain_and_advance(
 async def _feed_skip_respond_advance_feed(
     callback: CallbackQuery,
     session: AsyncSession,
+    user: User,
     feed_session: VacancyFeedSession,
     i18n: I18nContext,
     *,
@@ -606,7 +632,7 @@ async def _feed_skip_respond_advance_feed(
         await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
         return
     await _feed_show_next_vacancy_or_results(
-        callback, session, feed_session, i18n, toast=i18n.get(toast_key)
+        callback, session, user, feed_session, i18n, toast=i18n.get(toast_key)
     )
 
 
@@ -632,6 +658,7 @@ async def _maybe_feed_ai_chain_single_resume_cached(
         await _feed_skip_respond_advance_feed(
             callback,
             session,
+            user,
             feed_session,
             i18n,
             toast_key="feed-respond-skipped-already-applied-toast",
@@ -642,6 +669,7 @@ async def _maybe_feed_ai_chain_single_resume_cached(
         await _feed_skip_respond_advance_feed(
             callback,
             session,
+            user,
             feed_session,
             i18n,
             toast_key="feed-respond-skipped-rate-limited-toast",
@@ -680,7 +708,9 @@ async def handle_feed_show_later(
         await callback.answer()
         return
 
-    text = feed_services.build_vacancy_card(vacancy, feed_session.current_index, total, i18n.locale)
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
+    )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
         current_index=feed_session.current_index,
@@ -812,8 +842,8 @@ async def handle_feed_back_to_vacancy(
         else 0
     )
     total = len(vacancy_ids)
-    text = feed_services.build_vacancy_card(
-        vacancy, current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -865,8 +895,8 @@ async def handle_feed_prev_vacancy(
         return
 
     total = len(vacancy_ids)
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -1359,8 +1389,8 @@ async def handle_feed_respond_cancel(
         await callback.answer()
         return
     total = len(feed_session.vacancy_ids)
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -1430,7 +1460,7 @@ async def handle_feed_respond_pick(
                 else "feed-respond-skipped-rate-limited-toast"
             )
             await _feed_skip_respond_advance_feed(
-                callback, session, feed_session, i18n, toast_key=toast_key
+                callback, session, user, feed_session, i18n, toast_key=toast_key
             )
             return
 
@@ -1523,8 +1553,8 @@ async def handle_feed_respond_pick(
         feed_session = await feed_services.get_feed_session(session, feed_session.id) or feed_session
 
     total = len(feed_session.vacancy_ids)
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
     )
     if status == "success":
         text = f"{text}\n\n{i18n.get('feed-respond-success')}"
@@ -1625,8 +1655,8 @@ async def handle_feed_respond_letter_skip(
         "",
     )
     total = len(feed_session.vacancy_ids)
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
     )
     text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
     keyboard = feed_vacancy_keyboard(
@@ -1790,8 +1820,8 @@ async def handle_feed_respond_letter_paste(
         letter,
     )
     total = len(feed_session.vacancy_ids)
-    text = feed_services.build_vacancy_card(
-        vacancy, feed_session.current_index, total, i18n.locale
+    text = await _feed_vacancy_card_text(
+        session, user, vacancy, feed_session.current_index, total, i18n.locale
     )
     text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
     keyboard = feed_vacancy_keyboard(

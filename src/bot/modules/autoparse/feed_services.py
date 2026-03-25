@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.i18n import get_text
 from src.models.autoparse import AutoparsedVacancy
 from src.models.vacancy_feed import VacancyFeedSession
+from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
 _MAX_DESCRIPTION_LENGTH = 1500
@@ -234,13 +235,33 @@ def build_stats_message(
     return "\n".join(lines)
 
 
+async def employer_questions_pending_for_feed(
+    session: AsyncSession,
+    user_id: int,
+    vacancy: AutoparsedVacancy,
+) -> bool:
+    """True if the vacancy row or latest apply attempt indicates employer questions pending."""
+    if getattr(vacancy, "needs_employer_questions", False):
+        return True
+    repo = HhApplicationAttemptRepository(session)
+    st = await repo.latest_attempt_status_for_user_vacancy(user_id, vacancy.hh_vacancy_id)
+    return st == "needs_employer_questions"
+
+
 def build_vacancy_card(
     vacancy: AutoparsedVacancy,
     index: int,
     total: int,
     locale: str = "ru",
     mode: str = "summary",
+    *,
+    employer_questions_pending: bool | None = None,
 ) -> str:
+    if employer_questions_pending is None:
+        show_eq = getattr(vacancy, "needs_employer_questions", False)
+    else:
+        show_eq = employer_questions_pending
+
     progress = get_text("feed-vacancy-progress", locale, current=index + 1, total=total)
     safe_title = html.escape(vacancy.title)
     lines = [f"{progress} — <b><a href='{vacancy.url}'>{safe_title}</a></b>"]
@@ -278,13 +299,11 @@ def build_vacancy_card(
         label = get_text("autoparse-compatibility-label", locale)
         lines.append(f"\n🎯 {label}: {vacancy.compatibility_score:.0f}%")
 
-    if getattr(vacancy, "needs_employer_questions", False):
-        lines.append(f"\n📝 {get_text('feed-card-employer-questions', locale)}")
-
+    eq_reserve = 120 if show_eq else 0
     if mode == "description":
         if vacancy.description:
             header_length = len("\n".join(lines))
-            available = _TELEGRAM_MESSAGE_LIMIT - header_length - 50
+            available = _TELEGRAM_MESSAGE_LIMIT - header_length - 50 - eq_reserve
             limit = min(_MAX_FULL_DESCRIPTION_LENGTH, max(available, 500))
             raw = vacancy.description
             if len(raw) > limit:
@@ -292,7 +311,7 @@ def build_vacancy_card(
             lines.append(f"\n{html.escape(raw)}")
     elif vacancy.ai_summary:
         header_block = "\n".join(lines)
-        available = _TELEGRAM_MESSAGE_LIMIT - len(header_block) - 80
+        available = _TELEGRAM_MESSAGE_LIMIT - len(header_block) - 80 - eq_reserve
         truncation_suffix = get_text("feed-content-truncated", locale)
         raw = html.escape(vacancy.ai_summary)
         if len(raw) > available:
@@ -301,6 +320,9 @@ def build_vacancy_card(
     elif vacancy.description:
         truncated = vacancy.description[:_MAX_DESCRIPTION_LENGTH]
         lines.append(f"\n{html.escape(truncated)}")
+
+    if show_eq:
+        lines.append(f"\n\n📝 {get_text('feed-card-employer-questions', locale)}")
 
     return "\n".join(lines)
 

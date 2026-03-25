@@ -95,6 +95,24 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
         rows = result.scalars().all()
         return {str(r) for r in rows if r is not None}
 
+    async def latest_attempt_status_for_user_vacancy(
+        self,
+        user_id: int,
+        hh_vacancy_id: str,
+    ) -> str | None:
+        """Most recent attempt status for this user and HH vacancy id (by attempt id)."""
+        stmt = (
+            select(HhApplicationAttempt.status)
+            .where(
+                HhApplicationAttempt.user_id == user_id,
+                HhApplicationAttempt.hh_vacancy_id == hh_vacancy_id,
+            )
+            .order_by(HhApplicationAttempt.id.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def user_has_any_attempt_for_hh_vacancy(
         self,
         user_id: int,
