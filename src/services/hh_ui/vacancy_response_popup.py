@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -69,6 +70,77 @@ def _cap_raw_body_for_log(text: str) -> tuple[str, int, bool]:
     if n <= _RAW_BODY_LOG_MAX:
         return raw, n, False
     return raw[:_RAW_BODY_LOG_MAX], n, True
+
+
+def _popup_post_url(vacancy_url: str) -> str:
+    p = urlparse(vacancy_url or "")
+    if not p.scheme or not p.netloc:
+        return ""
+    return f"{p.scheme}://{p.netloc}{_POPUP_PATH}"
+
+
+def _cookie_header_for_page(page: Any, url: str) -> str | None:
+    """Serialize Playwright cookies for curl ``Cookie:`` header (same session as in-page fetch)."""
+    try:
+        ctx = page.context
+        cookies = ctx.cookies(urls=[url])
+        if not cookies:
+            cookies = ctx.cookies()
+        if not cookies:
+            return None
+        return "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+    except Exception:
+        return None
+
+
+def build_popup_apply_curl_command(
+    *,
+    vacancy_url: str,
+    post_url: str,
+    cookie_header: str | None,
+    xsrf: str,
+    vacancy_id: str,
+    resume_hash: str,
+    letter: str,
+    hhtm_from: str,
+) -> str:
+    """Single-line shell command equivalent to the in-page ``fetch`` (multipart ``-F``)."""
+    parts: list[str] = ["curl", "-sS", "-X", "POST", shlex.quote(post_url)]
+    if cookie_header:
+        parts.extend(["-H", shlex.quote(f"Cookie: {cookie_header}")])
+    parts.extend(
+        [
+            "-H",
+            shlex.quote("X-Requested-With: XMLHttpRequest"),
+            "-H",
+            shlex.quote("Accept: application/json"),
+            "-H",
+            shlex.quote(f"X-Xsrftoken: {xsrf}"),
+            "-H",
+            shlex.quote("X-hhtmSource: vacancy"),
+            "-H",
+            shlex.quote(f"X-hhtmFrom: {hhtm_from}"),
+            "-H",
+            shlex.quote(f"Referer: {vacancy_url}"),
+        ]
+    )
+    form_fields: list[tuple[str, str]] = [
+        ("_xsrf", xsrf),
+        ("vacancy_id", vacancy_id),
+        ("resume_hash", resume_hash),
+        ("ignore_postponed", "true"),
+        ("incomplete", "false"),
+        ("mark_applicant_visible_in_vacancy_country", "false"),
+        ("country_ids", "[]"),
+        ("letter", letter),
+        ("lux", "true"),
+        ("withoutTest", "no"),
+        ("hhtmFromLabel", ""),
+        ("hhtmSourceLabel", ""),
+    ]
+    for name, val in form_fields:
+        parts.extend(["-F", shlex.quote(f"{name}={val}")])
+    return " ".join(parts)
 
 
 def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
@@ -141,6 +213,28 @@ def try_apply_via_popup(
 
     hhtm_from = hhtm_from_for_popup(vacancy_url)
     letter = letter or ""
+
+    post_url = _popup_post_url(vacancy_url)
+    if post_url:
+        cookie_header = _cookie_header_for_page(page, vacancy_url)
+        curl_cmd = build_popup_apply_curl_command(
+            vacancy_url=vacancy_url,
+            post_url=post_url,
+            cookie_header=cookie_header,
+            xsrf=xsrf,
+            vacancy_id=vacancy_id,
+            resume_hash=resume_hash,
+            letter=letter,
+            hhtm_from=hhtm_from,
+        )
+        logger.info(
+            "vacancy_popup_curl",
+            log_user_id=log_user_id,
+            vacancy_id=vacancy_id,
+            post_url=post_url,
+            cookie_included=cookie_header is not None,
+            curl=curl_cmd,
+        )
 
     js = f"""
     async (args) => {{

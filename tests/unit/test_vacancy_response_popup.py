@@ -1,7 +1,12 @@
 """Tests for HH vacancy_response/popup helpers."""
 
 from src.services.hh_ui.outcomes import ApplyOutcome
-from src.services.hh_ui.vacancy_response_popup import _cap_raw_body_for_log, map_popup_json_to_apply_result
+from src.services.hh_ui.vacancy_response_popup import (
+    _popup_post_url,
+    build_popup_apply_curl_command,
+    map_popup_json_to_apply_result,
+    _cap_raw_body_for_log,
+)
 
 
 def test_cap_raw_body_for_log_truncates_at_64k():
@@ -26,3 +31,30 @@ def test_map_popup_json_unknown_error():
     assert r is not None
     assert r.outcome == ApplyOutcome.ERROR
     assert "unknown" in (r.detail or "")
+
+
+def test_popup_post_url():
+    assert _popup_post_url("https://izhevsk.hh.ru/vacancy/1") == (
+        "https://izhevsk.hh.ru/applicant/vacancy_response/popup"
+    )
+
+
+def test_build_popup_apply_curl_command_shape():
+    url = "https://hh.ru/vacancy/123"
+    post = "https://hh.ru/applicant/vacancy_response/popup"
+    curl = build_popup_apply_curl_command(
+        vacancy_url=url,
+        post_url=post,
+        cookie_header="a=b; c=d",
+        xsrf="tok",
+        vacancy_id="123",
+        resume_hash="resumehash",
+        letter="hi",
+        hhtm_from="vacancy_search_list",
+    )
+    assert "curl" in curl
+    assert post in curl
+    assert "Cookie: a=b; c=d" in curl
+    assert "X-Xsrftoken: tok" in curl or "X-Xsrftoken" in curl
+    assert "-F" in curl
+    assert "vacancy_id=123" in curl.replace("'", "")
