@@ -506,10 +506,12 @@ async def _feed_show_next_vacancy_or_results(
     session: AsyncSession,
     feed_session: VacancyFeedSession,
     i18n: I18nContext,
+    *,
+    toast: str | None = None,
 ) -> None:
     total = len(feed_session.vacancy_ids)
     if feed_session.current_index >= total:
-        await _show_results(callback, session, feed_session, i18n)
+        await _show_results(callback, session, feed_session, i18n, toast=toast)
         return
 
     vacancy_repo = AutoparsedVacancyRepository(session)
@@ -533,7 +535,122 @@ async def _feed_show_next_vacancy_or_results(
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    await callback.answer(toast) if toast else await callback.answer()
+
+
+async def _feed_enqueue_ai_chain_and_advance(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    feed_session: VacancyFeedSession,
+    vacancy,
+    resume_id: str,
+    i18n: I18nContext,
+) -> None:
+    from src.bot.modules.autoparse import services as ap_service
+    from src.core.celery_async import run_celery_task
+    from src.services.hh_ui.runner import normalize_hh_vacancy_url
+    from src.worker.tasks.cover_letter import generate_cover_letter_task
+
+    await state.clear()
+    vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
+    apply_after = {
+        "user_id": user.id,
+        "chat_id": callback.message.chat.id,
+        "message_id": callback.message.message_id,
+        "locale": i18n.locale,
+        "hh_linked_account_id": feed_session.hh_linked_account_id,
+        "autoparsed_vacancy_id": vacancy.id,
+        "hh_vacancy_id": vacancy.hh_vacancy_id,
+        "resume_id": resume_id,
+        "vacancy_url": vacancy_url,
+        "feed_session_id": feed_session.id,
+    }
+    current = await ap_service.get_user_autoparse_settings(session, user.id)
+    cover_letter_style = current.get("cover_letter_style", "professional")
+    session_id = feed_session.id
+    await feed_services.advance_feed_index(session, feed_session)
+    feed_session = await feed_services.get_feed_session(session, session_id)
+    if not feed_session:
+        await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
+        return
+    await _feed_show_next_vacancy_or_results(callback, session, feed_session, i18n)
+    await run_celery_task(
+        generate_cover_letter_task,
+        user.id,
+        vacancy.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+        cover_letter_style,
+        feed_session.id,
+        "feed_respond_apply",
+        apply_after=apply_after,
+        silent_feed=True,
+    )
+
+
+async def _feed_skip_respond_advance_feed(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    feed_session: VacancyFeedSession,
+    i18n: I18nContext,
+    *,
+    toast_key: str,
+) -> None:
+    await feed_services.advance_feed_index(session, feed_session)
+    session_id = feed_session.id
+    feed_session = await feed_services.get_feed_session(session, session_id)
+    if not feed_session:
+        await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
+        return
+    await _feed_show_next_vacancy_or_results(
+        callback, session, feed_session, i18n, toast=i18n.get(toast_key)
+    )
+
+
+async def _maybe_feed_ai_chain_single_resume_cached(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    user: User,
+    state: FSMContext,
+    feed_session: VacancyFeedSession,
+    vacancy,
+    resume_id: str,
+    i18n: I18nContext,
+) -> bool:
+    """Resume cache hit + single resume + ai_chain: enqueue or skip without extra tap."""
+    from src.config import settings
+    from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
+
+    if not settings.hh_ui_apply_enabled:
+        return False
+    attempt_repo = HhApplicationAttemptRepository(session)
+    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+        await state.clear()
+        await _feed_skip_respond_advance_feed(
+            callback,
+            session,
+            feed_session,
+            i18n,
+            toast_key="feed-respond-skipped-already-applied-toast",
+        )
+        return True
+    if not await try_acquire_ui_apply_slot_async(user.id):
+        await state.clear()
+        await _feed_skip_respond_advance_feed(
+            callback,
+            session,
+            feed_session,
+            i18n,
+            toast_key="feed-respond-skipped-rate-limited-toast",
+        )
+        return True
+    await _feed_enqueue_ai_chain_and_advance(
+        callback, session, user, state, feed_session, vacancy, resume_id, i18n
+    )
+    return True
 
 
 @router.callback_query(FeedCallback.filter(F.action == "show_later"))
@@ -880,6 +997,18 @@ async def _feed_respond_core(
         cached = _resume_cache_to_lists(acc.resume_list_cache)
         if cached:
             resume_ids, titles = cached
+            if respond_mode == "ai_chain" and len(resume_ids) == 1:
+                if await _maybe_feed_ai_chain_single_resume_cached(
+                    callback,
+                    session,
+                    user,
+                    state,
+                    feed_session,
+                    vacancy,
+                    resume_ids[0],
+                    i18n,
+                ):
+                    return
             await callback.answer()
             logger.info(
                 "feed_respond_resume_cache_hit",
@@ -1254,13 +1383,9 @@ async def handle_feed_respond_pick(
     i18n: I18nContext,
 ) -> None:
     from src.config import settings
-    from src.core.celery_async import run_celery_task
     from src.services.hh.client import HhApiError, apply_to_vacancy_with_resume
     from src.services.hh.token_service import ensure_access_token
     from src.services.hh_ui.rate_limit import try_acquire_ui_apply_slot_async
-    from src.services.hh_ui.runner import normalize_hh_vacancy_url
-    from src.worker.tasks.cover_letter import generate_cover_letter_task
-    from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
 
     data = await state.get_data()
     resume_ids = data.get("resume_ids") or []
@@ -1293,13 +1418,20 @@ async def handle_feed_respond_pick(
 
     if settings.hh_ui_apply_enabled:
         attempt_repo = HhApplicationAttemptRepository(session)
-        if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+        blocked_already = await attempt_repo.has_successful_apply(
+            user.id, vacancy.hh_vacancy_id, resume_id
+        )
+        rate_ok = await try_acquire_ui_apply_slot_async(user.id)
+        if blocked_already or not rate_ok:
             await state.clear()
-            await callback.answer(i18n.get("feed-respond-ui-already-applied"), show_alert=True)
-            return
-        if not await try_acquire_ui_apply_slot_async(user.id):
-            await state.clear()
-            await callback.answer(i18n.get("feed-respond-ui-rate-limited"), show_alert=True)
+            toast_key = (
+                "feed-respond-skipped-already-applied-toast"
+                if blocked_already
+                else "feed-respond-skipped-rate-limited-toast"
+            )
+            await _feed_skip_respond_advance_feed(
+                callback, session, feed_session, i18n, toast_key=toast_key
+            )
             return
 
         if respond_mode == "letter_then_apply":
@@ -1323,43 +1455,15 @@ async def handle_feed_respond_pick(
             return
 
         if respond_mode == "ai_chain":
-            await state.clear()
-            from src.bot.modules.autoparse import services as ap_service
-
-            vacancy_url = normalize_hh_vacancy_url(vacancy.url, vacancy.hh_vacancy_id)
-            apply_after = {
-                "user_id": user.id,
-                "chat_id": callback.message.chat.id,
-                "message_id": callback.message.message_id,
-                "locale": i18n.locale,
-                "hh_linked_account_id": feed_session.hh_linked_account_id,
-                "autoparsed_vacancy_id": vacancy.id,
-                "hh_vacancy_id": vacancy.hh_vacancy_id,
-                "resume_id": resume_id,
-                "vacancy_url": vacancy_url,
-                "feed_session_id": feed_session.id,
-            }
-            current = await ap_service.get_user_autoparse_settings(session, user.id)
-            cover_letter_style = current.get("cover_letter_style", "professional")
-            session_id = feed_session.id
-            await feed_services.advance_feed_index(session, feed_session)
-            feed_session = await feed_services.get_feed_session(session, session_id)
-            if not feed_session:
-                await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
-                return
-            await _feed_show_next_vacancy_or_results(callback, session, feed_session, i18n)
-            await run_celery_task(
-                generate_cover_letter_task,
-                user.id,
-                vacancy.id,
-                callback.message.chat.id,
-                callback.message.message_id,
-                i18n.locale,
-                cover_letter_style,
-                feed_session.id,
-                "feed_respond_apply",
-                apply_after=apply_after,
-                silent_feed=True,
+            await _feed_enqueue_ai_chain_and_advance(
+                callback,
+                session,
+                user,
+                state,
+                feed_session,
+                vacancy,
+                resume_id,
+                i18n,
             )
             return
 
@@ -1727,6 +1831,8 @@ async def _show_results(
     session: AsyncSession,
     feed_session: VacancyFeedSession,
     i18n: I18nContext,
+    *,
+    toast: str | None = None,
 ) -> None:
     if not feed_session.is_completed:
         await feed_services.complete_feed_session(session, feed_session)
@@ -1778,4 +1884,4 @@ async def _show_results(
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    await callback.answer()
+    await callback.answer(toast) if toast else await callback.answer()

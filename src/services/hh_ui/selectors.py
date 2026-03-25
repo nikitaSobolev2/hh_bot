@@ -82,3 +82,5 @@ RESPONSE_LETTER_TEXTAREA: tuple[str, ...] = (
 
 # Applicant resume list page (HTML fetch + parse in applicant_http).
 APPLICANT_RESUMES_URL = "https://hh.ru/applicant/resumes"
+# Applicant negotiations (responses list); regional hosts redirect with same cookies.
+APPLICANT_NEGOTIATIONS_PATH = "/applicant/negotiations"

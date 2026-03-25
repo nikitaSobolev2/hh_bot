@@ -74,6 +74,44 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
         rows = result.scalars().all()
         return {str(r) for r in rows if r is not None}
 
+    async def hh_vacancy_ids_with_success_or_employer_questions(
+        self,
+        user_id: int,
+        hh_vacancy_ids: list[str],
+    ) -> set[str]:
+        """Vacancies to skip in autorespond: success or employer questions pending (any resume)."""
+        if not hh_vacancy_ids:
+            return set()
+        stmt = (
+            select(HhApplicationAttempt.hh_vacancy_id)
+            .where(
+                HhApplicationAttempt.user_id == user_id,
+                HhApplicationAttempt.hh_vacancy_id.in_(hh_vacancy_ids),
+                HhApplicationAttempt.status.in_(("success", "needs_employer_questions")),
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        rows = result.scalars().all()
+        return {str(r) for r in rows if r is not None}
+
+    async def user_has_any_attempt_for_hh_vacancy(
+        self,
+        user_id: int,
+        hh_vacancy_id: str,
+    ) -> bool:
+        """True if any attempt row exists for this user+vacancy (sync or real apply)."""
+        stmt = (
+            select(func.count())
+            .select_from(HhApplicationAttempt)
+            .where(
+                HhApplicationAttempt.user_id == user_id,
+                HhApplicationAttempt.hh_vacancy_id == hh_vacancy_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return (result.scalar_one() or 0) > 0
+
     async def list_for_feed_session_summary(
         self,
         user_id: int,

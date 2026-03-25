@@ -299,9 +299,9 @@ async def _run_autorespond_async(
         )
 
         attempt_repo = HhApplicationAttemptRepository(session)
-        already_success: set[str] = set()
+        already_handled: set[str] = set()
         if capped:
-            already_success = await attempt_repo.hh_vacancy_ids_with_successful_apply_any_resume(
+            already_handled = await attempt_repo.hh_vacancy_ids_with_success_or_employer_questions(
                 user.id,
                 [v.hh_vacancy_id for v in capped],
             )
@@ -368,7 +368,7 @@ async def _run_autorespond_async(
                         "trigger": trigger,
                     }
 
-                if vac.hh_vacancy_id in already_success:
+                if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
                     skipped += 1
                     if ar_prog and progress_bot:
                         await tick_autorespond_bar(

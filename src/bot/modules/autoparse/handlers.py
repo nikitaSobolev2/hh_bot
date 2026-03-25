@@ -42,6 +42,7 @@ from src.models.autoparse import AutoparseCompany
 from src.models.user import User
 from src.repositories.app_settings import AppSettingRepository
 from src.repositories.autoparse import AutoparsedVacancyRepository
+from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.repositories.parsing import ParsingCompanyRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 
@@ -60,6 +61,31 @@ async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
         return True
     experiences = await parsing_service.get_active_work_experiences(session, user_id)
     return bool(experiences)
+
+
+async def _user_has_hh_browser_session(session: AsyncSession, user_id: int) -> bool:
+    """True if the user has at least one HH account with saved Playwright storage."""
+    hh_repo = HhLinkedAccountRepository(session)
+    accs = await hh_repo.list_active_for_user(user_id)
+    return any(a.browser_storage_enc for a in accs)
+
+
+async def _resolve_hh_linked_account_for_negotiations_sync(
+    session: AsyncSession,
+    user: User,
+    company: AutoparseCompany,
+) -> int | None:
+    """Prefer company autorespond HH account; else first linked account with browser storage."""
+    hh_repo = HhLinkedAccountRepository(session)
+    if company.autorespond_hh_linked_account_id:
+        acc = await hh_repo.get_by_id(company.autorespond_hh_linked_account_id)
+        if acc and acc.user_id == user.id and acc.browser_storage_enc:
+            return acc.id
+    accs = await hh_repo.list_active_for_user(user.id)
+    for a in accs:
+        if a.browser_storage_enc:
+            return a.id
+    return None
 
 
 async def _should_show_run_now(
@@ -573,6 +599,7 @@ async def company_detail(
     count = await ap_service.get_vacancy_count(session, company.id)
     show_run_now = await _should_show_run_now(session, company, user)
     ar_task_on = await autorespond_globally_enabled(session)
+    show_sync = await _user_has_hh_browser_session(session, user.id)
     text = ap_service.format_company_detail(
         company,
         count,
@@ -589,9 +616,40 @@ async def company_detail(
                 show_run_now=show_run_now,
                 show_show_now=(count > 0),
                 show_autorespond=True,
+                show_sync_negotiations=show_sync,
             ),
         )
     await callback.answer()
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "sync_negotiations"))
+async def sync_negotiations_with_app(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.negotiations_sync import sync_negotiations_from_hh_task
+
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+    hh_id = await _resolve_hh_linked_account_for_negotiations_sync(session, user, company)
+    if not hh_id:
+        await callback.answer(i18n.get("autoparse-sync-error-no-session"), show_alert=True)
+        return
+    await run_celery_task(
+        sync_negotiations_from_hh_task,
+        user.id,
+        hh_id,
+        company.id,
+        callback.message.chat.id,
+        i18n.locale,
+    )
+    await callback.answer(i18n.get("autoparse-sync-queued"))
 
 
 # ── Edit keywords ───────────────────────────────────────────────────
@@ -655,6 +713,7 @@ async def edit_keywords_receive(
     count = await ap_service.get_vacancy_count(session, company.id)
     show_run_now = await _should_show_run_now(session, company, user)
     ar_task_on = await autorespond_globally_enabled(session)
+    show_sync = await _user_has_hh_browser_session(session, user.id)
     text = ap_service.format_company_detail(
         company,
         count,
@@ -673,6 +732,7 @@ async def edit_keywords_receive(
                 show_run_now=show_run_now,
                 show_show_now=(count > 0),
                 show_autorespond=True,
+                show_sync_negotiations=show_sync,
             ),
         )
     await message.answer(i18n.get("autoparse-edit-keywords-saved"))
@@ -700,6 +760,7 @@ async def toggle_company(
         count = await ap_service.get_vacancy_count(session, company.id)
         show_run_now = await _should_show_run_now(session, company, user)
         ar_task_on = await autorespond_globally_enabled(session)
+        show_sync = await _user_has_hh_browser_session(session, user.id)
         text = ap_service.format_company_detail(
             company,
             count,
@@ -716,6 +777,7 @@ async def toggle_company(
                     show_run_now=show_run_now,
                     show_show_now=(count > 0),
                     show_autorespond=True,
+                    show_sync_negotiations=show_sync,
                 ),
             )
 
@@ -742,6 +804,7 @@ async def run_now(
     if not await _should_show_run_now(session, company, user):
         count = await ap_service.get_vacancy_count(session, company.id)
         ar_task_on = await autorespond_globally_enabled(session)
+        show_sync = await _user_has_hh_browser_session(session, user.id)
         text = ap_service.format_company_detail(
             company,
             count,
@@ -758,6 +821,7 @@ async def run_now(
                     show_run_now=False,
                     show_show_now=(count > 0),
                     show_autorespond=True,
+                    show_sync_negotiations=show_sync,
                 ),
             )
         await callback.answer(i18n.get("autoparse-run-already-running"), show_alert=True)
@@ -772,6 +836,7 @@ async def run_now(
 
     count = await ap_service.get_vacancy_count(session, company.id)
     ar_task_on = await autorespond_globally_enabled(session)
+    show_sync = await _user_has_hh_browser_session(session, user.id)
     text = ap_service.format_company_detail(
         company,
         count,
@@ -788,6 +853,7 @@ async def run_now(
                 show_run_now=False,
                 show_show_now=(count > 0),
                 show_autorespond=True,
+                show_sync_negotiations=show_sync,
             ),
         )
 

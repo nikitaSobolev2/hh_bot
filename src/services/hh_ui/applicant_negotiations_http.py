@@ -1,0 +1,120 @@
+"""HTTP fetch + HTML parse for hh.ru applicant negotiations (responses list)."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
+from bs4 import BeautifulSoup
+
+from src.services.hh_ui.applicant_http import (
+    HH_APPLICANT_FETCH_USER_AGENT,
+    httpx_cookies_from_storage_state,
+    url_suggests_login_page,
+)
+from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.selectors import APPLICANT_NEGOTIATIONS_PATH
+
+_VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)")
+
+
+def _negotiations_url(base: str, page: int) -> str:
+    b = base.rstrip("/")
+    if page <= 1:
+        return f"{b}{APPLICANT_NEGOTIATIONS_PATH}"
+    return f"{b}{APPLICANT_NEGOTIATIONS_PATH}?page={page}"
+
+
+def _negotiations_base_url(storage_state: dict[str, Any]) -> str:
+    """Prefer regional host from cookies (e.g. izhevsk.hh.ru), else hh.ru."""
+    for c in storage_state.get("cookies") or []:
+        if not isinstance(c, dict):
+            continue
+        domain = str(c.get("domain", "")).lower()
+        if "hh.ru" not in domain:
+            continue
+        d = domain.lstrip(".")
+        if d.endswith("hh.ru") and d != "hh.ru":
+            return f"https://{d}"
+    return "https://hh.ru"
+
+
+def fetch_applicant_negotiations_html(
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+    *,
+    page: int = 1,
+) -> tuple[str | None, str | None, str | None]:
+    """GET applicant/negotiations with session cookies.
+
+    Returns (html, error_detail, final_url_after_redirects).
+    """
+    base = _negotiations_base_url(storage_state)
+    url = _negotiations_url(base, page)
+    cookies = httpx_cookies_from_storage_state(storage_state)
+    timeout = max(config.navigation_timeout_ms / 1000.0, 5.0)
+    headers = {
+        "User-Agent": HH_APPLICANT_FETCH_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    }
+    try:
+        with httpx.Client(cookies=cookies, follow_redirects=True, timeout=timeout) as client:
+            r = client.get(url, headers=headers)
+        if r.status_code != 200:
+            return None, f"http_{r.status_code}", str(r.url)
+        return r.text, None, str(r.url)
+    except httpx.HTTPError as exc:
+        return None, str(exc)[:200], None
+
+
+def parse_negotiation_vacancy_ids_from_html(html: str) -> set[str]:
+    """Extract numeric vacancy ids from negotiations list HTML."""
+    soup = BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
+    items = soup.select('[data-qa="negotiations-item"]')
+    roots = items if items else [soup]
+    for root in roots:
+        for a in root.find_all("a", href=True):
+            href = str(a.get("href") or "")
+            m = _VACANCY_ID_RE.search(href)
+            if m:
+                seen.add(m.group(1))
+    if not seen:
+        for m in _VACANCY_ID_RE.finditer(html):
+            seen.add(m.group(1))
+    return seen
+
+
+def fetch_all_negotiation_vacancy_ids(
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+    *,
+    max_pages: int = 100,
+) -> tuple[set[str], str | None]:
+    """Fetch all pages until no new ids or empty page. Returns (ids, error)."""
+    all_ids: set[str] = set()
+    for page in range(1, max_pages + 1):
+        html, err, final_url = fetch_applicant_negotiations_html(storage_state, config, page=page)
+        if err:
+            return all_ids, err
+        if not html:
+            break
+        if final_url and url_suggests_login_page(final_url):
+            return all_ids, "login_redirect"
+        try:
+            path = urlparse(final_url or "").path.lower()
+            if APPLICANT_NEGOTIATIONS_PATH.rstrip("/") not in path and page == 1:
+                return all_ids, "unexpected_url"
+        except Exception:
+            pass
+        page_ids = parse_negotiation_vacancy_ids_from_html(html)
+        if not page_ids:
+            break
+        new_only = page_ids - all_ids
+        if not new_only and page > 1:
+            break
+        all_ids |= page_ids
+    return all_ids, None

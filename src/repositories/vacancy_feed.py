@@ -9,6 +9,18 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, VacancyFeedSession)
 
+    async def list_sessions_for_user_company(
+        self,
+        user_id: int,
+        company_id: int,
+    ) -> list[VacancyFeedSession]:
+        stmt = select(VacancyFeedSession).where(
+            VacancyFeedSession.user_id == user_id,
+            VacancyFeedSession.autoparse_company_id == company_id,
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_all_seen_vacancy_ids(self, user_id: int, company_id: int) -> set[int]:
         """Return all vacancy IDs queued in any feed session for this user and company.
 

@@ -162,6 +162,36 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         result = await self._session.execute(stmt)
         return set(result.scalars().all())
 
+    async def list_ids_by_company_and_hh_vacancy_ids(
+        self,
+        company_id: int,
+        hh_vacancy_ids: set[str],
+    ) -> list[int]:
+        """Autoparsed vacancy PKs for this company whose hh_vacancy_id is in *hh_vacancy_ids*."""
+        if not hh_vacancy_ids:
+            return []
+        stmt = select(AutoparsedVacancy.id).where(
+            AutoparsedVacancy.autoparse_company_id == company_id,
+            AutoparsedVacancy.hh_vacancy_id.in_(list(hh_vacancy_ids)),
+        )
+        result = await self._session.execute(stmt)
+        return [int(x) for x in result.scalars().all()]
+
+    async def hh_vacancy_ids_already_in_company(
+        self,
+        company_id: int,
+        hh_vacancy_ids: set[str],
+    ) -> set[str]:
+        """Subset of *hh_vacancy_ids* that already exist for this autoparse company."""
+        if not hh_vacancy_ids:
+            return set()
+        stmt = select(AutoparsedVacancy.hh_vacancy_id).where(
+            AutoparsedVacancy.autoparse_company_id == company_id,
+            AutoparsedVacancy.hh_vacancy_id.in_(list(hh_vacancy_ids)),
+        )
+        result = await self._session.execute(stmt)
+        return {str(x) for x in result.scalars().all() if x is not None}
+
     async def get_all_known_hh_ids(self) -> set[str]:
         stmt = select(AutoparsedVacancy.hh_vacancy_id).distinct()
         result = await self._session.execute(stmt)

@@ -251,6 +251,7 @@ def autoparse_detail_keyboard(
     show_run_now: bool = False,
     show_show_now: bool = False,
     show_autorespond: bool = False,
+    show_sync_negotiations: bool = False,
 ) -> InlineKeyboardMarkup:
     toggle_text = (
         i18n.get("autoparse-toggle-disabled")
@@ -322,6 +323,17 @@ def autoparse_detail_keyboard(
                     text=i18n.get("autorespond-btn-run"),
                     callback_data=AutoparseCallback(
                         action="ar_run", company_id=company.id
+                    ).pack(),
+                )
+            ]
+        )
+    if show_sync_negotiations:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-sync-responds-with-app"),
+                    callback_data=AutoparseCallback(
+                        action="sync_negotiations", company_id=company.id
                     ).pack(),
                 )
             ]
