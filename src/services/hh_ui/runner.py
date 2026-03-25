@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 import re
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,29 @@ def _maybe_screenshot(page: Any, cfg: HhUiApplyConfig) -> bytes | None:
         return page.screenshot(type="png")
     except Exception:
         return None
+
+
+def _maybe_embed_popup_error_screenshot(
+    config: HhUiApplyConfig,
+    page: Any,
+    result: ApplyResult,
+) -> ApplyResult:
+    """Attach full-page PNG to ApplyResult for disk/Telegram when admin enables attach_error_screenshot_bytes."""
+    if not config.attach_error_screenshot_bytes:
+        return result
+    if result.screenshot_bytes:
+        return result
+    if result.outcome == ApplyOutcome.CAPTCHA:
+        return result
+    if result.outcome not in _DEBUG_SAVE_OUTCOMES:
+        return result
+    try:
+        shot = _screenshot_page_captcha(page)
+        if shot:
+            return replace(result, screenshot_bytes=shot)
+    except Exception:
+        pass
+    return result
 
 
 _DEBUG_SAVE_OUTCOMES = frozenset(
@@ -456,6 +480,13 @@ def apply_to_vacancy_ui(
                 )
 
             if config.use_popup_api:
+                logger.info(
+                    "apply_to_vacancy_ui_step",
+                    log_user_id=log_user_id,
+                    step="before_popup_api",
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                )
                 popup_result = try_apply_via_popup(
                     page,
                     vacancy_url,
@@ -464,6 +495,9 @@ def apply_to_vacancy_ui(
                     letter=cover_letter or "",
                 )
                 if popup_result is not None:
+                    popup_result = _maybe_embed_popup_error_screenshot(
+                        config, page, popup_result
+                    )
                     logger.info(
                         "apply_to_vacancy_ui_done",
                         log_user_id=log_user_id,
@@ -474,6 +508,14 @@ def apply_to_vacancy_ui(
                         detail=(popup_result.detail or "")[:200] if popup_result.detail else None,
                     )
                     return _finish(popup_result, "popup_api")
+
+            logger.info(
+                "apply_to_vacancy_ui_step",
+                log_user_id=log_user_id,
+                step="modal_apply_flow",
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+            )
 
             if not _click_first(
                 page,

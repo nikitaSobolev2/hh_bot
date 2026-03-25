@@ -110,6 +110,7 @@ async def _apply_ui_async(
         }
 
     bot = self.create_bot()
+    send_error_screenshot_to_user = False
     try:
         cipher = HhTokenCipher(settings.hh_token_encryption_key)
 
@@ -160,6 +161,12 @@ async def _apply_ui_async(
                 default=False,
             )
             debug_screenshots = _coerce_debug_screenshots_flag(debug_raw)
+            send_err_raw = await settings_repo.get_value(
+                AppSettingKey.HH_UI_DEBUG_SEND_ERROR_SCREENSHOT_TO_USER,
+                default=False,
+            )
+            send_error_screenshot_to_user = _coerce_debug_screenshots_flag(send_err_raw)
+            attach_error_bytes = debug_screenshots or send_error_screenshot_to_user
             config = HhUiApplyConfig.from_settings()
             if debug_screenshots:
                 Path(settings.hh_ui_debug_screenshot_dir).mkdir(parents=True, exist_ok=True)
@@ -167,6 +174,8 @@ async def _apply_ui_async(
                     config,
                     debug_screenshot_dir=settings.hh_ui_debug_screenshot_dir,
                 )
+            if attach_error_bytes:
+                config = replace(config, attach_error_screenshot_bytes=True)
 
         url = normalize_hh_vacancy_url(
             vacancy_url or (vacancy.url if vacancy else None),
@@ -202,7 +211,7 @@ async def _apply_ui_async(
             user_id=user_id,
             vacancy_id=autoparsed_vacancy_id,
             outcome=result.outcome.value,
-            detail=(result.detail or "")[:200] if result.detail else None,
+            detail=(result.detail or "")[:2000] if result.detail else None,
         )
 
         status, err_code = _map_outcome_to_status(result.outcome)
@@ -257,6 +266,21 @@ async def _apply_ui_async(
                 vacancy = v_fresh
 
         if silent_feed:
+            if (
+                send_error_screenshot_to_user
+                and result.screenshot_bytes
+                and status != "success"
+            ):
+                err_name = (
+                    "hh_captcha.png"
+                    if result.outcome == ApplyOutcome.CAPTCHA
+                    else "hh_apply_error.png"
+                )
+                with contextlib.suppress(Exception):
+                    await bot.send_photo(
+                        chat_id,
+                        BufferedInputFile(result.screenshot_bytes, err_name),
+                    )
             return {"status": status, "outcome": result.outcome.value}
 
         i18n = I18nContext(locale)
@@ -307,6 +331,17 @@ async def _apply_ui_async(
                 await bot.send_photo(
                     chat_id,
                     BufferedInputFile(result.screenshot_bytes, "hh_captcha.png"),
+                )
+        elif (
+            send_error_screenshot_to_user
+            and result.screenshot_bytes
+            and status != "success"
+            and result.outcome != ApplyOutcome.CAPTCHA
+        ):
+            with contextlib.suppress(Exception):
+                await bot.send_photo(
+                    chat_id,
+                    BufferedInputFile(result.screenshot_bytes, "hh_apply_error.png"),
                 )
 
         return {"status": status, "outcome": result.outcome.value}

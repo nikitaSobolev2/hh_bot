@@ -44,6 +44,11 @@ MANAGED_SETTINGS = [
         ],
     ),
     ("hh_ui_debug_playwright_screenshots", "Debug Playwright Screenshots (save on errors)", "toggle"),
+    (
+        "hh_ui_debug_send_error_screenshot_to_user",
+        "HH UI: send error screenshot to user (Telegram)",
+        "toggle",
+    ),
 ]
 
 AUTOPARSE_TARGET_VALID = {10, 30, 50, 5000}

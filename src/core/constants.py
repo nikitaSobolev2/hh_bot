@@ -184,6 +184,8 @@ class AppSettingKey(StrEnum):
 
     # Playwright: save PNGs on failed/error flows (admin toggle; path from env)
     HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS = "hh_ui_debug_playwright_screenshots"
+    # When True, send full-page error screenshot to the user in Telegram (admin; default off)
+    HH_UI_DEBUG_SEND_ERROR_SCREENSHOT_TO_USER = "hh_ui_debug_send_error_screenshot_to_user"
     # Per-user daily cap for UI applies (Redis counter); 0 = unlimited (admin)
     HH_UI_APPLY_MAX_PER_DAY = "hh_ui_apply_max_per_day"
 

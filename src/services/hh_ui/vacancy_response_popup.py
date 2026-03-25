@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 _POPUP_PATH = "/applicant/vacancy_response/popup"
 _LOG_BODY_MAX = 1200
+_RAW_BODY_LOG_MAX = 64 * 1024  # cap full response in logs (ops / self-hosted)
 
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)", re.IGNORECASE)
 _XSRF_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -59,6 +60,15 @@ def _truncate_for_log(s: str, max_len: int = _LOG_BODY_MAX) -> str:
     if len(s) <= max_len:
         return s
     return s[:max_len] + "…"
+
+
+def _cap_raw_body_for_log(text: str) -> tuple[str, int, bool]:
+    """Return (capped_text, original_len, truncated)."""
+    raw = text or ""
+    n = len(raw)
+    if n <= _RAW_BODY_LOG_MAX:
+        return raw, n, False
+    return raw[:_RAW_BODY_LOG_MAX], n, True
 
 
 def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
@@ -196,16 +206,28 @@ def try_apply_via_popup(
     text = str(raw.get("text") or "")
     ok = bool(raw.get("ok"))
 
+    if not text.strip():
+        logger.info(
+            "vacancy_popup_skip",
+            log_user_id=log_user_id,
+            vacancy_id=vacancy_id,
+            reason="empty_response_body",
+            http_status=status,
+            ok=ok,
+        )
+        return None
+
+    raw_body, raw_len, truncated = _cap_raw_body_for_log(text)
     logger.info(
-        "vacancy_popup_response",
+        "vacancy_popup_raw_response",
         log_user_id=log_user_id,
+        vacancy_id=vacancy_id,
         http_status=status,
         ok=ok,
-        body_preview=_truncate_for_log(text, _LOG_BODY_MAX),
+        raw_len=raw_len,
+        truncated=truncated,
+        raw_body=raw_body,
     )
-
-    if not text.strip():
-        return None
 
     try:
         data = json.loads(text)
@@ -213,6 +235,7 @@ def try_apply_via_popup(
         logger.info(
             "vacancy_popup_skip",
             log_user_id=log_user_id,
+            vacancy_id=vacancy_id,
             reason="response_not_json",
             body_preview=_truncate_for_log(text, 400),
         )
@@ -220,6 +243,14 @@ def try_apply_via_popup(
 
     if not isinstance(data, dict):
         return None
+
+    logger.info(
+        "vacancy_popup_json_parsed",
+        log_user_id=log_user_id,
+        vacancy_id=vacancy_id,
+        parsed_keys=sorted(data.keys()),
+        success_field=repr(data.get("success")),
+    )
 
     mapped = map_popup_json_to_apply_result(data)
     if mapped is not None:
