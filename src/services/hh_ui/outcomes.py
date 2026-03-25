@@ -14,6 +14,7 @@ class ApplyOutcome(StrEnum):
     CAPTCHA = "captcha"
     SESSION_EXPIRED = "session_expired"
     RATE_LIMITED = "rate_limited"
+    VACANCY_UNAVAILABLE = "vacancy_unavailable"
     ERROR = "error"
 
 

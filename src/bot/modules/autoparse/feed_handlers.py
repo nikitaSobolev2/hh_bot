@@ -994,6 +994,24 @@ async def _feed_respond_core(
         await callback.answer(i18n.get("feed-respond-vacancy-missing"), show_alert=True)
         return
 
+    from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+
+    if await hh_vacancy_public_is_unavailable(vacancy.hh_vacancy_id):
+        await feed_services.record_reaction(session, feed_session, vacancy.id, False)
+        feed_session = await feed_services.get_feed_session(session, callback_data.session_id)
+        if not feed_session:
+            await callback.answer()
+            return
+        await _feed_show_next_vacancy_or_results(
+            callback,
+            session,
+            user,
+            feed_session,
+            i18n,
+            toast=i18n.get("feed-respond-vacancy-unavailable"),
+        )
+        return
+
     await feed_services.ensure_liked_for_respond(session, feed_session, vacancy.id)
 
     logger.info(

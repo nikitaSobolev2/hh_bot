@@ -160,6 +160,12 @@ def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
 
     errs = data.get("errors")
     if isinstance(errs, list) and errs:
+        for e in errs:
+            if isinstance(e, dict) and e.get("type") == "not_found":
+                return ApplyResult(
+                    outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
+                    detail="popup_api:not_found",
+                )
         first = errs[0] if isinstance(errs[0], dict) else {}
         msg = str(first.get("value") or first.get("message") or errs[0])[:500]
         low = msg.lower()
@@ -169,6 +175,11 @@ def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
 
     err = data.get("error") or data.get("message")
     if err:
+        if str(err).strip().lower() == "unknown":
+            return ApplyResult(
+                outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
+                detail="popup_api:unknown",
+            )
         return ApplyResult(outcome=ApplyOutcome.ERROR, detail=f"popup_api:{str(err)[:300]}")
 
     return None

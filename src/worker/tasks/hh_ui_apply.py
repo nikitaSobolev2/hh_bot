@@ -61,6 +61,8 @@ def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
         return "success", None if outcome == ApplyOutcome.SUCCESS else f"ui:{outcome.value}"
     if outcome == ApplyOutcome.RATE_LIMITED:
         return "error", "ui:rate_limited"
+    if outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
+        return "skipped", "ui:vacancy_unavailable"
     return "error", f"ui:{outcome.value}"
 
 
@@ -191,19 +193,27 @@ async def _apply_ui_async(
             vacancy_url_safe=_vacancy_url_safe_for_log(url),
         )
 
-        try:
-            result = await asyncio.to_thread(
-                apply_to_vacancy_ui,
-                storage_state=storage,
-                vacancy_url=url,
-                resume_hh_id=resume_id,
-                config=config,
-                log_user_id=user_id,
-                cover_letter=cover_letter or "",
+        from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+
+        if await hh_vacancy_public_is_unavailable(hh_vacancy_id):
+            result = ApplyResult(
+                outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
+                detail="preflight_api",
             )
-        except Exception as exc:
-            logger.exception("hh_ui apply failed", error=str(exc))
-            result = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
+        else:
+            try:
+                result = await asyncio.to_thread(
+                    apply_to_vacancy_ui,
+                    storage_state=storage,
+                    vacancy_url=url,
+                    resume_hh_id=resume_id,
+                    config=config,
+                    log_user_id=user_id,
+                    cover_letter=cover_letter or "",
+                )
+            except Exception as exc:
+                logger.exception("hh_ui apply failed", error=str(exc))
+                result = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
 
         logger.info(
             "hh_ui_apply_finished",
@@ -250,7 +260,27 @@ async def _apply_ui_async(
                 status=status,
             )
 
-        if status != "success" and status != "needs_employer_questions":
+        if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
+            async with session_factory() as s_dis:
+                vac_row = await AutoparsedVacancyRepository(s_dis).get_by_id(autoparsed_vacancy_id)
+                if feed_session_id and feed_session_id > 0:
+                    fr = VacancyFeedSessionRepository(s_dis)
+                    fs = await fr.get_by_id(feed_session_id)
+                    if fs:
+                        await feed_services.record_reaction(
+                            s_dis, fs, autoparsed_vacancy_id, False
+                        )
+                elif vac_row and silent_feed:
+                    await feed_services.merge_dislike_vacancy_into_feed_sessions(
+                        s_dis,
+                        user_id,
+                        vac_row.autoparse_company_id,
+                        autoparsed_vacancy_id,
+                    )
+            async with session_factory() as s_reload:
+                fr = VacancyFeedSessionRepository(s_reload)
+                feed_session = await fr.get_by_id(feed_session_id)
+        elif status != "success" and status != "needs_employer_questions":
             async with session_factory() as s_unlike:
                 await feed_services.remove_liked_on_apply_failure(
                     s_unlike, feed_session_id, autoparsed_vacancy_id
@@ -284,6 +314,50 @@ async def _apply_ui_async(
             return {"status": status, "outcome": result.outcome.value}
 
         i18n = I18nContext(locale)
+
+        if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
+            if feed_session_id and feed_session:
+                total = len(feed_session.vacancy_ids)
+                if feed_session.current_index < total:
+                    next_vid = feed_session.vacancy_ids[feed_session.current_index]
+                    async with session_factory() as s_next:
+                        next_vac = await AutoparsedVacancyRepository(s_next).get_by_id(next_vid)
+                    if next_vac:
+                        text = feed_services.build_vacancy_card(
+                            next_vac, feed_session.current_index, total, locale
+                        )
+                        text = f"{text}\n\n{get_text('feed-respond-vacancy-unavailable', locale)}"
+                        keyboard = feed_vacancy_keyboard(
+                            feed_session.id,
+                            next_vac.id,
+                            next_vac.url,
+                            i18n,
+                            current_index=feed_session.current_index,
+                            show_respond=_feed_show_respond_button(feed_session),
+                            **_feed_vacancy_keyboard_options(feed_session, next_vac.id),
+                        )
+                        await self.notify_user(
+                            bot,
+                            chat_id,
+                            message_id,
+                            text,
+                            reply_markup=keyboard,
+                        )
+                        return {"status": status, "outcome": result.outcome.value}
+                await self.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    get_text("feed-respond-vacancy-unavailable-feed-end", locale),
+                )
+                return {"status": status, "outcome": result.outcome.value}
+            await self.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("feed-respond-vacancy-unavailable", locale),
+            )
+            return {"status": status, "outcome": result.outcome.value}
 
         if not vacancy or not feed_session:
             await self.notify_user(

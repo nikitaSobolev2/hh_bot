@@ -177,6 +177,8 @@ async def _run_autorespond_async(
         normalize_hh_resume_cache_items,
         resolve_resume_id_for_autorespond_vacancy,
     )
+    from src.bot.modules.autoparse import feed_services as feed_services_autorespond
+    from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -370,6 +372,28 @@ async def _run_autorespond_async(
 
                 if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
                     skipped += 1
+                    if ar_prog and progress_bot:
+                        await tick_autorespond_bar(
+                            bot=progress_bot,
+                            chat_id=user.telegram_id,
+                            task_key=ar_prog["task_key"],
+                            total=ar_prog["total"],
+                            locale=ar_prog["locale"],
+                            footer_failed_line=get_text(
+                                "autorespond-progress-failed", locale, count=failed
+                            ),
+                        )
+                    continue
+
+                if await hh_vacancy_public_is_unavailable(vac.hh_vacancy_id):
+                    skipped += 1
+                    async with session_factory() as s_merge:
+                        await feed_services_autorespond.merge_dislike_vacancy_into_feed_sessions(
+                            s_merge,
+                            user.id,
+                            company_id,
+                            vac.id,
+                        )
                     if ar_prog and progress_bot:
                         await tick_autorespond_bar(
                             bot=progress_bot,

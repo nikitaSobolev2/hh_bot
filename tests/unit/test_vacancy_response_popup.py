@@ -25,12 +25,33 @@ def test_cap_raw_body_for_log_no_truncation():
     assert truncated is False
 
 
-def test_map_popup_json_unknown_error():
+def test_map_popup_errors_value_unknown_still_error():
+    """errors[].value \"unknown\" is not the same as top-level error \"unknown\"."""
     data = {"success": False, "errors": [{"value": "unknown"}]}
     r = map_popup_json_to_apply_result(data)
     assert r is not None
     assert r.outcome == ApplyOutcome.ERROR
     assert "unknown" in (r.detail or "")
+
+
+def test_map_popup_top_level_error_unknown():
+    r = map_popup_json_to_apply_result({"error": "unknown"})
+    assert r is not None
+    assert r.outcome == ApplyOutcome.VACANCY_UNAVAILABLE
+    assert r.detail == "popup_api:unknown"
+
+
+def test_map_popup_errors_type_not_found():
+    r = map_popup_json_to_apply_result(
+        {
+            "description": "Not Found",
+            "errors": [{"type": "not_found"}],
+            "request_id": "x",
+        }
+    )
+    assert r is not None
+    assert r.outcome == ApplyOutcome.VACANCY_UNAVAILABLE
+    assert r.detail == "popup_api:not_found"
 
 
 def test_popup_post_url():

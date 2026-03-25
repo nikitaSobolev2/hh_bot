@@ -143,7 +143,9 @@ async def record_reaction(
     if is_like:
         liked.append(vacancy_id)
     else:
-        disliked.append(vacancy_id)
+        liked = [x for x in liked if x != vacancy_id]
+        if vacancy_id not in disliked:
+            disliked.append(vacancy_id)
     repo = VacancyFeedSessionRepository(session)
     await repo.update(
         feed_session,
@@ -151,6 +153,30 @@ async def record_reaction(
         disliked_ids=disliked,
         current_index=feed_session.current_index + 1,
     )
+    await session.commit()
+
+
+async def merge_dislike_vacancy_into_feed_sessions(
+    session: AsyncSession,
+    user_id: int,
+    company_id: int,
+    vacancy_pk: int,
+) -> None:
+    """Add vacancy_pk to disliked_ids and remove from liked_ids for sessions that list it.
+
+    Does not change current_index (background / silent paths).
+    """
+    repo = VacancyFeedSessionRepository(session)
+    sessions = await repo.list_sessions_for_user_company(user_id, company_id)
+    for fs in sessions:
+        ids = list(fs.vacancy_ids or [])
+        if vacancy_pk not in ids:
+            continue
+        liked = [x for x in list(fs.liked_ids) if x != vacancy_pk]
+        disliked = list(fs.disliked_ids)
+        if vacancy_pk not in disliked:
+            disliked.append(vacancy_pk)
+        await repo.update(fs, liked_ids=liked, disliked_ids=disliked)
     await session.commit()
 
 

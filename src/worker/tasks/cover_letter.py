@@ -404,6 +404,25 @@ async def _generate_cover_letter_async(
         logger.warning("Cover letter: vacancy not found", vacancy_id=vacancy_id)
         return {"status": "vacancy_not_found"}
 
+    from src.bot.modules.autoparse import feed_services
+    from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+
+    if await hh_vacancy_public_is_unavailable(vacancy.hh_vacancy_id):
+        if apply_after and source != "standalone":
+            async with session_factory() as session:
+                await feed_services.merge_dislike_vacancy_into_feed_sessions(
+                    session,
+                    user_id,
+                    vacancy.autoparse_company_id,
+                    vacancy_id,
+                )
+        return {
+            "status": "skipped",
+            "reason": "vacancy_unavailable",
+            "vacancy_id": vacancy_id,
+            "locale": locale,
+        }
+
     from src.bot.modules.autoparse import services as ap_service
     from src.repositories.user import UserRepository
 
