@@ -6,8 +6,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-hh_bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hh_bot_secret}
       POSTGRES_DB: ${POSTGRES_DB:-hh_bot}
+    # Bind to loopback only — avoids random internet scanners hitting Postgres with bogus users
+    # (FATAL: password authentication failed for user "app"/"user"). Containers use hostname ``postgres``.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -28,7 +30,7 @@ services:
       - "no"
       - "one"
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
       - ./config/redis-standalone.conf:/usr/local/etc/redis/redis-standalone.conf:ro

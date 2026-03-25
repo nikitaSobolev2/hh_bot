@@ -7,7 +7,10 @@ from typing import Any
 import redis as sync_redis
 
 from src.config import settings
+from src.core.logging import get_logger
 from src.services.progress_service import ProgressService, create_progress_redis
+
+logger = get_logger(__name__)
 
 _DONE_TTL_S = 4 * 3600
 
@@ -67,12 +70,29 @@ async def tick_autorespond_bar(
 
     display_done = min(done, total)
     svc = ProgressService(bot, chat_id, redis, locale)
-    await svc.update_bar(task_key, 0, display_done, total)
-    if footer_failed_line:
-        await svc.update_footer(task_key, [footer_failed_line])
+    try:
+        await svc.update_bar(task_key, 0, display_done, total)
+        if footer_failed_line:
+            await svc.update_footer(task_key, [footer_failed_line])
+    except Exception as exc:
+        # Telegram / aiohttp timeouts or SSL stalls must not abort autorespond (SoftTimeLimitExceeded).
+        logger.warning(
+            "autorespond_progress_bar_update_failed",
+            error=str(exc)[:400],
+            chat_id=chat_id,
+            task_key=task_key,
+        )
 
     if done >= total:
-        await svc.finish_task(task_key)
+        try:
+            await svc.finish_task(task_key)
+        except Exception as exc:
+            logger.warning(
+                "autorespond_progress_finish_failed",
+                error=str(exc)[:400],
+                chat_id=chat_id,
+                task_key=task_key,
+            )
         await redis.delete(key)
         return True
     return False
