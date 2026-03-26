@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     hh_client_secret: str = ""
     hh_oauth_redirect_uri: str = ""
     hh_user_agent: str = "HHBot/1.0 (dev@localhost)"
+    # Random delay between public API search (GET /vacancies) requests — reduces rate spikes.
+    hh_public_api_list_delay_min_seconds: float = Field(default=0.25, ge=0.0, le=60.0)
+    hh_public_api_list_delay_max_seconds: float = Field(default=0.65, ge=0.0, le=60.0)
+    # Random delay before each GET /vacancies/{id} (detail) request.
+    hh_public_api_vacancy_delay_min_seconds: float = Field(default=0.12, ge=0.0, le=60.0)
+    hh_public_api_vacancy_delay_max_seconds: float = Field(default=0.45, ge=0.0, le=60.0)
     # Parallel GET /vacancies/{id} (public API) — lower reduces 403 risk from HH edge.
     hh_vacancy_detail_concurrency: int = Field(default=5, ge=1, le=30)
     # After HH captcha_required (403), block further public API calls until cooldown (Redis CB).
@@ -119,6 +125,14 @@ class Settings(BaseSettings):
         if self.hh_ui_apply_task_time_limit <= self.hh_ui_apply_task_soft_time_limit:
             raise ValueError(
                 "hh_ui_apply_task_time_limit must be greater than hh_ui_apply_task_soft_time_limit"
+            )
+        if self.hh_public_api_list_delay_max_seconds < self.hh_public_api_list_delay_min_seconds:
+            raise ValueError(
+                "hh_public_api_list_delay_max_seconds must be >= hh_public_api_list_delay_min_seconds"
+            )
+        if self.hh_public_api_vacancy_delay_max_seconds < self.hh_public_api_vacancy_delay_min_seconds:
+            raise ValueError(
+                "hh_public_api_vacancy_delay_max_seconds must be >= hh_public_api_vacancy_delay_min_seconds"
             )
         return self
 

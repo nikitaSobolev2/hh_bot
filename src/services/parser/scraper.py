@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -47,6 +48,21 @@ _API_UNSUPPORTED_PARAMS = frozenset(
 )
 
 _hh_public_api_breaker_singleton: CircuitBreaker | None = None
+
+# Rotated per request with settings.hh_user_agent — reduces identical fingerprint on public API.
+_HH_BROWSER_USER_AGENTS: tuple[str, ...] = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+)
 
 
 class HHCaptchaRequiredError(Exception):
@@ -227,15 +243,27 @@ class HHScraper:
         *,
         timeout: int = 15,
         retries: int = 3,
-        page_delay: tuple[float, float] = (0.0, 0.0),
-        vacancy_delay: tuple[float, float] = (0.0, 0.0),
+        page_delay: tuple[float, float] | None = None,
+        vacancy_delay: tuple[float, float] | None = None,
         rate_limiter=None,
         public_api_breaker: CircuitBreaker | None = None,
     ) -> None:
         self._timeout = timeout
         self._retries = retries
-        self._page_delay = page_delay
-        self._vacancy_delay = vacancy_delay
+        if page_delay is None:
+            self._page_delay = (
+                settings.hh_public_api_list_delay_min_seconds,
+                settings.hh_public_api_list_delay_max_seconds,
+            )
+        else:
+            self._page_delay = page_delay
+        if vacancy_delay is None:
+            self._vacancy_delay = (
+                settings.hh_public_api_vacancy_delay_min_seconds,
+                settings.hh_public_api_vacancy_delay_max_seconds,
+            )
+        else:
+            self._vacancy_delay = vacancy_delay
         self._rate_limiter = rate_limiter
         self._public_api_breaker_override = public_api_breaker
 
@@ -254,8 +282,20 @@ class HHScraper:
                 body=None,
             )
 
+    def _user_agent_for_request(self) -> str:
+        return random.choice(_HH_BROWSER_USER_AGENTS + (settings.hh_user_agent,))
+
+    async def _sleep_before_public_api_request(self, *, list_request: bool) -> None:
+        lo, hi = self._page_delay if list_request else self._vacancy_delay
+        if hi <= 0 and lo <= 0:
+            return
+        if hi < lo:
+            lo, hi = hi, lo
+        delay = random.uniform(lo, hi) if hi > lo else lo
+        await asyncio.sleep(delay)
+
     def _headers(self) -> dict[str, str]:
-        ua = settings.hh_user_agent
+        ua = self._user_agent_for_request()
         return {
             "User-Agent": ua,
             "HH-User-Agent": ua,
@@ -266,7 +306,7 @@ class HHScraper:
         }
 
     def _headers_api(self) -> dict[str, str]:
-        ua = settings.hh_user_agent
+        ua = self._user_agent_for_request()
         return {
             "User-Agent": ua,
             "HH-User-Agent": ua,
@@ -302,6 +342,7 @@ class HHScraper:
         br = self._hh_public_api_breaker()
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
+        await self._sleep_before_public_api_request(list_request=False)
         for attempt in range(self._retries):
             self._ensure_public_api_call_allowed(url)
             try:
@@ -361,6 +402,7 @@ class HHScraper:
         br = self._hh_public_api_breaker()
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
+        await self._sleep_before_public_api_request(list_request=True)
         for attempt in range(_SEARCH_LIST_MAX_ATTEMPTS):
             self._ensure_public_api_call_allowed(url)
             try:

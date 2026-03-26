@@ -435,21 +435,33 @@ class TestParseVacancyPage:
 
 
 class TestHHScraperHeaders:
-    def test_headers_api_sets_user_agent_and_hh_user_agent_from_settings(self, monkeypatch):
+    def test_headers_api_sets_user_agent_and_hh_user_agent_from_pool_or_settings(
+        self, monkeypatch
+    ):
         from src.config import settings
 
         monkeypatch.setattr(settings, "hh_user_agent", "UnitTest/1.0 (test@example.com)")
-        scraper = HHScraper()
-        headers = scraper._headers_api()
+        scraper = HHScraper(page_delay=(0, 0), vacancy_delay=(0, 0))
+        with patch(
+            "src.services.parser.scraper.random.choice",
+            return_value="UnitTest/1.0 (test@example.com)",
+        ):
+            headers = scraper._headers_api()
         assert headers["User-Agent"] == "UnitTest/1.0 (test@example.com)"
         assert headers["HH-User-Agent"] == "UnitTest/1.0 (test@example.com)"
 
-    def test_headers_html_sets_user_agent_and_hh_user_agent_from_settings(self, monkeypatch):
+    def test_headers_html_sets_user_agent_and_hh_user_agent_from_pool_or_settings(
+        self, monkeypatch
+    ):
         from src.config import settings
 
         monkeypatch.setattr(settings, "hh_user_agent", "UnitTest/2.0 (test@example.com)")
-        scraper = HHScraper()
-        headers = scraper._headers()
+        scraper = HHScraper(page_delay=(0, 0), vacancy_delay=(0, 0))
+        with patch(
+            "src.services.parser.scraper.random.choice",
+            return_value="UnitTest/2.0 (test@example.com)",
+        ):
+            headers = scraper._headers()
         assert headers["User-Agent"] == "UnitTest/2.0 (test@example.com)"
         assert headers["HH-User-Agent"] == "UnitTest/2.0 (test@example.com)"
 
@@ -489,7 +501,11 @@ class TestHHCaptchaAndPublicApiBreaker:
         transport = httpx.MockTransport(handler)
         mock_br = MagicMock()
         mock_br.is_call_allowed.return_value = True
-        scraper = HHScraper(public_api_breaker=mock_br)
+        scraper = HHScraper(
+            public_api_breaker=mock_br,
+            page_delay=(0, 0),
+            vacancy_delay=(0, 0),
+        )
         async with httpx.AsyncClient(transport=transport) as client:
             with pytest.raises(HHCaptchaRequiredError):
                 await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
@@ -501,7 +517,11 @@ class TestHHCaptchaAndPublicApiBreaker:
     async def test_fetch_api_page_circuit_open_skips_http(self):
         mock_br = MagicMock()
         mock_br.is_call_allowed.return_value = False
-        scraper = HHScraper(public_api_breaker=mock_br)
+        scraper = HHScraper(
+            public_api_breaker=mock_br,
+            page_delay=(0, 0),
+            vacancy_delay=(0, 0),
+        )
         client = AsyncMock()
         client.get = AsyncMock(side_effect=AssertionError("GET must not be called"))
         with pytest.raises(HHCaptchaRequiredError) as exc_info:
