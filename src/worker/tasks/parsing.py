@@ -7,11 +7,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.config import settings
 from src.core.logging import get_logger
 from src.services.parser.scraper import HHCaptchaRequiredError
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
+from src.worker.hh_captcha_retry import celery_captcha_retry_countdown
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -77,7 +77,7 @@ def run_parsing_company(
         )
         raise
     except HHCaptchaRequiredError as exc:
-        countdown = int(settings.hh_public_api_circuit_recovery_seconds)
+        countdown = celery_captcha_retry_countdown(self)
         logger.warning(
             "Parsing: HH captcha required; scheduling Celery retry",
             company_id=parsing_company_id,

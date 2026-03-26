@@ -10,6 +10,7 @@ from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
+from src.worker.hh_captcha_retry import celery_captcha_retry_countdown
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -101,7 +102,7 @@ def run_autoparse_company(self, company_id: int, notify_user_id: int | None = No
             lambda sf: _run_autoparse_company_async(sf, self, company_id, notify_user_id)
         )
     except HHCaptchaRequiredError as exc:
-        countdown = int(settings.hh_public_api_circuit_recovery_seconds)
+        countdown = celery_captcha_retry_countdown(self)
         logger.warning(
             "Autoparse: HH captcha required; scheduling Celery retry",
             company_id=company_id,
