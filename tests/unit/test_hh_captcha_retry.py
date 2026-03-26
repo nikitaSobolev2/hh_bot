@@ -19,8 +19,13 @@ def test_celery_captcha_retry_countdown_exponential_cap():
     assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=10) == 160
     task.request.retries = 5
     assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=10) == 300
+    # After 300s step, exponential resets to 10 (retries 6 ≡ 0 mod 6).
+    task.request.retries = 6
+    assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=10) == 10
+    task.request.retries = 7
+    assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=10) == 20
     task.request.retries = 10
-    assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=10) == 300
+    assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=10) == 160
 
 
 def test_celery_captcha_retry_countdown_none_retries_treated_as_zero():
@@ -36,6 +41,14 @@ def test_celery_captcha_retry_countdown_waits_at_least_recovery():
     assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=300) == 300
     task.request.retries = 2
     assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=300) == 300
+
+
+def test_recovery_300_masks_exponential_cycle_in_logs():
+    """When recovery is 300, max(exponential, 300) is always 300; cycle still runs internally."""
+    task = MagicMock()
+    for retries in (0, 5, 6, 7):
+        task.request.retries = retries
+        assert celery_captcha_retry_countdown(task, circuit_recovery_seconds=300) == 300
 
 
 def test_celery_captcha_retry_countdown_long_recovery_not_truncated():
