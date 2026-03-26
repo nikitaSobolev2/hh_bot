@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     # Celery wall-clock limits for ``hh_ui.apply_to_vacancy`` (Playwright; may wait on slow pages).
     hh_ui_apply_task_soft_time_limit: int = Field(default=480, ge=60, le=3600)
     hh_ui_apply_task_time_limit: int = Field(default=600, ge=120, le=7200)
+    # Celery ``autoparse.run_company``: large target_count runs need hours; wall-clock is total budget.
+    # Redis per-company run lock TTL is renewed on an interval (see autoparse task) — not the same as stall detection.
+    autoparse_run_company_soft_time_limit_seconds: int = Field(default=14400, ge=300, le=86400)
+    autoparse_run_company_time_limit_seconds: int = Field(default=15300, ge=600, le=93600)
+    # Sliding window for ``lock:autoparse:run:{company_id}`` — extended while the task heartbeats.
+    autoparse_run_company_lock_ttl_seconds: int = Field(default=1800, ge=300, le=86400)
+    autoparse_run_company_lock_renew_interval_seconds: int = Field(default=120, ge=30, le=3600)
     # DB-synced via admin toggle (see AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS)
     hh_ui_debug_playwright_screenshots: bool = False
     hh_ui_debug_screenshot_dir: str = str(_DEFAULT_PLAYWRIGHT_DEBUG_DIR)
@@ -137,6 +144,16 @@ class Settings(BaseSettings):
         if self.hh_public_api_vacancy_delay_max_seconds < self.hh_public_api_vacancy_delay_min_seconds:
             raise ValueError(
                 "hh_public_api_vacancy_delay_max_seconds must be >= hh_public_api_vacancy_delay_min_seconds"
+            )
+        if self.autoparse_run_company_time_limit_seconds <= self.autoparse_run_company_soft_time_limit_seconds:
+            raise ValueError(
+                "autoparse_run_company_time_limit_seconds must be greater than "
+                "autoparse_run_company_soft_time_limit_seconds"
+            )
+        if self.autoparse_run_company_lock_ttl_seconds < self.autoparse_run_company_lock_renew_interval_seconds * 2:
+            raise ValueError(
+                "autoparse_run_company_lock_ttl_seconds should be at least twice "
+                "autoparse_run_company_lock_renew_interval_seconds so renewals keep the lock alive"
             )
         return self
 

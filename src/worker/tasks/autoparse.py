@@ -19,9 +19,18 @@ logger = get_logger(__name__)
 
 _DISPATCH_LOCK_KEY = "lock:autoparse:dispatch"
 _RUN_LOCK_PREFIX = "lock:autoparse:run:"
-# Safety-net TTL: released explicitly via finally; this guards against a crashed worker
-_CONCURRENT_RUN_LOCK_TTL = 2 * 3600
 _ANALYSIS_BATCH_SIZE = 5
+
+# Extend lock TTL while the same Celery task id still holds the key (sliding window).
+_LOCK_RENEW_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false then return 0 end
+if current == ARGV[1] then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0
+"""
 
 
 def _autoparse_pipeline_batch_size() -> int:
@@ -43,6 +52,27 @@ return 0
 
 def _redis_client() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url)
+
+
+_RELEASE_RUN_LOCK_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false then return 0 end
+if current == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+"""
+
+
+def _release_autoparse_run_lock_best_effort(company_id: int, celery_task_id: str) -> None:
+    """Delete run lock only if still owned by this Celery task (e.g. soft time limit cleanup)."""
+    r = _redis_client()
+    key = f"{_RUN_LOCK_PREFIX}{company_id}"
+    try:
+        r.eval(_RELEASE_RUN_LOCK_SCRIPT, 1, key, celery_task_id)
+    except Exception:
+        logger.exception("Failed to release autoparse run lock", company_id=company_id)
 
 
 @celery_app.task(
@@ -96,12 +126,14 @@ async def _dispatch_all_async(session_factory) -> dict:
     name="autoparse.run_company",
     max_retries=2,
     default_retry_delay=60,
-    soft_time_limit=600,
-    time_limit=660,
+    soft_time_limit=settings.autoparse_run_company_soft_time_limit_seconds,
+    time_limit=settings.autoparse_run_company_time_limit_seconds,
     acks_late=True,
     reject_on_worker_lost=True,
 )
 def run_autoparse_company(self, company_id: int, notify_user_id: int | None = None) -> dict:
+    from celery.exceptions import SoftTimeLimitExceeded
+
     from src.services.parser.scraper import HHCaptchaRequiredError
 
     try:
@@ -116,6 +148,15 @@ def run_autoparse_company(self, company_id: int, notify_user_id: int | None = No
             countdown=countdown,
         )
         raise self.retry(exc=exc, countdown=countdown) from exc
+    except SoftTimeLimitExceeded:
+        # Async finally usually runs; this is a fallback if the worker raised before coroutine cleanup.
+        logger.warning(
+            "Autoparse run company Celery soft time limit exceeded",
+            company_id=company_id,
+            soft_time_limit_seconds=settings.autoparse_run_company_soft_time_limit_seconds,
+        )
+        _release_autoparse_run_lock_best_effort(company_id, self.request.id)
+        raise
 
 
 def _build_user_profile(
@@ -250,7 +291,8 @@ async def _run_autoparse_company_async(
     lock_key = f"{_RUN_LOCK_PREFIX}{company_id}"
     task_id = task.request.id
 
-    acquired = r.eval(_ACQUIRE_LOCK_SCRIPT, 1, lock_key, task_id, str(_CONCURRENT_RUN_LOCK_TTL))
+    lock_ttl = str(settings.autoparse_run_company_lock_ttl_seconds)
+    acquired = r.eval(_ACQUIRE_LOCK_SCRIPT, 1, lock_key, task_id, lock_ttl)
     if not acquired:
         logger.info("Autoparse company already running", company_id=company_id)
         return {"status": "locked", "company_id": company_id}
@@ -261,7 +303,32 @@ async def _run_autoparse_company_async(
     checkpoint_key = task_key
     cb = CircuitBreaker("autoparse")
     checkpoint = TaskCheckpointService(create_checkpoint_redis())
+    hb_task: asyncio.Task[None] | None = None
     try:
+
+        async def _run_lock_heartbeat() -> None:
+            """Sliding TTL on Redis run lock — covers long search + pipeline without a fixed wall clock."""
+            interval = settings.autoparse_run_company_lock_renew_interval_seconds
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await asyncio.to_thread(
+                        r.eval,
+                        _LOCK_RENEW_SCRIPT,
+                        1,
+                        lock_key,
+                        task_id,
+                        lock_ttl,
+                    )
+                except Exception as ex:
+                    logger.warning(
+                        "Autoparse run lock renew failed",
+                        company_id=company_id,
+                        error=str(ex),
+                    )
+
+        hb_task = asyncio.create_task(_run_lock_heartbeat())
+
         if notify_user_id is not None:
             from aiogram import Bot
             from aiogram.client.default import DefaultBotProperties
@@ -649,6 +716,10 @@ async def _run_autoparse_company_async(
                 await progress.cancel_task(task_key)
         raise
     finally:
+        if hb_task is not None:
+            hb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb_task
         r.delete(lock_key)
         if _progress_bot:
             await _progress_bot.session.close()
