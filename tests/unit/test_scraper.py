@@ -248,9 +248,7 @@ class TestBuildPageUrl:
 
 class TestBuildApiUrl:
     def test_converts_to_api_base(self):
-        url = HHScraper._build_api_url(
-            "https://izhevsk.hh.ru/search/vacancy?text=Backend", page=0
-        )
+        url = HHScraper._build_api_url("https://izhevsk.hh.ru/search/vacancy?text=Backend", page=0)
         assert url.startswith("https://api.hh.ru/vacancies")
         assert "text=Backend" in url
         assert "page=0" in url
@@ -282,9 +280,7 @@ class TestBuildApiUrl:
 
 
 class TestExtractVacanciesFromApiResponse:
-    def test_extracts_vacancies_with_matching_keyword(
-        self, sample_vacancy_api_response: dict
-    ):
+    def test_extracts_vacancies_with_matching_keyword(self, sample_vacancy_api_response: dict):
         scraper = HHScraper()
         results = scraper._extract_vacancies_from_api_response(
             sample_vacancy_api_response, "frontend"
@@ -297,13 +293,9 @@ class TestExtractVacanciesFromApiResponse:
         assert "300 000" in results[0]["salary"]
         assert "руб." in results[0]["salary"]
 
-    def test_extracts_all_vacancies_without_keyword(
-        self, sample_vacancy_api_response: dict
-    ):
+    def test_extracts_all_vacancies_without_keyword(self, sample_vacancy_api_response: dict):
         scraper = HHScraper()
-        results = scraper._extract_vacancies_from_api_response(
-            sample_vacancy_api_response, ""
-        )
+        results = scraper._extract_vacancies_from_api_response(sample_vacancy_api_response, "")
         assert len(results) == 2
 
     def test_returns_empty_for_no_matches(self, sample_vacancy_api_response: dict):
@@ -328,7 +320,10 @@ class TestExtractVacanciesFromApiResponse:
                     "id": "131299561",
                     "name": "PHP-разработчик",
                     "alternate_url": "https://hh.ru/vacancy/131299561",
-                    "employer": {"name": "SHEVEREV", "alternate_url": "https://hh.ru/employer/5362384"},
+                    "employer": {
+                        "name": "SHEVEREV",
+                        "alternate_url": "https://hh.ru/employer/5362384",
+                    },
                     "snippet": {
                         "requirement": "Коммерческий опыт backend-разработки на PHP от 3 лет.",
                         "responsibility": "Разработка backend-сервисов на PHP/Laravel.",
@@ -380,17 +375,13 @@ def sample_vacancy_detail_api_response() -> dict:
 
 class TestParseVacancyPage:
     @pytest.mark.asyncio
-    async def test_extracts_description_and_skills(
-        self, sample_vacancy_detail_api_response: dict
-    ):
+    async def test_extracts_description_and_skills(self, sample_vacancy_detail_api_response: dict):
         scraper = HHScraper()
         mock_client = AsyncMock()
 
         with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = sample_vacancy_detail_api_response
-            result = await scraper.parse_vacancy_page(
-                mock_client, "https://hh.ru/vacancy/1"
-            )
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert "Python" in result["description"]
         assert "Django" in result["description"]
@@ -415,8 +406,26 @@ class TestParseVacancyPage:
         with patch.object(
             scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None
         ):
-            result = await scraper.parse_vacancy_page(
-                mock_client, "https://hh.ru/vacancy/1"
-            )
+            result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result == {}
+
+
+class TestHHScraperHeaders:
+    def test_headers_api_sets_user_agent_and_hh_user_agent_from_settings(self, monkeypatch):
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "hh_user_agent", "UnitTest/1.0 (test@example.com)")
+        scraper = HHScraper()
+        headers = scraper._headers_api()
+        assert headers["User-Agent"] == "UnitTest/1.0 (test@example.com)"
+        assert headers["HH-User-Agent"] == "UnitTest/1.0 (test@example.com)"
+
+    def test_headers_html_sets_user_agent_and_hh_user_agent_from_settings(self, monkeypatch):
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "hh_user_agent", "UnitTest/2.0 (test@example.com)")
+        scraper = HHScraper()
+        headers = scraper._headers()
+        assert headers["User-Agent"] == "UnitTest/2.0 (test@example.com)"
+        assert headers["HH-User-Agent"] == "UnitTest/2.0 (test@example.com)"

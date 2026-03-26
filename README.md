@@ -443,6 +443,8 @@ crontab -e
 | `LOG_TELEGRAM_CHAT_ID` | No | — | Chat ID for ERROR+ log alerts |
 | `SUPPORT_CHAT_ID` | No | — | Chat ID for support ticket notifications |
 | `ADMIN_TELEGRAM_IDS` | No | — | Comma-separated Telegram user IDs for initial admins |
+| `HH_USER_AGENT` | No | `HHBot/1.0 (dev@localhost)` | Identifies your app to `api.hh.ru` (see [HH API](https://github.com/hhru/api)); use a stable `Name/Version (contact)` string |
+| `HH_VACANCY_DETAIL_CONCURRENCY` | No | `5` | Max parallel `GET /vacancies/{id}` per parse job; lower if workers get HTTP 403 |
 
 Runtime-adjustable flags (managed through the admin panel, stored in the `app_settings` DB table):
 

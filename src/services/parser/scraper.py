@@ -10,8 +10,8 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
-from fake_useragent import UserAgent
 
+from src.config import settings
 from src.core.logging import get_logger
 from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 from src.services.parser.keyword_match import matches_keyword_expression
@@ -174,7 +174,6 @@ class HHScraper:
         vacancy_delay: tuple[float, float] = (0.0, 0.0),
         rate_limiter=None,
     ) -> None:
-        self._ua = UserAgent()
         self._timeout = timeout
         self._retries = retries
         self._page_delay = page_delay
@@ -182,8 +181,10 @@ class HHScraper:
         self._rate_limiter = rate_limiter
 
     def _headers(self) -> dict[str, str]:
+        ua = settings.hh_user_agent
         return {
-            "User-Agent": self._ua.random,
+            "User-Agent": ua,
+            "HH-User-Agent": ua,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept-Encoding": "gzip, deflate, br",
@@ -191,8 +192,10 @@ class HHScraper:
         }
 
     def _headers_api(self) -> dict[str, str]:
+        ua = settings.hh_user_agent
         return {
-            "User-Agent": self._ua.random,
+            "User-Agent": ua,
+            "HH-User-Agent": ua,
             "Accept": "application/json",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
             "Accept-Encoding": "gzip, deflate, br",

@@ -19,7 +19,6 @@ dependencies = [
     "structlog>=24.4",
     "rich>=13.9",
     "beautifulsoup4>=4.12",
-    "fake-useragent>=2.0",
     "python-dotenv>=1.0",
     "fluent.runtime>=0.4",
     "pypandoc>=1.13",

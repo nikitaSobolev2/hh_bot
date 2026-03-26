@@ -5,13 +5,12 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from src.config import settings
 from src.core.logging import get_logger
 from src.schemas.vacancy import build_vacancy_api_context
 from src.services.parser.scraper import HHScraper
 
 logger = get_logger(__name__)
-
-VACANCY_FETCH_BATCH_SIZE = 15
 
 
 class HHParserService:
@@ -20,10 +19,14 @@ class HHParserService:
     def __init__(
         self,
         scraper: HHScraper | None = None,
-        vacancy_fetch_concurrency: int = VACANCY_FETCH_BATCH_SIZE,
+        vacancy_fetch_concurrency: int | None = None,
     ) -> None:
         self._scraper = scraper or HHScraper()
-        self._vacancy_fetch_concurrency = vacancy_fetch_concurrency
+        self._vacancy_fetch_concurrency = (
+            vacancy_fetch_concurrency
+            if vacancy_fetch_concurrency is not None
+            else settings.hh_vacancy_detail_concurrency
+        )
 
     async def parse_vacancies(
         self,

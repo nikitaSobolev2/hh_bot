@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from src.config import settings
 from src.core.logging import get_logger
 from src.schemas.vacancy import PipelineResult, VacancyData, build_vacancy_api_context
 from src.services.ai.client import AIClient
@@ -20,7 +21,7 @@ OnUrlsFetchedCallback = Callable[[list[dict]], Awaitable[None]]
 # (tech_stack, work_exp_text, threshold) — when set, use batch compat instead of per-vacancy
 CompatParams = tuple[list[str], str, int]
 
-_DEFAULT_CONCURRENCY = 15
+_DEFAULT_CONCURRENCY = settings.hh_vacancy_detail_concurrency
 _AI_CONCURRENCY = 3
 _COMPAT_BATCH_SIZE = 8
 _COMPAT_FETCH_BATCH_SIZE = 50
@@ -274,9 +275,7 @@ class ParsingExtractor:
             vac: dict,
         ) -> VacancyData:
             async with sem:
-                api_response = await self._scraper.fetch_vacancy_by_id(
-                    client, vac["hh_vacancy_id"]
-                )
+                api_response = await self._scraper.fetch_vacancy_by_id(client, vac["hh_vacancy_id"])
             if not api_response:
                 return VacancyData(
                     hh_vacancy_id=vac["hh_vacancy_id"],
@@ -390,22 +389,18 @@ class ParsingExtractor:
                             for p in chunk:
                                 if p.description or p.vacancy_api_context:
                                     async with ai_sem:
-                                        kw_map[p.hh_vacancy_id] = (
-                                            await self._ai.extract_keywords(
-                                                p.description,
-                                                vacancy_api_context=p.vacancy_api_context,
-                                            )
+                                        kw_map[p.hh_vacancy_id] = await self._ai.extract_keywords(
+                                            p.description,
+                                            vacancy_api_context=p.vacancy_api_context,
                                         )
                         else:
                             for p in chunk:
                                 has_content = bool(p.description or p.vacancy_api_context)
                                 if has_content and kw_map.get(p.hh_vacancy_id, []) == []:
                                     async with ai_sem:
-                                        kw_map[p.hh_vacancy_id] = (
-                                            await self._ai.extract_keywords(
-                                                p.description,
-                                                vacancy_api_context=p.vacancy_api_context,
-                                            )
+                                        kw_map[p.hh_vacancy_id] = await self._ai.extract_keywords(
+                                            p.description,
+                                            vacancy_api_context=p.vacancy_api_context,
                                         )
 
                     for partial in chunk:
@@ -415,9 +410,7 @@ class ParsingExtractor:
                             kw_count[0] += 1
                             current = kw_count[0]
 
-                        score = (
-                            scores.get(partial.hh_vacancy_id, 0) if compat_params else 0
-                        )
+                        score = scores.get(partial.hh_vacancy_id, 0) if compat_params else 0
                         logger.info(
                             "Vacancy processed",
                             index=current,

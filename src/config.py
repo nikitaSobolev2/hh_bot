@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     hh_client_secret: str = ""
     hh_oauth_redirect_uri: str = ""
     hh_user_agent: str = "HHBot/1.0 (dev@localhost)"
+    # Parallel GET /vacancies/{id} (public API) — lower reduces 403 risk from HH edge.
+    hh_vacancy_detail_concurrency: int = Field(default=5, ge=1, le=30)
     hh_token_encryption_key: str = ""
 
     # HeadHunter UI apply (Playwright) — optional; off by default
@@ -76,7 +78,7 @@ class Settings(BaseSettings):
     hh_ui_debug_playwright_screenshots: bool = False
     hh_ui_debug_screenshot_dir: str = str(_DEFAULT_PLAYWRIGHT_DEBUG_DIR)
 
-    # HH server-side login assist (Playwright on worker; optional noVNC — see docs/HH_LOGIN_ASSIST.md)
+    # HH server-side login assist (Playwright; optional noVNC — docs/HH_LOGIN_ASSIST.md)
     hh_login_assist_enabled: bool = False
     hh_login_assist_max_wait_seconds: int = 900
     hh_login_assist_poll_interval_seconds: float = 2.0
