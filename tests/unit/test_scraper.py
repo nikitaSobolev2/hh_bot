@@ -1,9 +1,14 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from bs4 import BeautifulSoup
 
-from src.services.parser.scraper import HHScraper
+from src.services.parser.scraper import (
+    HHCaptchaRequiredError,
+    HHScraper,
+    _hh_error_body_has_captcha,
+)
 
 
 class TestExtractVacanciesFromPage:
@@ -447,3 +452,60 @@ class TestHHScraperHeaders:
         headers = scraper._headers()
         assert headers["User-Agent"] == "UnitTest/2.0 (test@example.com)"
         assert headers["HH-User-Agent"] == "UnitTest/2.0 (test@example.com)"
+
+
+class TestHHCaptchaAndPublicApiBreaker:
+    def test_hh_error_body_has_captcha_type(self):
+        body = '{"errors":[{"type":"captcha_required","captcha_url":"https://hh.ru/captcha"}]}'
+        assert _hh_error_body_has_captcha(body) is True
+
+    def test_hh_error_body_has_captcha_value(self):
+        assert _hh_error_body_has_captcha('{"errors":[{"value":"captcha_required"}]}') is True
+
+    def test_hh_error_body_has_captcha_false_non_json(self):
+        assert _hh_error_body_has_captcha("not json") is False
+
+    def test_hh_error_body_has_captcha_false_other_error(self):
+        assert _hh_error_body_has_captcha('{"errors":[{"type":"not_found"}]}') is False
+
+    @pytest.mark.asyncio
+    async def test_fetch_api_page_captcha_no_retry_single_http_call(self):
+        calls: list[object] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(
+                403,
+                json={
+                    "errors": [
+                        {
+                            "type": "captcha_required",
+                            "captcha_url": "https://hh.ru/account/captcha",
+                        }
+                    ]
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        mock_br = MagicMock()
+        mock_br.is_call_allowed.return_value = True
+        scraper = HHScraper(public_api_breaker=mock_br)
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(HHCaptchaRequiredError):
+                await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
+        assert len(calls) == 1
+        mock_br.record_failure.assert_called_once()
+        mock_br.record_success.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_api_page_circuit_open_skips_http(self):
+        mock_br = MagicMock()
+        mock_br.is_call_allowed.return_value = False
+        scraper = HHScraper(public_api_breaker=mock_br)
+        client = AsyncMock()
+        client.get = AsyncMock(side_effect=AssertionError("GET must not be called"))
+        with pytest.raises(HHCaptchaRequiredError) as exc_info:
+            await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
+        assert "circuit" in str(exc_info.value).lower()
+        client.get.assert_not_called()
+        mock_br.record_failure.assert_not_called()

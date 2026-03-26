@@ -8,7 +8,7 @@ import httpx
 from src.config import settings
 from src.core.logging import get_logger
 from src.schemas.vacancy import build_vacancy_api_context
-from src.services.parser.scraper import HHScraper
+from src.services.parser.scraper import HHCaptchaRequiredError, HHScraper
 
 logger = get_logger(__name__)
 
@@ -93,6 +93,8 @@ class HHParserService:
                     return_exceptions=True,
                 )
                 for i, r in enumerate(batch_results):
+                    if isinstance(r, HHCaptchaRequiredError):
+                        raise r
                     if isinstance(r, Exception):
                         logger.warning("Vacancy fetch failed", vacancy=batch[i], error=r)
                         continue

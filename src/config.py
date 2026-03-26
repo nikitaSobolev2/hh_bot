@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     hh_user_agent: str = "HHBot/1.0 (dev@localhost)"
     # Parallel GET /vacancies/{id} (public API) — lower reduces 403 risk from HH edge.
     hh_vacancy_detail_concurrency: int = Field(default=5, ge=1, le=30)
+    # After HH captcha_required (403), block further public API calls until cooldown (Redis CB).
+    hh_public_api_circuit_recovery_seconds: int = Field(default=900, ge=60, le=86400)
     hh_token_encryption_key: str = ""
 
     # HeadHunter UI apply (Playwright) — optional; off by default

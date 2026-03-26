@@ -44,13 +44,9 @@ def _make_scraper(api_response: dict | None = None):
 
 
 def _make_compat_scraper(urls: list[dict], api_response: dict | None = None):
-    """Scraper for compat flow: collect_vacancy_urls_batch returns (urls, next_page, has_more).
-
-    First call returns the urls; second call returns empty so the fetch-more loop stops.
-    Extractor uses fetch_vacancy_by_id for vacancy details.
-    """
+    """Scraper for compat flow: list phase returns urls once with has_more=False (catalog done)."""
     scraper = MagicMock()
-    scraper.collect_vacancy_urls_batch = AsyncMock(side_effect=[(urls, 1, False), ([], 1, False)])
+    scraper.collect_vacancy_urls_batch = AsyncMock(return_value=(urls, 1, False))
     scraper.fetch_vacancy_by_id = AsyncMock(
         return_value=api_response or _make_api_response()
     )
@@ -185,16 +181,16 @@ class TestExtractorCompatFilter:
 
 
 # ---------------------------------------------------------------------------
-# Fetch-more loop: extractor fetches replacement batches until target_count
+# List-then-detail: search list is exhausted before fetch_vacancy_by_id runs
 # ---------------------------------------------------------------------------
 
 
 class TestCompatFetchMoreLoop:
-    """Tests for the compat fetch-more loop (replacement parsing)."""
+    """Tests for compat list collection (multiple pages) then processing."""
 
     @pytest.mark.asyncio
     async def test_fetches_more_batches_until_target_count_reached(self):
-        """When first batch has few passing, extractor fetches more until target_count."""
+        """Extractor walks all list pages first, then runs compat on the combined set."""
         from src.services.parser.extractor import ParsingExtractor
 
         batch1 = [
@@ -218,10 +214,10 @@ class TestCompatFetchMoreLoop:
 
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(
-            side_effect=[
-                {"1": 80.0, "2": 30.0},
-                {"3": 75.0, "4": 20.0},
-            ]
+            return_value={"1": 80.0, "2": 30.0, "3": 75.0, "4": 20.0}
+        )
+        ai_client.extract_keywords_batch = AsyncMock(
+            return_value={"1": ["kw"], "3": ["kw"]}
         )
         ai_client.extract_keywords = AsyncMock(return_value=["kw"])
 
@@ -247,10 +243,7 @@ class TestCompatFetchMoreLoop:
         ]
         scraper = MagicMock()
         scraper.collect_vacancy_urls_batch = AsyncMock(
-            side_effect=[
-                (batch1, 1, False),
-                ([], 1, False),
-            ]
+            return_value=(batch1, 1, False),
         )
         scraper.fetch_vacancy_by_id = AsyncMock(
             return_value=_make_api_response(description="desc", skills=[])
@@ -272,8 +265,8 @@ class TestCompatFetchMoreLoop:
         assert result.vacancies[0].hh_vacancy_id == "1"
 
     @pytest.mark.asyncio
-    async def test_first_batch_requests_target_count_when_target_exceeds_50(self):
-        """First batch size should be target_count when target_count > 50."""
+    async def test_list_collection_uses_fixed_batch_size_even_when_target_large(self):
+        """List phase uses fixed page batch size (50), not target_count."""
         from src.services.parser.extractor import ParsingExtractor
 
         batch = [
@@ -305,7 +298,7 @@ class TestCompatFetchMoreLoop:
         )
 
         first_call = scraper.collect_vacancy_urls_batch.call_args_list[0]
-        assert first_call.kwargs["batch_size"] == 200
+        assert first_call.kwargs["batch_size"] == 50
 
 
 # ---------------------------------------------------------------------------

@@ -89,7 +89,7 @@ async def _run_parsing_company_async(
     from src.repositories.parsing import ParsingCompanyRepository
     from src.repositories.task import CeleryTaskRepository
     from src.services.parser.extractor import ParsingExtractor
-    from src.services.parser.scraper import HHScraper
+    from src.services.parser.scraper import HHCaptchaRequiredError, HHScraper
     from src.services.staleness_progress import (
         create_staleness_redis,
         is_stale,
@@ -329,6 +329,23 @@ async def _run_parsing_company_async(
             "skills_count": skills_count,
         }
 
+    except HHCaptchaRequiredError as exc:
+        cb.record_failure()
+        logger.error(
+            "HH captcha required, parsing aborted",
+            event="hh_captcha_required",
+            error=str(exc),
+            company_id=parsing_company_id,
+        )
+        await _mark_parsing_failed(
+            session_factory,
+            parsing_company_id,
+            user_id,
+            task,
+            idempotency_key,
+            exc,
+        )
+        raise
     except Exception as exc:
         if not _is_transient_failure(exc):
             cb.record_failure()

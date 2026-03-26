@@ -60,8 +60,8 @@ class ParsingExtractor:
         and skip the first skip_count (already processed). No scraping is done.
 
         When compat_params (tech_stack, work_exp, threshold) is set, uses batch
-        compatibility scoring and fetches replacement batches until target_count
-        passing vacancies or no more pages.
+        compatibility scoring. Search list pages are exhausted first (no detail
+        fetches until the catalog slice is collected), then vacancies are processed.
         """
         if compat_params is not None:
             return await self._run_pipeline_with_compat(
@@ -143,91 +143,68 @@ class ParsingExtractor:
         ai_concurrency: int = _AI_CONCURRENCY,
         resume_from: tuple[list[dict], int] | None = None,
     ) -> PipelineResult:
-        """Pipeline with compat: fetch replacement batches until target_count or exhausted."""
+        """Pipeline with compat: exhaust search list URLs, then detail + compat + keywords."""
         blacklisted = blacklisted_ids or set()
         vacancies: list[dict] = []
         skip_count = 0
-        start_page = 0
 
         if resume_from is not None:
             vacancies, skip_count = resume_from
-            seen_ids = {v["hh_vacancy_id"] for v in vacancies}
+        else:
+            seen_ids: set[str] = set()
             start_page = 0
+            while True:
+                batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
+                    base_url=search_url,
+                    keyword=keyword_filter,
+                    batch_size=_COMPAT_FETCH_BATCH_SIZE,
+                    start_page=start_page,
+                    blacklisted_ids=blacklisted,
+                    exclude_ids=seen_ids if seen_ids else None,
+                )
+                if not batch:
+                    if not has_more:
+                        break
+                    logger.warning(
+                        "Empty vacancy batch from search list; stopping collection",
+                        has_more=has_more,
+                        start_page=start_page,
+                    )
+                    break
+                vacancies.extend(batch)
+                seen_ids.update(v["hh_vacancy_id"] for v in batch)
+                start_page = next_page
+                if on_urls_fetched:
+                    await on_urls_fetched(batch)
+                if not has_more:
+                    break
 
-        if not vacancies:
-            first_batch_size = max(_COMPAT_FETCH_BATCH_SIZE, target_count)
-            batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
-                base_url=search_url,
-                keyword=keyword_filter,
-                batch_size=first_batch_size,
-                start_page=0,
-                blacklisted_ids=blacklisted,
-                exclude_ids=None,
-            )
-            if not batch:
+            if not vacancies:
                 logger.warning("No vacancies found")
                 return PipelineResult(vacancies=[], keywords=[], skills=[])
-            vacancies.extend(batch)
-            seen_ids = {v["hh_vacancy_id"] for v in vacancies}
-            start_page = next_page
-            if on_urls_fetched:
-                await on_urls_fetched(batch)
 
-        else:
-            seen_ids = {v["hh_vacancy_id"] for v in vacancies}
+            logger.info(
+                "Compat pipeline: finished collecting search URLs before detail fetch",
+                total_urls=len(vacancies),
+                target_count=target_count,
+            )
 
         keywords_counter: Counter[str] = Counter()
         skills_counter: Counter[str] = Counter()
         processed_vacancies: list[VacancyData] = []
 
-        while True:
-            await self._process_vacancy_batch(
-                vacancies=vacancies,
-                skip_count=skip_count,
-                on_page_scraped=on_page_scraped,
-                on_vacancy_processed=on_vacancy_processed,
-                compat_params=compat_params,
-                concurrency=concurrency,
-                ai_concurrency=ai_concurrency,
-                keywords_counter=keywords_counter,
-                skills_counter=skills_counter,
-                processed_vacancies=processed_vacancies,
-            )
-            skip_count = len(vacancies)
-
-            if len(processed_vacancies) >= target_count:
-                break
-
-            batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
-                base_url=search_url,
-                keyword=keyword_filter,
-                batch_size=_COMPAT_FETCH_BATCH_SIZE,
-                start_page=start_page,
-                blacklisted_ids=blacklisted,
-                exclude_ids=seen_ids,
-            )
-            if not batch:
-                break
-            vacancies.extend(batch)
-            seen_ids.update(v["hh_vacancy_id"] for v in batch)
-            start_page = next_page
-            if on_urls_fetched:
-                await on_urls_fetched(batch)
-
-            if not has_more:
-                await self._process_vacancy_batch(
-                    vacancies=vacancies,
-                    skip_count=skip_count,
-                    on_page_scraped=on_page_scraped,
-                    on_vacancy_processed=on_vacancy_processed,
-                    compat_params=compat_params,
-                    concurrency=concurrency,
-                    ai_concurrency=ai_concurrency,
-                    keywords_counter=keywords_counter,
-                    skills_counter=skills_counter,
-                    processed_vacancies=processed_vacancies,
-                )
-                break
+        await self._process_vacancy_batch(
+            vacancies=vacancies,
+            skip_count=skip_count,
+            on_page_scraped=on_page_scraped,
+            on_vacancy_processed=on_vacancy_processed,
+            compat_params=compat_params,
+            concurrency=concurrency,
+            ai_concurrency=ai_concurrency,
+            keywords_counter=keywords_counter,
+            skills_counter=skills_counter,
+            processed_vacancies=processed_vacancies,
+        )
 
         return PipelineResult(
             vacancies=processed_vacancies,

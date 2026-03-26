@@ -74,11 +74,9 @@ def _make_api_vacancy_response(vac: dict, description: str = "desc", skills: lis
 
 
 def _make_compat_scraper(urls: list[dict], description: str = "desc", skills: list | None = None):
-    """Scraper mock for compat flow: first call returns urls, second returns empty."""
+    """Scraper mock for compat flow: list phase returns urls once (catalog exhausted)."""
     scraper = MagicMock()
-    scraper.collect_vacancy_urls_batch = AsyncMock(
-        side_effect=[(urls, 1, False), ([], 1, False)]
-    )
+    scraper.collect_vacancy_urls_batch = AsyncMock(return_value=(urls, 1, False))
     skills = skills or ["Python"]
 
     async def _fetch_vacancy_by_id(client, vacancy_id: str):
