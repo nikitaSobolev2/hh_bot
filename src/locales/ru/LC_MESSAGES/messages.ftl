@@ -1038,6 +1038,7 @@ progress-bar-keywords = 🧠 Ключевые слова
 progress-bar-ai = 🧠 AI-совместимость
 progress-bar-autorespond = 📨 Автоответ
 autorespond-progress-failed = ❌ Ошибок: { $count }
+autorespond-progress-completed-with-failures = ⚠️ Завершено с ошибками ({ $count }).
 autorespond-progress-rate-limited = ⏳ Лимит UI-откликов. Остальные вакансии не обработаны.
 progress-btn-cancel = ❌ Отмена
 progress-btn-cancel-task = ❌ Отмена: { $n } - { $title }

@@ -22,7 +22,11 @@ from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
-from src.services.hh_ui.runner import apply_to_vacancy_ui, normalize_hh_vacancy_url
+from src.services.hh_ui.runner import (
+    VacancyApplySpec,
+    apply_to_vacancies_ui_batch,
+    normalize_hh_vacancy_url,
+)
 from src.services.hh_ui.storage import decrypt_browser_storage
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
@@ -54,7 +58,12 @@ def _coerce_debug_screenshots_flag(raw: object) -> bool:
 
 
 def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
-    """Return (status, error_code) for hh_application_attempts."""
+    """Return (status, error_code) for hh_application_attempts.
+
+    Terminal without retry (runner): SUCCESS, ALREADY_RESPONDED, EMPLOYER_QUESTIONS,
+    VACANCY_UNAVAILABLE. Retryable: ERROR, RATE_LIMITED, NO_APPLY_BUTTON, SESSION_EXPIRED.
+    CAPTCHA is terminal (no automated retry).
+    """
     if outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
         return "needs_employer_questions", "ui:employer_questions"
     if outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
@@ -64,6 +73,349 @@ def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
     if outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
         return "skipped", "ui:vacancy_unavailable"
     return "error", f"ui:{outcome.value}"
+
+
+def _ui_outcome_increments_autorespond_failed(outcome: ApplyOutcome) -> bool:
+    """Redis footer: count everything except clear success / already applied / preflight unavailable."""
+    return outcome not in (
+        ApplyOutcome.SUCCESS,
+        ApplyOutcome.ALREADY_RESPONDED,
+        ApplyOutcome.VACANCY_UNAVAILABLE,
+    )
+
+
+async def _persist_ui_apply_attempt_and_feed_effects(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    hh_linked_account_id: int,
+    autoparsed_vacancy_id: int,
+    hh_vacancy_id: str,
+    resume_id: str,
+    feed_session_id: int,
+    result: ApplyResult,
+    silent_feed: bool = False,
+) -> tuple[str, str | None]:
+    from src.bot.modules.autoparse import feed_services
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    status, err_code = _map_outcome_to_status(result.outcome)
+    excerpt = (result.detail or "")[:2000]
+    if result.screenshot_bytes:
+        excerpt = f"{excerpt}\n[screenshot omitted {len(result.screenshot_bytes)}b]"
+
+    async with session_factory() as session:
+        attempt_repo = HhApplicationAttemptRepository(session)
+        await attempt_repo.create(
+            user_id=user_id,
+            hh_linked_account_id=hh_linked_account_id,
+            autoparsed_vacancy_id=autoparsed_vacancy_id,
+            hh_vacancy_id=hh_vacancy_id,
+            resume_id=resume_id,
+            status=status,
+            api_negotiation_id=None,
+            error_code=err_code,
+            response_excerpt=excerpt or None,
+        )
+        vac_repo = AutoparsedVacancyRepository(session)
+        if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+            v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
+            if v_up:
+                await vac_repo.update(v_up, needs_employer_questions=True)
+        elif result.outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
+            v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
+            if v_up and v_up.needs_employer_questions:
+                await vac_repo.update(v_up, needs_employer_questions=False)
+        await session.commit()
+
+    if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
+        async with session_factory() as s_dis:
+            vac_row = await AutoparsedVacancyRepository(s_dis).get_by_id(autoparsed_vacancy_id)
+            if feed_session_id and feed_session_id > 0:
+                fr = VacancyFeedSessionRepository(s_dis)
+                fs = await fr.get_by_id(feed_session_id)
+                if fs:
+                    await feed_services.record_reaction(s_dis, fs, autoparsed_vacancy_id, False)
+            elif vac_row and silent_feed:
+                await feed_services.merge_dislike_vacancy_into_feed_sessions(
+                    s_dis,
+                    user_id,
+                    vac_row.autoparse_company_id,
+                    autoparsed_vacancy_id,
+                )
+    elif status != "success" and status != "needs_employer_questions":
+        async with session_factory() as s_unlike:
+            await feed_services.remove_liked_on_apply_failure(
+                s_unlike, feed_session_id, autoparsed_vacancy_id
+            )
+
+    return status, err_code
+
+
+async def _apply_batch_ui_async(
+    self,
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    feed_session_id: int,
+    items: list[dict],
+    cover_letter_style: str,
+    cover_task_enabled: bool,
+    silent_feed: bool = True,
+    autorespond_progress: dict | None = None,
+) -> dict:
+    """Apply to several vacancies in one Playwright session (autorespond batch)."""
+    from src.bot.modules.autoparse import feed_services
+    from src.services.autorespond_progress import (
+        increment_autorespond_failed_sync,
+        is_autorespond_cancelled_sync,
+        tick_autorespond_bar,
+    )
+    from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
+
+    if (
+        autorespond_progress
+        and autorespond_progress.get("task_key")
+        and is_autorespond_cancelled_sync(int(chat_id), str(autorespond_progress["task_key"]))
+    ):
+        return {"status": "cancelled", "reason": "autorespond_cancelled", "count": len(items)}
+
+    bot = self.create_bot()
+    try:
+        cipher = HhTokenCipher(settings.hh_token_encryption_key)
+
+        async with session_factory() as session:
+            acc_repo = HhLinkedAccountRepository(session)
+            acc = await acc_repo.get_by_id(hh_linked_account_id)
+            if not acc or not acc.browser_storage_enc:
+                logger.warning(
+                    "hh_ui batch: missing browser session",
+                    account_id=hh_linked_account_id,
+                )
+                for it in items:
+                    with contextlib.suppress(Exception):
+                        async with session_factory() as s2:
+                            await feed_services.remove_liked_on_apply_failure(
+                                s2, feed_session_id, int(it["autoparsed_vacancy_id"])
+                            )
+                return {"status": "error", "reason": "no_browser_session"}
+
+            storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+            if not storage:
+                for it in items:
+                    with contextlib.suppress(Exception):
+                        async with session_factory() as s2:
+                            await feed_services.remove_liked_on_apply_failure(
+                                s2, feed_session_id, int(it["autoparsed_vacancy_id"])
+                            )
+                return {"status": "error", "reason": "decrypt_failed"}
+
+            settings_repo = AppSettingRepository(session)
+            debug_raw = await settings_repo.get_value(
+                AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS,
+                default=False,
+            )
+            debug_screenshots = _coerce_debug_screenshots_flag(debug_raw)
+            send_err_raw = await settings_repo.get_value(
+                AppSettingKey.HH_UI_DEBUG_SEND_ERROR_SCREENSHOT_TO_USER,
+                default=False,
+            )
+            send_error_screenshot_to_user = _coerce_debug_screenshots_flag(send_err_raw)
+            attach_error_bytes = debug_screenshots or send_error_screenshot_to_user
+            config = HhUiApplyConfig.from_settings()
+            if debug_screenshots:
+                Path(settings.hh_ui_debug_screenshot_dir).mkdir(parents=True, exist_ok=True)
+                config = replace(
+                    config,
+                    debug_screenshot_dir=settings.hh_ui_debug_screenshot_dir,
+                )
+            if attach_error_bytes:
+                config = replace(config, attach_error_screenshot_bytes=True)
+
+        from src.services.ai.client import AIClient
+
+        cover_ai: AIClient | None = None
+        from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+
+        results_by_vid: dict[int, ApplyResult] = {}
+        specs: list[VacancyApplySpec] = []
+
+        for it in items:
+            vid = int(it["autoparsed_vacancy_id"])
+            hh_id = str(it["hh_vacancy_id"])
+            url = normalize_hh_vacancy_url(str(it.get("vacancy_url") or ""), hh_id)
+            if await hh_vacancy_public_is_unavailable(hh_id):
+                results_by_vid[vid] = ApplyResult(
+                    outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
+                    detail="preflight_api",
+                )
+                continue
+            letter = ""
+            if cover_task_enabled:
+                if cover_ai is None:
+                    cover_ai = AIClient()
+                try:
+                    letter = await generate_cover_letter_plaintext_for_autoparsed_vacancy(
+                        session_factory,
+                        user_id,
+                        vid,
+                        cover_letter_style,
+                        ai_client=cover_ai,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "hh_ui_batch_cover_letter_failed",
+                        user_id=user_id,
+                        vacancy_id=vid,
+                        error=str(exc)[:300],
+                    )
+                    results_by_vid[vid] = ApplyResult(
+                        outcome=ApplyOutcome.ERROR,
+                        detail=f"cover_letter:{exc}"[:500],
+                    )
+                    continue
+            specs.append(
+                VacancyApplySpec(
+                    autoparsed_vacancy_id=vid,
+                    hh_vacancy_id=hh_id,
+                    vacancy_url=url,
+                    resume_hh_id=str(it["resume_id"]),
+                    cover_letter=letter,
+                )
+            )
+
+        if specs:
+            try:
+                batch_out = await asyncio.to_thread(
+                    apply_to_vacancies_ui_batch,
+                    storage_state=storage,
+                    items=specs,
+                    config=config,
+                    log_user_id=user_id,
+                    max_retries=settings.hh_ui_apply_max_retries,
+                    retry_initial_seconds=settings.hh_ui_apply_retry_initial_seconds,
+                    retry_delay_cap_seconds=settings.hh_ui_apply_retry_delay_cap_seconds,
+                )
+                for vid, r in batch_out:
+                    results_by_vid[vid] = r
+            except Exception as exc:
+                logger.exception("hh_ui batch apply failed", error=str(exc))
+                err = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
+                for s in specs:
+                    results_by_vid[s.autoparsed_vacancy_id] = err
+
+        processed = 0
+        for it in items:
+            vid = int(it["autoparsed_vacancy_id"])
+            result = results_by_vid.get(
+                vid,
+                ApplyResult(outcome=ApplyOutcome.ERROR, detail="batch_missing_result"),
+            )
+            resume_id = str(it["resume_id"])
+            hh_id = str(it["hh_vacancy_id"])
+            await _persist_ui_apply_attempt_and_feed_effects(
+                session_factory=session_factory,
+                user_id=user_id,
+                hh_linked_account_id=hh_linked_account_id,
+                autoparsed_vacancy_id=vid,
+                hh_vacancy_id=hh_id,
+                resume_id=resume_id,
+                feed_session_id=feed_session_id,
+                result=result,
+                silent_feed=silent_feed,
+            )
+            logger.info(
+                "hh_ui_apply_batch_item_done",
+                task_id=getattr(self.request, "id", None),
+                user_id=user_id,
+                vacancy_id=vid,
+                outcome=result.outcome.value,
+            )
+            processed += 1
+
+            if autorespond_progress and autorespond_progress.get("task_key"):
+                with contextlib.suppress(Exception):
+                    if _ui_outcome_increments_autorespond_failed(result.outcome):
+                        increment_autorespond_failed_sync(
+                            int(chat_id),
+                            str(autorespond_progress["task_key"]),
+                            1,
+                        )
+                    await tick_autorespond_bar(
+                        bot=bot,
+                        chat_id=chat_id,
+                        task_key=str(autorespond_progress["task_key"]),
+                        total=int(autorespond_progress["total"]),
+                        locale=str(autorespond_progress.get("locale") or locale),
+                        footer_failed_line=None,
+                    )
+
+            if (
+                silent_feed
+                and send_error_screenshot_to_user
+                and result.screenshot_bytes
+                and _map_outcome_to_status(result.outcome)[0] != "success"
+            ):
+                err_name = (
+                    "hh_captcha.png"
+                    if result.outcome == ApplyOutcome.CAPTCHA
+                    else "hh_apply_error.png"
+                )
+                with contextlib.suppress(Exception):
+                    await bot.send_photo(
+                        chat_id,
+                        BufferedInputFile(result.screenshot_bytes, err_name),
+                    )
+
+        return {"status": "ok", "processed": processed}
+    finally:
+        with contextlib.suppress(Exception):
+            await bot.session.close()
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="hh_ui.apply_to_vacancies_batch",
+    queue="hh_ui",
+    soft_time_limit=settings.hh_ui_apply_batch_task_soft_time_limit,
+    time_limit=settings.hh_ui_apply_batch_task_time_limit,
+)
+def apply_to_vacancies_batch_ui_task(
+    self,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    feed_session_id: int,
+    items: list[dict],
+    cover_letter_style: str,
+    cover_task_enabled: bool,
+    silent_feed: bool = True,
+    autorespond_progress: dict | None = None,
+) -> dict:
+    return run_async(
+        lambda sf: _apply_batch_ui_async(
+            self,
+            sf,
+            user_id,
+            chat_id,
+            message_id,
+            locale,
+            hh_linked_account_id,
+            feed_session_id,
+            items,
+            cover_letter_style,
+            cover_task_enabled,
+            silent_feed=silent_feed,
+            autorespond_progress=autorespond_progress,
+        )
+    )
 
 
 async def _apply_ui_async(
@@ -113,6 +465,7 @@ async def _apply_ui_async(
 
     bot = self.create_bot()
     send_error_screenshot_to_user = False
+    result: ApplyResult | None = None
     try:
         cipher = HhTokenCipher(settings.hh_token_encryption_key)
 
@@ -202,15 +555,25 @@ async def _apply_ui_async(
             )
         else:
             try:
-                result = await asyncio.to_thread(
-                    apply_to_vacancy_ui,
+                played = await asyncio.to_thread(
+                    apply_to_vacancies_ui_batch,
                     storage_state=storage,
-                    vacancy_url=url,
-                    resume_hh_id=resume_id,
+                    items=[
+                        VacancyApplySpec(
+                            autoparsed_vacancy_id=autoparsed_vacancy_id,
+                            hh_vacancy_id=hh_vacancy_id,
+                            vacancy_url=url,
+                            resume_hh_id=resume_id,
+                            cover_letter=cover_letter or "",
+                        )
+                    ],
                     config=config,
                     log_user_id=user_id,
-                    cover_letter=cover_letter or "",
+                    max_retries=settings.hh_ui_apply_max_retries,
+                    retry_initial_seconds=settings.hh_ui_apply_retry_initial_seconds,
+                    retry_delay_cap_seconds=settings.hh_ui_apply_retry_delay_cap_seconds,
                 )
+                result = played[0][1]
             except Exception as exc:
                 logger.exception("hh_ui apply failed", error=str(exc))
                 result = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
@@ -224,67 +587,30 @@ async def _apply_ui_async(
             detail=(result.detail or "")[:2000] if result.detail else None,
         )
 
-        status, err_code = _map_outcome_to_status(result.outcome)
-        excerpt = (result.detail or "")[:2000]
-        if result.screenshot_bytes:
-            excerpt = f"{excerpt}\n[screenshot omitted {len(result.screenshot_bytes)}b]"
-
-        async with session_factory() as session:
-            attempt_repo = HhApplicationAttemptRepository(session)
-            await attempt_repo.create(
-                user_id=user_id,
-                hh_linked_account_id=hh_linked_account_id,
-                autoparsed_vacancy_id=autoparsed_vacancy_id,
-                hh_vacancy_id=hh_vacancy_id,
-                resume_id=resume_id,
-                status=status,
-                api_negotiation_id=None,
-                error_code=err_code,
-                response_excerpt=excerpt or None,
-            )
-            vac_repo = AutoparsedVacancyRepository(session)
-            if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
-                v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
-                if v_up:
-                    await vac_repo.update(v_up, needs_employer_questions=True)
-            elif result.outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
-                v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
-                if v_up and v_up.needs_employer_questions:
-                    await vac_repo.update(v_up, needs_employer_questions=False)
-            await session.commit()
-            logger.info(
-                "hh_ui_apply_attempt_recorded",
-                task_id=getattr(self.request, "id", None),
-                user_id=user_id,
-                vacancy_id=autoparsed_vacancy_id,
-                status=status,
-            )
+        status, err_code = await _persist_ui_apply_attempt_and_feed_effects(
+            session_factory=session_factory,
+            user_id=user_id,
+            hh_linked_account_id=hh_linked_account_id,
+            autoparsed_vacancy_id=autoparsed_vacancy_id,
+            hh_vacancy_id=hh_vacancy_id,
+            resume_id=resume_id,
+            feed_session_id=feed_session_id,
+            result=result,
+            silent_feed=silent_feed,
+        )
+        logger.info(
+            "hh_ui_apply_attempt_recorded",
+            task_id=getattr(self.request, "id", None),
+            user_id=user_id,
+            vacancy_id=autoparsed_vacancy_id,
+            status=status,
+        )
 
         if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
-            async with session_factory() as s_dis:
-                vac_row = await AutoparsedVacancyRepository(s_dis).get_by_id(autoparsed_vacancy_id)
-                if feed_session_id and feed_session_id > 0:
-                    fr = VacancyFeedSessionRepository(s_dis)
-                    fs = await fr.get_by_id(feed_session_id)
-                    if fs:
-                        await feed_services.record_reaction(
-                            s_dis, fs, autoparsed_vacancy_id, False
-                        )
-                elif vac_row and silent_feed:
-                    await feed_services.merge_dislike_vacancy_into_feed_sessions(
-                        s_dis,
-                        user_id,
-                        vac_row.autoparse_company_id,
-                        autoparsed_vacancy_id,
-                    )
             async with session_factory() as s_reload:
                 fr = VacancyFeedSessionRepository(s_reload)
                 feed_session = await fr.get_by_id(feed_session_id)
         elif status != "success" and status != "needs_employer_questions":
-            async with session_factory() as s_unlike:
-                await feed_services.remove_liked_on_apply_failure(
-                    s_unlike, feed_session_id, autoparsed_vacancy_id
-                )
             async with session_factory() as s_reload:
                 fr = VacancyFeedSessionRepository(s_reload)
                 feed_session = await fr.get_by_id(feed_session_id)
@@ -422,8 +748,17 @@ async def _apply_ui_async(
     finally:
         if autorespond_progress and autorespond_progress.get("task_key"):
             with contextlib.suppress(Exception):
-                from src.services.autorespond_progress import tick_autorespond_bar
+                from src.services.autorespond_progress import (
+                    increment_autorespond_failed_sync,
+                    tick_autorespond_bar,
+                )
 
+                if result is not None and _ui_outcome_increments_autorespond_failed(result.outcome):
+                    increment_autorespond_failed_sync(
+                        int(chat_id),
+                        str(autorespond_progress["task_key"]),
+                        1,
+                    )
                 await tick_autorespond_bar(
                     bot=bot,
                     chat_id=chat_id,

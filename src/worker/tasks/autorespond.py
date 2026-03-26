@@ -162,15 +162,13 @@ async def _run_autorespond_async(
     from src.repositories.user import UserRepository
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
+        clear_autorespond_failed_counter,
         is_autorespond_cancelled_sync,
         tick_autorespond_bar,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
-    from src.worker.tasks.cover_letter import (
-        generate_cover_letter_plaintext_for_autoparsed_vacancy,
-        generate_cover_letter_task,
-    )
-    from src.worker.tasks.hh_ui_apply import apply_to_vacancy_ui_task
+    from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
+    from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
     from src.repositories.hh_linked_account import HhLinkedAccountRepository
     from src.services.ai.client import AIClient
     from src.services.ai.resume_selection import (
@@ -314,6 +312,7 @@ async def _run_autorespond_async(
         skipped = 0
         failed = 0
         locale = user.language_code or "ru"
+        ui_batch_buffer: list[tuple[AutoparsedVacancy, str]] = []
 
         progress: object | None = None
         task_key: str | None = None
@@ -341,6 +340,7 @@ async def _run_autorespond_async(
                 task_key,
                 [get_text("autorespond-progress-failed", locale, count=failed)],
             )
+            await clear_autorespond_failed_counter(user.telegram_id, task_key)
 
         total_v = len(capped)
         ar_prog = (
@@ -350,6 +350,34 @@ async def _run_autorespond_async(
         )
 
         try:
+            async def flush_ui_batch() -> None:
+                nonlocal queued
+                if not ui_batch_buffer:
+                    return
+                apply_to_vacancies_batch_ui_task.delay(
+                    user.id,
+                    user.telegram_id,
+                    0,
+                    locale,
+                    hh_acc_id,
+                    0,
+                    [
+                        {
+                            "autoparsed_vacancy_id": vac.id,
+                            "hh_vacancy_id": vac.hh_vacancy_id,
+                            "resume_id": rid,
+                            "vacancy_url": normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id),
+                        }
+                        for vac, rid in ui_batch_buffer
+                    ],
+                    cover_letter_style,
+                    cover_task_enabled,
+                    silent_feed=True,
+                    autorespond_progress=ar_prog,
+                )
+                queued += len(ui_batch_buffer)
+                ui_batch_buffer.clear()
+
             for idx, vac in enumerate(capped, start=1):
                 if task_key and user.telegram_id and is_autorespond_cancelled_sync(
                     user.telegram_id, task_key
@@ -409,6 +437,7 @@ async def _run_autorespond_async(
 
                 if settings.hh_ui_apply_enabled:
                     if not try_acquire_ui_apply_slot_sync(user.id):
+                        await flush_ui_batch()
                         logger.info(
                             "autorespond_rate_limited",
                             company_id=company_id,
@@ -420,6 +449,7 @@ async def _run_autorespond_async(
                         )
                         if task_key and user.telegram_id:
                             await clear_autorespond_done_counter(user.telegram_id, task_key)
+                            await clear_autorespond_failed_counter(user.telegram_id, task_key)
                         if progress and task_key:
                             await progress.finish_task(
                                 task_key,
@@ -459,51 +489,9 @@ async def _run_autorespond_async(
                                 ),
                             )
                         continue
-                    vacancy_url = normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id)
-                    if cover_task_enabled:
-                        apply_after_payload = {
-                            "user_id": user.id,
-                            "chat_id": user.telegram_id,
-                            "message_id": 0,
-                            "locale": locale,
-                            "hh_linked_account_id": hh_acc_id,
-                            "autoparsed_vacancy_id": vac.id,
-                            "hh_vacancy_id": vac.hh_vacancy_id,
-                            "resume_id": resume_id,
-                            "vacancy_url": vacancy_url,
-                            "feed_session_id": 0,
-                        }
-                        if ar_prog:
-                            apply_after_payload["autorespond_progress"] = ar_prog
-                        generate_cover_letter_task.delay(
-                            user.id,
-                            vac.id,
-                            user.telegram_id,
-                            0,
-                            locale,
-                            cover_letter_style,
-                            0,
-                            "autorespond_apply",
-                            apply_after=apply_after_payload,
-                            silent_feed=True,
-                        )
-                    else:
-                        apply_to_vacancy_ui_task.delay(
-                            user.id,
-                            user.telegram_id,
-                            0,
-                            locale,
-                            hh_acc_id,
-                            vac.id,
-                            vac.hh_vacancy_id,
-                            resume_id,
-                            vacancy_url,
-                            0,
-                            "",
-                            silent_feed=True,
-                            autorespond_progress=ar_prog,
-                        )
-                    queued += 1
+                    ui_batch_buffer.append((vac, resume_id))
+                    if len(ui_batch_buffer) >= settings.hh_ui_apply_batch_size:
+                        await flush_ui_batch()
                 else:
                     if len(resume_items) > 1 and cover_ai_client is None:
                         cover_ai_client = AIClient()
@@ -613,10 +601,14 @@ async def _run_autorespond_async(
                             ),
                         )
 
+            await flush_ui_batch()
+
         except Exception:
             if progress and task_key and user.telegram_id:
                 with contextlib.suppress(Exception):
                     await clear_autorespond_done_counter(user.telegram_id, task_key)
+                with contextlib.suppress(Exception):
+                    await clear_autorespond_failed_counter(user.telegram_id, task_key)
                 with contextlib.suppress(Exception):
                     await progress.finish_task(task_key, complete_bars=False)
             raise

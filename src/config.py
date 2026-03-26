@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     # Celery wall-clock limits for ``hh_ui.apply_to_vacancy`` (Playwright; may wait on slow pages).
     hh_ui_apply_task_soft_time_limit: int = Field(default=480, ge=60, le=3600)
     hh_ui_apply_task_time_limit: int = Field(default=600, ge=120, le=7200)
+    # Batched UI apply: one Chromium session per chunk (see ``hh_ui.apply_to_vacancies_batch``).
+    hh_ui_apply_batch_size: int = Field(default=4, ge=1, le=50)
+    hh_ui_apply_batch_task_soft_time_limit: int = Field(default=2400, ge=300, le=14400)
+    hh_ui_apply_batch_task_time_limit: int = Field(default=3000, ge=600, le=18000)
+    hh_ui_apply_max_retries: int = Field(default=5, ge=1, le=10)
+    hh_ui_apply_retry_initial_seconds: float = Field(default=10.0, ge=1.0, le=300.0)
+    hh_ui_apply_retry_delay_cap_seconds: float = Field(default=600.0, ge=10.0, le=3600.0)
     # Celery ``autoparse.run_company``: large target_count runs need hours; wall-clock is total budget.
     # Redis per-company run lock TTL is renewed on an interval (see autoparse task) — not the same as stall detection.
     autoparse_run_company_soft_time_limit_seconds: int = Field(default=14400, ge=300, le=86400)
@@ -136,6 +143,11 @@ class Settings(BaseSettings):
         if self.hh_ui_apply_task_time_limit <= self.hh_ui_apply_task_soft_time_limit:
             raise ValueError(
                 "hh_ui_apply_task_time_limit must be greater than hh_ui_apply_task_soft_time_limit"
+            )
+        if self.hh_ui_apply_batch_task_time_limit <= self.hh_ui_apply_batch_task_soft_time_limit:
+            raise ValueError(
+                "hh_ui_apply_batch_task_time_limit must be greater than "
+                "hh_ui_apply_batch_task_soft_time_limit"
             )
         if self.hh_public_api_list_delay_max_seconds < self.hh_public_api_list_delay_min_seconds:
             raise ValueError(

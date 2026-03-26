@@ -1037,6 +1037,7 @@ progress-bar-keywords = 🧠 Keywords
 progress-bar-ai = 🧠 AI Analysis
 progress-bar-autorespond = 📨 Autorespond
 autorespond-progress-failed = ❌ Failed: { $count }
+autorespond-progress-completed-with-failures = ⚠️ Completed with failures ({ $count }).
 autorespond-progress-rate-limited = ⏳ UI apply rate limit reached. Remaining vacancies were not processed.
 progress-btn-cancel = ❌ Cancel
 progress-btn-cancel-task = ❌ Cancel: { $n } - { $title }
