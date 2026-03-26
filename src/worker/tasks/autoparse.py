@@ -235,6 +235,7 @@ async def _run_autoparse_company_async(
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
     from src.services.parser.hh_parser_service import HHParserService
+    from src.services.parser.scraper import HHCaptchaRequiredError
     from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
     from src.worker.circuit_breaker import CircuitBreaker
 
@@ -564,16 +565,24 @@ async def _run_autoparse_company_async(
             company_id=company_id,
             new_vacancies=new_count,
         )
-        return {"status": "completed", "new_count": new_count, "company_id": company_id}
-
-    except Exception as exc:
-        cb.record_failure()
-        logger.error("Autoparse task failed", company_id=company_id, error=str(exc))
-        raise
-    finally:
         if progress:
             with contextlib.suppress(Exception):
                 await progress.finish_task(task_key)
+        return {"status": "completed", "new_count": new_count, "company_id": company_id}
+
+    except HHCaptchaRequiredError:
+        if progress:
+            with contextlib.suppress(Exception):
+                await progress.mark_retrying(task_key)
+        raise
+    except Exception as exc:
+        cb.record_failure()
+        logger.error("Autoparse task failed", company_id=company_id, error=str(exc))
+        if progress:
+            with contextlib.suppress(Exception):
+                await progress.cancel_task(task_key)
+        raise
+    finally:
         r.delete(lock_key)
         if _progress_bot:
             await _progress_bot.session.close()

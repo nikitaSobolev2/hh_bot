@@ -2,8 +2,8 @@
 
 These tests verify that _run_autoparse_company_async correctly integrates with
 ProgressService: starting the task on entry, updating bars during scraping and
-AI analysis, finishing on success, and finishing (for cleanup) even when an
-exception is raised.
+AI analysis, finishing on success, marking retrying on HH captcha, and cancelling
+the progress task on other failures.
 
 All imports inside _run_autoparse_company_async are lazy (local), so patches
 must target source modules (e.g. src.services.progress_service.ProgressService)
@@ -189,7 +189,7 @@ class TestAutoparseTaskProgressIntegration:
 
     @pytest.mark.asyncio
     async def test_progress_finish_task_called_on_success(self):
-        """finish_task is always called (via finally) after successful execution."""
+        """finish_task is called after successful execution before returning."""
         company = _make_company(company_id=7)
         user = _make_user(telegram_id=222)
         session = _make_session()
@@ -240,8 +240,8 @@ class TestAutoparseTaskProgressIntegration:
         progress_mock.finish_task.assert_awaited_once_with("autoparse:7")
 
     @pytest.mark.asyncio
-    async def test_progress_finish_task_called_on_exception(self):
-        """finish_task is called via finally even when an exception is raised."""
+    async def test_progress_cancel_task_called_on_exception(self):
+        """cancel_task is called when execution fails so the UI does not show all-done."""
         company = _make_company(company_id=9)
         user = _make_user(telegram_id=333)
         session = _make_session()
@@ -284,11 +284,12 @@ class TestAutoparseTaskProgressIntegration:
                     notify_user_id=42,
                 )
 
-        progress_mock.finish_task.assert_awaited_once_with("autoparse:9")
+        progress_mock.cancel_task.assert_awaited_once_with("autoparse:9")
+        progress_mock.finish_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_finish_task_exception_does_not_suppress_original_error(self):
-        """If finish_task itself raises, the original task exception still propagates."""
+    async def test_cancel_task_exception_does_not_suppress_original_error(self):
+        """If cancel_task itself raises, the original task exception still propagates."""
         company = _make_company(company_id=11)
         user = _make_user(telegram_id=444)
         session = _make_session()
@@ -297,7 +298,7 @@ class TestAutoparseTaskProgressIntegration:
         fake_task.request.id = "test-id-4"
 
         progress_mock = AsyncMock()
-        progress_mock.finish_task = AsyncMock(side_effect=ValueError("redis down"))
+        progress_mock.cancel_task = AsyncMock(side_effect=ValueError("redis down"))
 
         base_patches = [
             patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
@@ -324,7 +325,7 @@ class TestAutoparseTaskProgressIntegration:
 
             from src.worker.tasks.autoparse import _run_autoparse_company_async
 
-            # The original RuntimeError must propagate; ValueError from finish_task is suppressed.
+            # The original RuntimeError must propagate; ValueError from cancel_task is suppressed.
             with pytest.raises(RuntimeError, match="parsing failed"):
                 await _run_autoparse_company_async(
                     session_factory,
