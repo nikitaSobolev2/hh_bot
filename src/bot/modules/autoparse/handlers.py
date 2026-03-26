@@ -10,14 +10,16 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.autoparse import services as ap_service
+from src.bot.modules.autoparse.autorespond_handlers import (
+    autorespond_globally_enabled,
+)
+from src.bot.modules.autoparse.autorespond_handlers import (
+    router as autorespond_router,
+)
 from src.bot.modules.autoparse.callbacks import (
     AutoparseCallback,
     AutoparseDownloadCallback,
     AutoparseSettingsCallback,
-)
-from src.bot.modules.autoparse.autorespond_handlers import (
-    autorespond_globally_enabled,
-    router as autorespond_router,
 )
 from src.bot.modules.autoparse.feed_handlers import router as feed_router
 from src.bot.modules.autoparse.keyboards import (
@@ -52,6 +54,14 @@ router.include_router(autorespond_router)
 
 _PER_PAGE = 5
 _VACANCIES_PER_PAGE = 15
+_EDIT_PROMPT_MAX_LEN = 100
+
+
+def _truncate_for_edit_prompt(text: str, max_len: int = _EDIT_PROMPT_MAX_LEN) -> str:
+    t = text.strip()
+    if len(t) <= max_len:
+        return t
+    return f"{t[:max_len]}…"
 
 
 async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
@@ -346,9 +356,7 @@ async def show_liked_vacancies(
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("autoparse-liked-empty"),
-                reply_markup=liked_disliked_list_keyboard(
-                    "show_liked", 0, False, i18n
-                ),
+                reply_markup=liked_disliked_list_keyboard("show_liked", 0, False, i18n),
             )
         return
 
@@ -371,9 +379,7 @@ async def show_liked_vacancies(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=liked_disliked_list_keyboard(
-                "show_liked", page, has_more, i18n
-            ),
+            reply_markup=liked_disliked_list_keyboard("show_liked", page, has_more, i18n),
             parse_mode="HTML",
         )
 
@@ -394,9 +400,7 @@ async def show_disliked_vacancies(
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("autoparse-disliked-empty"),
-                reply_markup=liked_disliked_list_keyboard(
-                    "show_disliked", 0, False, i18n
-                ),
+                reply_markup=liked_disliked_list_keyboard("show_disliked", 0, False, i18n),
             )
         return
 
@@ -419,9 +423,7 @@ async def show_disliked_vacancies(
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
-            reply_markup=liked_disliked_list_keyboard(
-                "show_disliked", page, has_more, i18n
-            ),
+            reply_markup=liked_disliked_list_keyboard("show_disliked", page, has_more, i18n),
             parse_mode="HTML",
         )
 
@@ -462,9 +464,7 @@ async def handle_view_feed_below_compat(
     reacted_ids = await ap_service.get_reacted_vacancy_ids_for_user(session, user.id)
 
     vacancy_repo = AutoparsedVacancyRepository(session)
-    vacancies = await vacancy_repo.get_below_min_compat_for_user(
-        user.id, min_compat, reacted_ids
-    )
+    vacancies = await vacancy_repo.get_below_min_compat_for_user(user.id, min_compat, reacted_ids)
     companies, total = await ap_service.get_user_autoparse_companies(
         session, user.id, page=0, per_page=_PER_PAGE
     )
@@ -736,6 +736,99 @@ async def edit_keywords_receive(
             ),
         )
     await message.answer(i18n.get("autoparse-edit-keywords-saved"))
+
+
+# ── Edit search URL ─────────────────────────────────────────────────
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "edit_search_url"))
+async def edit_search_url_start(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    await state.set_state(AutoparseEditForm.edit_search_url)
+    await state.update_data(
+        edit_search_url_company_id=company.id,
+        edit_search_url_message_id=callback.message.message_id,
+    )
+    current = _truncate_for_edit_prompt(company.search_url or "")
+    await callback.message.answer(
+        i18n.get("autoparse-edit-search-url-prompt", current=current),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(AutoparseEditForm.edit_search_url, F.text)
+async def edit_search_url_receive(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    company_id = data.get("edit_search_url_company_id")
+    detail_message_id = data.get("edit_search_url_message_id")
+
+    if not company_id:
+        await state.clear()
+        await message.answer(i18n.get("autoparse-not-found"))
+        return
+
+    url = message.text.strip()
+    if not url.startswith("http"):
+        await message.answer(i18n.get("autoparse-enter-url"))
+        return
+
+    from src.repositories.autoparse import AutoparseCompanyRepository
+
+    repo = AutoparseCompanyRepository(session)
+    company = await repo.get_by_id(company_id)
+    if not company or company.user_id != user.id:
+        await state.clear()
+        await message.answer(i18n.get("autoparse-not-found"))
+        return
+
+    await repo.update(company, search_url=url)
+    await session.commit()
+    await state.clear()
+
+    count = await ap_service.get_vacancy_count(session, company.id)
+    show_run_now = await _should_show_run_now(session, company, user)
+    ar_task_on = await autorespond_globally_enabled(session)
+    show_sync = await _user_has_hh_browser_session(session, user.id)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await message.bot.edit_message_text(
+            text,
+            chat_id=message.chat.id,
+            message_id=detail_message_id,
+            reply_markup=autoparse_detail_keyboard(
+                company,
+                i18n,
+                show_run_now=show_run_now,
+                show_show_now=(count > 0),
+                show_autorespond=True,
+                show_sync_negotiations=show_sync,
+            ),
+        )
+    await message.answer(i18n.get("autoparse-edit-search-url-saved"))
 
 
 # ── Toggle ──────────────────────────────────────────────────────────
@@ -1169,9 +1262,7 @@ async def settings_about_me(callback: CallbackQuery, state: FSMContext, i18n: I1
     await state.set_state(AutoparseSettingsForm.about_me)
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
-            i18n.get("autoparse-settings-about-me")
-            + "\n\n"
-            + i18n.get("autoparse-enter-about-me"),
+            i18n.get("autoparse-settings-about-me") + "\n\n" + i18n.get("autoparse-enter-about-me"),
             reply_markup=cancel_keyboard(i18n),
         )
     await callback.answer()
@@ -1213,9 +1304,7 @@ async def settings_target_count(
 
 @router.callback_query(
     AutoparseSettingsCallback.filter(
-        F.action.in_(
-            {"target_count_10", "target_count_30", "target_count_50", "target_count_5000"}
-        )
+        F.action.in_({"target_count_10", "target_count_30", "target_count_50", "target_count_5000"})
     )
 )
 async def settings_target_count_select(
@@ -1327,9 +1416,7 @@ async def settings_cover_letter_style_select(
         if callback_data.action.startswith(prefix)
         else "professional"
     )
-    await ap_service.update_user_autoparse_settings(
-        session, user.id, cover_letter_style=style
-    )
+    await ap_service.update_user_autoparse_settings(session, user.id, cover_letter_style=style)
     current = await ap_service.get_user_autoparse_settings(session, user.id)
     experiences = await parsing_service.get_active_work_experiences(session, user.id)
     if experiences:
@@ -1375,9 +1462,7 @@ async def settings_cover_letter_style_select(
     await callback.answer()
 
 
-@router.callback_query(
-    AutoparseSettingsCallback.filter(F.action == "cover_letter_style_custom")
-)
+@router.callback_query(AutoparseSettingsCallback.filter(F.action == "cover_letter_style_custom"))
 async def settings_cover_letter_style_custom(
     callback: CallbackQuery, state: FSMContext, i18n: I18nContext
 ) -> None:

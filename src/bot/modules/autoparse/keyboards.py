@@ -155,7 +155,7 @@ def autoparse_list_keyboard(
             InlineKeyboardButton(
                 text=i18n.get("autoparse-btn-show-disliked"),
                 callback_data=AutoparseCallback(action="show_disliked").pack(),
-            )
+            ),
         ]
     )
     rows.append(
@@ -271,7 +271,13 @@ def autoparse_detail_keyboard(
                 callback_data=AutoparseCallback(
                     action="edit_keywords", company_id=company.id
                 ).pack(),
-            )
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-edit-search-url"),
+                callback_data=AutoparseCallback(
+                    action="edit_search_url", company_id=company.id
+                ).pack(),
+            ),
         ],
         [
             InlineKeyboardButton(
@@ -311,9 +317,7 @@ def autoparse_detail_keyboard(
             [
                 InlineKeyboardButton(
                     text=i18n.get("autorespond-btn-settings"),
-                    callback_data=AutoparseCallback(
-                        action="ar_menu", company_id=company.id
-                    ).pack(),
+                    callback_data=AutoparseCallback(action="ar_menu", company_id=company.id).pack(),
                 )
             ]
         )
@@ -321,9 +325,7 @@ def autoparse_detail_keyboard(
             [
                 InlineKeyboardButton(
                     text=i18n.get("autorespond-btn-run"),
-                    callback_data=AutoparseCallback(
-                        action="ar_run", company_id=company.id
-                    ).pack(),
+                    callback_data=AutoparseCallback(action="ar_run", company_id=company.id).pack(),
                 )
             ]
         )
@@ -404,9 +406,7 @@ def autorespond_settings_keyboard(
             [
                 InlineKeyboardButton(
                     text=mode_lbl,
-                    callback_data=AutoparseCallback(
-                        action="ar_mode", company_id=company.id
-                    ).pack(),
+                    callback_data=AutoparseCallback(action="ar_mode", company_id=company.id).pack(),
                 )
             ],
             lim_row,
@@ -422,9 +422,7 @@ def autorespond_settings_keyboard(
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-back"),
-                    callback_data=AutoparseCallback(
-                        action="detail", company_id=company.id
-                    ).pack(),
+                    callback_data=AutoparseCallback(action="detail", company_id=company.id).pack(),
                 )
             ],
         ]
@@ -608,9 +606,7 @@ def cover_letter_style_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text=i18n.get("autoparse-cover-letter-style-custom"),
-                callback_data=AutoparseSettingsCallback(
-                    action="cover_letter_style_custom"
-                ).pack(),
+                callback_data=AutoparseSettingsCallback(action="cover_letter_style_custom").pack(),
             )
         ]
     )

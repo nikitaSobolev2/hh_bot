@@ -12,6 +12,7 @@ class AutoparseForm(StatesGroup):
 
 class AutoparseEditForm(StatesGroup):
     edit_keywords = State()
+    edit_search_url = State()
 
 
 class FeedRespondForm(StatesGroup):

@@ -39,6 +39,13 @@ class TestAutoparseCallbacks:
         parsed = AutoparseCallback.unpack(packed)
         assert parsed.action == "view_feed_below_compat"
 
+    def test_edit_search_url_callback(self):
+        cb = AutoparseCallback(action="edit_search_url", company_id=7)
+        packed = cb.pack()
+        parsed = AutoparseCallback.unpack(packed)
+        assert parsed.action == "edit_search_url"
+        assert parsed.company_id == 7
+
 
 class TestFormatCompanyDetail:
     def test_enabled_company(self):
