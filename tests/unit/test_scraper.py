@@ -156,7 +156,7 @@ class TestCollectVacancyUrls:
         empty_response = {**sample_vacancy_api_response, "items": []}
         mock_fetch = AsyncMock(side_effect=[sample_vacancy_api_response, empty_response])
 
-        with patch.object(scraper, "_fetch_api_page", mock_fetch):
+        with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
             result = await scraper.collect_vacancy_urls(
                 "https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -178,7 +178,7 @@ class TestCollectVacancyUrlsBatch:
         scraper = HHScraper()
         mock_fetch = AsyncMock(return_value=sample_vacancy_api_response)
 
-        with patch.object(scraper, "_fetch_api_page", mock_fetch):
+        with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
             urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -201,7 +201,7 @@ class TestCollectVacancyUrlsBatch:
         scraper = HHScraper()
         mock_fetch = AsyncMock(return_value=sample_vacancy_api_response)
 
-        with patch.object(scraper, "_fetch_api_page", mock_fetch):
+        with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
             urls, _, _ = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -222,7 +222,7 @@ class TestCollectVacancyUrlsBatch:
         empty_api_response = {"items": [], "pages": 0, "page": 0, "per_page": 50}
         mock_fetch = AsyncMock(return_value=empty_api_response)
 
-        with patch.object(scraper, "_fetch_api_page", mock_fetch):
+        with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
             urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
@@ -232,6 +232,24 @@ class TestCollectVacancyUrlsBatch:
 
         assert urls == []
         assert has_more is False
+
+    @pytest.mark.asyncio
+    async def test_does_not_fetch_beyond_last_page_index(
+        self, sample_vacancy_api_response: dict
+    ) -> None:
+        """HH API page is 0-based; pages=N means valid indices 0..N-1 — no request for page=N."""
+        scraper = HHScraper()
+        page_data = {**sample_vacancy_api_response, "pages": 2}
+        mock_fetch = AsyncMock(side_effect=[page_data, page_data])
+
+        with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
+            await scraper.collect_vacancy_urls(
+                "https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                target_count=50,
+            )
+
+        assert mock_fetch.call_count == 2
 
 
 class TestBuildPageUrl:

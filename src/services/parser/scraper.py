@@ -34,6 +34,9 @@ _DETAIL_FIELD_PREFIXES: dict[str, str] = {
 
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _MAX_PAGES = 100  # ~2000 vacancies max; API supports up to 100 per page
+# HH search list: retry same page (transient 403/429/5xx); do not unbound-block workers.
+_SEARCH_LIST_MAX_ATTEMPTS = 30
+_SEARCH_LIST_BODY_LOG_LEN = 800
 HH_API_BASE = "https://api.hh.ru/vacancies"
 _API_UNSUPPORTED_PARAMS = frozenset(
     {"hhtmFrom", "hhtmFromLabel", "L_save_area", "ored_clusters", "enable_snippets", "search_field"}
@@ -220,7 +223,7 @@ class HHScraper:
                     return None
 
     async def _fetch_api_page(self, client: httpx.AsyncClient, url: str) -> dict | None:
-        """Fetch vacancy search page from HH.ru API. Returns parsed JSON or None on failure."""
+        """Fetch JSON from HH API (single-vacancy detail). Returns None on failure."""
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
         for attempt in range(self._retries):
@@ -228,6 +231,28 @@ class HHScraper:
                 resp = await client.get(url, headers=self._headers_api(), timeout=self._timeout)
                 resp.raise_for_status()
                 return resp.json()
+            except httpx.HTTPStatusError as exc:
+                body = ""
+                if exc.response is not None:
+                    body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]
+                if attempt < self._retries - 1:
+                    wait = 3 + attempt * 2
+                    logger.warning(
+                        "API request error, retrying",
+                        error=str(exc),
+                        wait=wait,
+                        status=exc.response.status_code if exc.response else None,
+                        body=body or None,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(
+                        "Failed to fetch API page",
+                        url=url,
+                        status=exc.response.status_code if exc.response else None,
+                        body=body or None,
+                    )
+                    return None
             except httpx.HTTPError as exc:
                 if attempt < self._retries - 1:
                     wait = 3 + attempt * 2
@@ -236,6 +261,54 @@ class HHScraper:
                 else:
                     logger.error("Failed to fetch API page", url=url)
                     return None
+
+    async def _fetch_vacancy_search_page(self, client: httpx.AsyncClient, url: str) -> dict | None:
+        """Fetch vacancy search (GET /vacancies). Retries same URL until success or cap."""
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
+        for attempt in range(_SEARCH_LIST_MAX_ATTEMPTS):
+            try:
+                resp = await client.get(url, headers=self._headers_api(), timeout=self._timeout)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                body = ""
+                if exc.response is not None:
+                    body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]
+                wait = min(5 + attempt * 2, 60)
+                logger.warning(
+                    "Vacancy search API error, retrying",
+                    error=str(exc),
+                    wait=wait,
+                    attempt=attempt + 1,
+                    max_attempts=_SEARCH_LIST_MAX_ATTEMPTS,
+                    status=exc.response.status_code if exc.response else None,
+                    body=body or None,
+                    url=url,
+                )
+                if attempt >= _SEARCH_LIST_MAX_ATTEMPTS - 1:
+                    logger.error(
+                        "Vacancy search failed after retries",
+                        url=url,
+                        status=exc.response.status_code if exc.response else None,
+                        body=body or None,
+                    )
+                    return None
+                await asyncio.sleep(wait)
+            except httpx.HTTPError as exc:
+                wait = min(5 + attempt * 2, 60)
+                logger.warning(
+                    "Vacancy search request error, retrying",
+                    error=str(exc),
+                    wait=wait,
+                    attempt=attempt + 1,
+                    url=url,
+                )
+                if attempt >= _SEARCH_LIST_MAX_ATTEMPTS - 1:
+                    logger.error("Vacancy search failed after retries", url=url)
+                    return None
+                await asyncio.sleep(wait)
+        return None
 
     async def fetch_vacancy_by_id(
         self,
@@ -481,15 +554,23 @@ class HHScraper:
         seen_urls: set[str] = set()
         new_collected_count = 0
         page = 0
+        last_total_pages: int | None = None
 
         async with httpx.AsyncClient() as client:
             while new_collected_count < target_count:
                 if page >= _MAX_PAGES:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES)
                     break
+                if (
+                    last_total_pages is not None
+                    and last_total_pages > 0
+                    and page >= last_total_pages
+                ):
+                    break
+
                 url = self._build_api_url(base_url, page)
                 logger.info("Fetching search page", url=url, page=page + 1)
-                data = await self._fetch_api_page(client, url)
+                data = await self._fetch_vacancy_search_page(client, url)
                 if data is None:
                     break
 
@@ -498,9 +579,7 @@ class HHScraper:
                     logger.info("No vacancy items on page", page=page + 1, url=url)
                     break
 
-                total_pages = data.get("pages", 0)
-                if page >= total_pages:
-                    break
+                last_total_pages = int(data.get("pages", 0) or 0)
 
                 page_results = self._extract_vacancies_from_api_response(data, keyword)
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
@@ -556,6 +635,7 @@ class HHScraper:
         collected: list[dict[str, str]] = []
         seen_urls: set[str] = set()
         page = start_page
+        last_total_pages: int | None = None
 
         async with httpx.AsyncClient() as client:
             while len(collected) < batch_size:
@@ -563,9 +643,16 @@ class HHScraper:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES)
                     return collected[:batch_size], page, False
 
+                if (
+                    last_total_pages is not None
+                    and last_total_pages > 0
+                    and page >= last_total_pages
+                ):
+                    return collected[:batch_size], page, False
+
                 url = self._build_api_url(base_url, page)
                 logger.info("Fetching search page", url=url, page=page + 1)
-                data = await self._fetch_api_page(client, url)
+                data = await self._fetch_vacancy_search_page(client, url)
                 if data is None:
                     return collected[:batch_size], page, False
 
@@ -574,9 +661,7 @@ class HHScraper:
                     logger.info("No vacancy items on page", page=page + 1, url=url)
                     return collected[:batch_size], page, False
 
-                total_pages = data.get("pages", 0)
-                if page >= total_pages:
-                    return collected[:batch_size], page + 1, False
+                last_total_pages = int(data.get("pages", 0) or 0)
 
                 page_results = self._extract_vacancies_from_api_response(data, keyword)
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
@@ -602,7 +687,10 @@ class HHScraper:
 
                 page += 1
 
-        has_more = page < _MAX_PAGES
+        if last_total_pages and last_total_pages > 0:
+            has_more = page < last_total_pages and page < _MAX_PAGES
+        else:
+            has_more = page < _MAX_PAGES
         return collected[:batch_size], page, has_more
 
     async def parse_vacancy_page(
