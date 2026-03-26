@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     hh_public_api_vacancy_delay_max_seconds: float = Field(default=0.45, ge=0.0, le=60.0)
     # Parallel GET /vacancies/{id} (public API) — lower reduces 403 risk from HH edge.
     hh_vacancy_detail_concurrency: int = Field(default=5, ge=1, le=30)
+    # Autoparse: detail+AI+DB vertical batch size; 0 = use hh_vacancy_detail_concurrency.
+    hh_autoparse_pipeline_batch_size: int = Field(default=0, ge=0, le=30)
+    # Optional pause between autoparse pipeline batches (after AI+DB, before next detail batch).
+    hh_autoparse_inter_batch_sleep_seconds: float = Field(default=0.0, ge=0.0, le=120.0)
     # After HH captcha_required (403), block further public API calls until cooldown (Redis CB).
     # Default 300 aligns with Celery captcha retry cap so retries are not scheduled too early.
     hh_public_api_circuit_recovery_seconds: int = Field(default=300, ge=60, le=86400)

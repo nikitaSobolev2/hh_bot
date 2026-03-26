@@ -38,7 +38,7 @@ _DETAIL_FIELD_PREFIXES: dict[str, str] = {
 }
 
 _MULTI_SPACE_RE = re.compile(r" {2,}")
-_MAX_PAGES = 100  # ~2000 vacancies max; API supports up to 100 per page
+_MAX_PAGES = 100  # Up to 100 pages × 100 per_page (HH API max per page)
 # HH search list: retry same page (transient 403/429/5xx); do not unbound-block workers.
 _SEARCH_LIST_MAX_ATTEMPTS = 30
 _SEARCH_LIST_BODY_LOG_LEN = 800
@@ -483,7 +483,7 @@ class HHScraper:
         return urlunparse(parsed._replace(query=new_query))
 
     @staticmethod
-    def _build_api_url(base_url: str, page: int, per_page: int = 50) -> str:
+    def _build_api_url(base_url: str, page: int, per_page: int = 100) -> str:
         """Convert web search URL to HH.ru API URL, preserving filter params."""
         parsed = urlparse(base_url)
         params = parse_qs(parsed.query, keep_blank_values=True)

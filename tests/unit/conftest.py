@@ -62,7 +62,7 @@ def sample_vacancy_api_response() -> dict:
         "found": 100,
         "pages": 5,
         "page": 0,
-        "per_page": 50,
+        "per_page": 100,
     }
 
 

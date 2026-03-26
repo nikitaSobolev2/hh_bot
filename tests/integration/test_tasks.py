@@ -150,7 +150,7 @@ class TestAutoparseTaskProgressIntegration:
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
                 new=AsyncMock(return_value=[]),
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
@@ -204,7 +204,7 @@ class TestAutoparseTaskProgressIntegration:
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
                 new=AsyncMock(return_value=[]),
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
@@ -256,7 +256,7 @@ class TestAutoparseTaskProgressIntegration:
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_failure"),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
                 new=AsyncMock(side_effect=RuntimeError("scraping failed")),
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
@@ -305,7 +305,7 @@ class TestAutoparseTaskProgressIntegration:
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_failure"),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
                 new=AsyncMock(side_effect=RuntimeError("parsing failed")),
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
@@ -351,7 +351,7 @@ class TestAutoparseTaskProgressIntegration:
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
                 new=AsyncMock(return_value=[]),
             ),
             patch("src.services.progress_service.ProgressService", progress_cls_mock),
@@ -392,20 +392,20 @@ class TestAutoparseTaskProgressIntegration:
         fake_task = MagicMock()
         fake_task.request.id = "test-id-6"
 
-        # 55 results not in known_ids -> total_to_analyze=55; target_count=50 from settings
-        vacancy_results = [
-            {
-                "hh_vacancy_id": str(i),
-                "url": f"https://hh.ru/vacancy/{i}",
-                "title": "Dev",
-                "description": "",
-                "raw_skills": [],
-                "company_name": None,
-                "company_url": None,
-                "salary": None,
-            }
+        # 55 search cards -> detail fetch + AI; total_to_analyze=55; target_count=50 from settings
+        search_cards = [
+            {"hh_vacancy_id": str(i), "url": f"https://hh.ru/vacancy/{i}", "title": "Dev"}
             for i in range(55)
         ]
+        _page_data = {
+            "description": "d",
+            "skills": [],
+            "orm_fields": {},
+            "employer_data": {"id": "1", "name": "Co"},
+            "area_data": {"id": "1", "name": "Msk"},
+            "title": "Dev",
+            "company_name": "Co",
+        }
 
         progress_mock = AsyncMock()
 
@@ -427,8 +427,20 @@ class TestAutoparseTaskProgressIntegration:
             patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
             patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
-                new=AsyncMock(return_value=vacancy_results),
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
+                new=AsyncMock(return_value=search_cards),
+            ),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.parse_vacancy_page",
+                new=AsyncMock(return_value=_page_data),
+            ),
+            patch(
+                "src.repositories.hh.HHEmployerRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.repositories.hh.HHAreaRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
             ),
             patch("src.services.progress_service.ProgressService", return_value=progress_mock),
             patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
@@ -462,6 +474,19 @@ class TestAutoparseTaskProgressIntegration:
                 patch(
                     "src.repositories.app_settings.AppSettingRepository",
                     return_value=settings_repo,
+                )
+            )
+            # Partition caps fresh fetches at target_count (50). Five IDs are globally known (cached
+            # path) and 50 are new fetches → 5 + 50 = 55 for total_to_analyze vs target 50.
+            vacancy_repo_bar = AsyncMock()
+            vacancy_repo_bar.get_known_hh_ids_for_company = AsyncMock(return_value=set())
+            vacancy_repo_bar.get_all_known_hh_ids = AsyncMock(
+                return_value=set(str(i) for i in range(5))
+            )
+            stack.enter_context(
+                patch(
+                    "src.repositories.autoparse.AutoparsedVacancyRepository",
+                    return_value=vacancy_repo_bar,
                 )
             )
 

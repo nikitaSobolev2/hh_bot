@@ -224,7 +224,7 @@ class TestCollectVacancyUrlsBatch:
     async def test_has_more_false_when_no_pages(self) -> None:
         """has_more is False when no vacancy items on page."""
         scraper = HHScraper()
-        empty_api_response = {"items": [], "pages": 0, "page": 0, "per_page": 50}
+        empty_api_response = {"items": [], "pages": 0, "page": 0, "per_page": 100}
         mock_fetch = AsyncMock(return_value=empty_api_response)
 
         with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
@@ -275,7 +275,7 @@ class TestBuildApiUrl:
         assert url.startswith("https://api.hh.ru/vacancies")
         assert "text=Backend" in url
         assert "page=0" in url
-        assert "per_page=50" in url
+        assert "per_page=100" in url
 
     def test_preserves_filter_params(self):
         base = "https://hh.ru/search/vacancy?text=Python&area=113&employment_form=FULL"
@@ -356,7 +356,7 @@ class TestExtractVacanciesFromApiResponse:
             "found": 1,
             "pages": 1,
             "page": 0,
-            "per_page": 50,
+            "per_page": 100,
         }
         scraper = HHScraper()
         results = scraper._extract_vacancies_from_api_response(api_response, "Backend")

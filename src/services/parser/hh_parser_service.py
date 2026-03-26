@@ -1,4 +1,4 @@
-"""Unified HH parser service with global vacancy deduplication."""
+"""Unified HH parser service with global vacancy dedup and full vacancy parsing."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -11,6 +11,22 @@ from src.schemas.vacancy import build_vacancy_api_context
 from src.services.parser.scraper import HHCaptchaRequiredError, HHScraper
 
 logger = get_logger(__name__)
+
+
+def partition_collected_urls(
+    collected_urls: list[dict],
+    target_count: int,
+    known_hh_ids: set[str],
+) -> tuple[list[dict], list[dict]]:
+    """Split search results into cached markers vs cards that need GET /vacancies/{id}."""
+    cached_results: list[dict] = []
+    to_fetch: list[dict] = []
+    for vac in collected_urls:
+        if vac["hh_vacancy_id"] in known_hh_ids:
+            cached_results.append({"cached": True, "hh_vacancy_id": vac["hh_vacancy_id"], **vac})
+        elif len(to_fetch) < target_count:
+            to_fetch.append(vac)
+    return cached_results, to_fetch
 
 
 class HHParserService:
@@ -27,6 +43,42 @@ class HHParserService:
             if vacancy_fetch_concurrency is not None
             else settings.hh_vacancy_detail_concurrency
         )
+
+    def merge_detail_into_card(self, vac: dict, page_data: dict) -> dict:
+        """Merge HH API detail JSON (page_data) into search card ``vac``."""
+        skills = page_data.get("skills", [])
+        orm_fields = page_data.get("orm_fields", {})
+        employer_data = page_data.get("employer_data", {})
+        api_ctx = build_vacancy_api_context(orm_fields, employer_data, skills)
+        merged = {
+            **vac,
+            **page_data,
+            "raw_skills": skills,
+            "vacancy_api_context": api_ctx,
+        }
+        merged.pop("skills", None)
+        return merged
+
+    async def fetch_detail_for_card(self, client: httpx.AsyncClient, vac: dict) -> dict | None:
+        """GET /vacancies/{id} and merge into card; returns None on failed fetch."""
+        page_data = await self._scraper.parse_vacancy_page(client, vac["url"])
+        if not page_data:
+            return None
+        return self.merge_detail_into_card(vac, page_data)
+
+    async def fetch_details_batch_slice(
+        self,
+        client: httpx.AsyncClient,
+        batch: list[dict],
+        sem: asyncio.Semaphore,
+    ) -> list:
+        """Concurrent detail fetch for one slice; order matches ``batch``."""
+
+        async def fetch_with_sem(vac: dict) -> dict | None:
+            async with sem:
+                return await self.fetch_detail_for_card(client, vac)
+
+        return await asyncio.gather(*[fetch_with_sem(v) for v in batch], return_exceptions=True)
 
     async def parse_vacancies(
         self,
@@ -52,46 +104,15 @@ class HHParserService:
             known_ids_to_include=known,
         )
 
-        results: list[dict] = []
-        to_fetch: list[dict] = []
-
-        for vac in collected_urls:
-            if vac["hh_vacancy_id"] in known:
-                results.append({"cached": True, "hh_vacancy_id": vac["hh_vacancy_id"], **vac})
-            elif len(to_fetch) < target_count:
-                to_fetch.append(vac)
-
-        async def fetch_one(vac: dict) -> dict | None:
-            page_data = await self._scraper.parse_vacancy_page(client, vac["url"])
-            if not page_data:
-                return None
-            skills = page_data.get("skills", [])
-            orm_fields = page_data.get("orm_fields", {})
-            employer_data = page_data.get("employer_data", {})
-            api_ctx = build_vacancy_api_context(orm_fields, employer_data, skills)
-            merged = {
-                **vac,
-                **page_data,
-                "raw_skills": skills,
-                "vacancy_api_context": api_ctx,
-            }
-            merged.pop("skills", None)
-            return merged
+        cached_results, to_fetch = partition_collected_urls(collected_urls, target_count, known)
+        results: list[dict] = list(cached_results)
 
         sem = asyncio.Semaphore(self._vacancy_fetch_concurrency)
-
-        async def fetch_with_sem(vac: dict) -> dict | None:
-            async with sem:
-                return await fetch_one(vac)
-
         new_count = 0
         async with httpx.AsyncClient() as client:
             for batch_start in range(0, len(to_fetch), self._vacancy_fetch_concurrency):
                 batch = to_fetch[batch_start : batch_start + self._vacancy_fetch_concurrency]
-                batch_results = await asyncio.gather(
-                    *[fetch_with_sem(v) for v in batch],
-                    return_exceptions=True,
-                )
+                batch_results = await self.fetch_details_batch_slice(client, batch, sem)
                 for i, r in enumerate(batch_results):
                     if isinstance(r, HHCaptchaRequiredError):
                         raise r

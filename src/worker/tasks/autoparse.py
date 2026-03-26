@@ -1,8 +1,10 @@
 """Celery tasks for the autoparse feature."""
 
+import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import redis
 
 from src.config import settings
@@ -20,6 +22,11 @@ _RUN_LOCK_PREFIX = "lock:autoparse:run:"
 # Safety-net TTL: released explicitly via finally; this guards against a crashed worker
 _CONCURRENT_RUN_LOCK_TTL = 2 * 3600
 _ANALYSIS_BATCH_SIZE = 5
+
+
+def _autoparse_pipeline_batch_size() -> int:
+    n = settings.hh_autoparse_pipeline_batch_size
+    return n if n > 0 else settings.hh_vacancy_detail_concurrency
 
 # Atomically acquire or re-acquire a task-owned lock.
 # Returns 1 when the lock is taken (new or re-delivery of same task).
@@ -318,22 +325,26 @@ async def _run_autoparse_company_async(
                 await progress.update_bar(task_key, 0, current, total)
 
         parser = HHParserService()
-        results = await parser.parse_vacancies(
+        scraper = parser._scraper
+        from src.services.parser.hh_parser_service import partition_collected_urls
+
+        collected_urls = await scraper.collect_vacancy_urls(
             company.search_url,
             company.keyword_filter,
             target_count,
-            known_hh_ids=global_ids,
-            on_vacancy_scraped=_on_vacancy_scraped,
+            known_ids_to_include=global_ids,
         )
+        cached_results, to_fetch = partition_collected_urls(collected_urls, target_count, global_ids)
 
         user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
         ai_client = AIClient() if (user_stack or user_exp) else None
 
         total_to_analyze = (
-            sum(1 for v in results if v["hh_vacancy_id"] not in known_ids) if ai_client else 0
+            sum(1 for v in cached_results if v["hh_vacancy_id"] not in known_ids) + len(to_fetch)
+            if ai_client
+            else 0
         )
 
-        # Sync parsing bar to use total_to_analyze so both bars share the same denominator
         if progress and total_to_analyze > 0:
             await progress.update_bar(task_key, 0, total_to_analyze, total_to_analyze)
 
@@ -402,12 +413,12 @@ async def _run_autoparse_company_async(
                 "_area_id": orm.area_id if hasattr(orm, "area_id") else None,
             }
 
-        to_analyze: list[tuple[dict, VacancyCompatInput]] = []
+        cached_pairs: list[tuple[dict, VacancyCompatInput]] = []
         async with session_factory() as session:
             vacancy_repo = AutoparsedVacancyRepository(session)
             parsed_repo = ParsedVacancyRepository(session)
 
-            for vac in results:
+            for vac in cached_results:
                 hh_id = vac["hh_vacancy_id"]
 
                 if hh_id in known_ids:
@@ -426,24 +437,19 @@ async def _run_autoparse_company_async(
                             description=existing.description or "",
                             vacancy_api_context=vac_dict.get("vacancy_api_context"),
                         )
-                        to_analyze.append((vac_dict, compat_input))
-                        continue
+                        cached_pairs.append((vac_dict, compat_input))
 
-                compat_input = VacancyCompatInput(
-                    hh_vacancy_id=hh_id,
-                    title=vac.get("title", ""),
-                    skills=vac.get("raw_skills", []),
-                    description=vac.get("description", ""),
-                    vacancy_api_context=vac.get("vacancy_api_context"),
-                )
-                to_analyze.append((vac, compat_input))
-
+        cursor = analyzed_offset
+        pending: list[tuple[dict, VacancyCompatInput]] = []
         new_count = 0
         new_autorespond_vacancy_ids: list[int] = []
-        for batch_start in range(0, len(to_analyze), _ANALYSIS_BATCH_SIZE):
-            batch = to_analyze[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
-            vac_dicts = [item[0] for item in batch]
-            compat_inputs = [item[1] for item in batch]
+
+        async def process_ai_db_chunk(chunk: list[tuple[dict, VacancyCompatInput]]) -> None:
+            nonlocal new_count, analyzed_count
+            if not chunk:
+                return
+            vac_dicts = [item[0] for item in chunk]
+            compat_inputs = [item[1] for item in chunk]
 
             analyses: dict = {}
             if ai_client:
@@ -493,9 +499,9 @@ async def _run_autoparse_company_async(
                     int(r.id) for r in inserted if getattr(r, "id", None) is not None
                 )
 
-            new_count += len(batch)
+            new_count += len(chunk)
             if ai_client:
-                analyzed_count += len(batch)
+                analyzed_count += len(chunk)
                 await checkpoint.save(
                     checkpoint_key,
                     task_id,
@@ -504,6 +510,66 @@ async def _run_autoparse_company_async(
                 )
                 if progress:
                     await progress.update_bar(task_key, 1, analyzed_count, original_total)
+
+        async def flush_pending(force: bool = False) -> None:
+            nonlocal pending
+            if force:
+                while pending:
+                    n = min(_ANALYSIS_BATCH_SIZE, len(pending))
+                    chunk = pending[:n]
+                    pending = pending[n:]
+                    await process_ai_db_chunk(chunk)
+            else:
+                while len(pending) >= _ANALYSIS_BATCH_SIZE:
+                    chunk = pending[:_ANALYSIS_BATCH_SIZE]
+                    pending = pending[_ANALYSIS_BATCH_SIZE:]
+                    await process_ai_db_chunk(chunk)
+
+        for pair in cached_pairs:
+            if cursor > 0:
+                cursor -= 1
+                continue
+            pending.append(pair)
+            await flush_pending(force=False)
+
+        detail_done = 0
+        pipeline_batch = _autoparse_pipeline_batch_size()
+        sem = asyncio.Semaphore(settings.hh_vacancy_detail_concurrency)
+
+        async with httpx.AsyncClient() as client:
+            for batch_start in range(0, len(to_fetch), pipeline_batch):
+                if settings.hh_autoparse_inter_batch_sleep_seconds > 0 and batch_start > 0:
+                    await asyncio.sleep(settings.hh_autoparse_inter_batch_sleep_seconds)
+                batch = to_fetch[batch_start : batch_start + pipeline_batch]
+                batch_results = await parser.fetch_details_batch_slice(client, batch, sem)
+                for i, merged in enumerate(batch_results):
+                    if isinstance(merged, HHCaptchaRequiredError):
+                        raise merged
+                    if isinstance(merged, Exception):
+                        logger.warning(
+                            "Vacancy fetch failed",
+                            vacancy=batch[i],
+                            error=merged,
+                        )
+                        continue
+                    if merged is None:
+                        continue
+                    detail_done += 1
+                    await _on_vacancy_scraped(detail_done, target_count)
+                    if cursor > 0:
+                        cursor -= 1
+                        continue
+                    compat_input = VacancyCompatInput(
+                        hh_vacancy_id=merged["hh_vacancy_id"],
+                        title=merged.get("title", ""),
+                        skills=merged.get("raw_skills", []),
+                        description=merged.get("description", ""),
+                        vacancy_api_context=merged.get("vacancy_api_context"),
+                    )
+                    pending.append((merged, compat_input))
+                    await flush_pending(force=False)
+
+        await flush_pending(force=True)
 
         async with session_factory() as session:
             company_repo = AutoparseCompanyRepository(session)

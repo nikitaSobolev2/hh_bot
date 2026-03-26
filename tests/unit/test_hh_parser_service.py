@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.services.parser.hh_parser_service import HHParserService
+from src.services.parser.hh_parser_service import HHParserService, partition_collected_urls
 
 
 class TestHHParserServiceDedup:
@@ -140,3 +140,23 @@ class TestHHParserServiceDedup:
             50,
             known_ids_to_include=known,
         )
+
+
+class TestPartitionCollectedUrls:
+    def test_known_ids_are_cached_not_fetched(self):
+        cards = [
+            {"hh_vacancy_id": "1", "url": "https://hh.ru/vacancy/1", "title": "A"},
+            {"hh_vacancy_id": "2", "url": "https://hh.ru/vacancy/2", "title": "B"},
+        ]
+        cached, to_fetch = partition_collected_urls(cards, target_count=10, known_hh_ids={"1"})
+        assert len(cached) == 1 and cached[0]["cached"] is True and cached[0]["hh_vacancy_id"] == "1"
+        assert len(to_fetch) == 1 and to_fetch[0]["hh_vacancy_id"] == "2"
+
+    def test_to_fetch_capped_by_target_count(self):
+        cards = [
+            {"hh_vacancy_id": str(i), "url": f"https://hh.ru/vacancy/{i}", "title": "x"}
+            for i in range(10)
+        ]
+        cached, to_fetch = partition_collected_urls(cards, target_count=3, known_hh_ids=set())
+        assert cached == []
+        assert len(to_fetch) == 3 and [c["hh_vacancy_id"] for c in to_fetch] == ["0", "1", "2"]
