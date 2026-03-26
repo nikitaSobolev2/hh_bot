@@ -7,7 +7,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.config import settings
 from src.core.logging import get_logger
+from src.services.parser.scraper import HHCaptchaRequiredError
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
@@ -74,6 +76,14 @@ def run_parsing_company(
             )
         )
         raise
+    except HHCaptchaRequiredError as exc:
+        countdown = int(settings.hh_public_api_circuit_recovery_seconds)
+        logger.warning(
+            "Parsing: HH captcha required; scheduling Celery retry",
+            company_id=parsing_company_id,
+            countdown=countdown,
+        )
+        raise self.retry(exc=exc, countdown=countdown) from exc
 
 
 async def _run_parsing_company_async(
@@ -89,7 +99,7 @@ async def _run_parsing_company_async(
     from src.repositories.parsing import ParsingCompanyRepository
     from src.repositories.task import CeleryTaskRepository
     from src.services.parser.extractor import ParsingExtractor
-    from src.services.parser.scraper import HHCaptchaRequiredError, HHScraper
+    from src.services.parser.scraper import HHScraper
     from src.services.staleness_progress import (
         create_staleness_redis,
         is_stale,
@@ -329,22 +339,8 @@ async def _run_parsing_company_async(
             "skills_count": skills_count,
         }
 
-    except HHCaptchaRequiredError as exc:
-        cb.record_failure()
-        logger.error(
-            "HH captcha required, parsing aborted",
-            event="hh_captcha_required",
-            error=str(exc),
-            company_id=parsing_company_id,
-        )
-        await _mark_parsing_failed(
-            session_factory,
-            parsing_company_id,
-            user_id,
-            task,
-            idempotency_key,
-            exc,
-        )
+    except HHCaptchaRequiredError:
+        # Propagate to sync run_parsing_company for Celery retry (no _mark_parsing_failed).
         raise
     except Exception as exc:
         if not _is_transient_failure(exc):

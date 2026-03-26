@@ -94,7 +94,20 @@ async def _dispatch_all_async(session_factory) -> dict:
     reject_on_worker_lost=True,
 )
 def run_autoparse_company(self, company_id: int, notify_user_id: int | None = None) -> dict:
-    return run_async(lambda sf: _run_autoparse_company_async(sf, self, company_id, notify_user_id))
+    from src.services.parser.scraper import HHCaptchaRequiredError
+
+    try:
+        return run_async(
+            lambda sf: _run_autoparse_company_async(sf, self, company_id, notify_user_id)
+        )
+    except HHCaptchaRequiredError as exc:
+        countdown = int(settings.hh_public_api_circuit_recovery_seconds)
+        logger.warning(
+            "Autoparse: HH captcha required; scheduling Celery retry",
+            company_id=company_id,
+            countdown=countdown,
+        )
+        raise self.retry(exc=exc, countdown=countdown) from exc
 
 
 def _build_user_profile(
