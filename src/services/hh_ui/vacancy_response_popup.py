@@ -56,6 +56,61 @@ def extract_xsrf_token(html: str) -> str | None:
     return None
 
 
+def extract_xsrf_token_from_dom(page: Any) -> str | None:
+    """Read current _xsrf from the live DOM (preferred over scanning full HTML)."""
+    try:
+        token = page.evaluate(
+            """() => {
+                const i = document.querySelector('input[name="_xsrf"]');
+                if (i && i.value) return String(i.value).trim();
+                const m = document.querySelector('meta[name="_xsrf"]');
+                if (m && m.content) return String(m.content).trim();
+                return null;
+            }"""
+        )
+        if token:
+            return str(token).strip()
+    except Exception:
+        pass
+    return None
+
+
+def extract_xsrf_for_popup(page: Any) -> str | None:
+    """DOM-first, then HTML patterns (avoids stale tokens from unrelated embedded markup)."""
+    t = extract_xsrf_token_from_dom(page)
+    if t:
+        return t
+    try:
+        html = page.content()
+    except Exception:
+        return None
+    return extract_xsrf_token(html)
+
+
+def _popup_json_indicates_xsrf_error(data: dict[str, Any]) -> bool:
+    ep = data.get("errorPage")
+    if isinstance(ep, dict) and ep.get("xsrfError") is True:
+        return True
+    if data.get("xsrfError") is True:
+        return True
+    return False
+
+
+def _reload_page_for_popup_xsrf_retry(page: Any, log_user_id: int | None) -> bool:
+    """Reload after XSRF failure; return False if reload failed (caller should abort popup)."""
+    try:
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(400)
+        return True
+    except Exception as exc:
+        logger.info(
+            "vacancy_popup_xsrf_retry_failed",
+            log_user_id=log_user_id,
+            error=str(exc)[:200],
+        )
+        return False
+
+
 def _truncate_for_log(s: str, max_len: int = _LOG_BODY_MAX) -> str:
     s = (s or "").replace("\n", " ").strip()
     if len(s) <= max_len:
@@ -185,6 +240,39 @@ def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
     return None
 
 
+_POPUP_FETCH_JS = """
+    async (args) => {
+        const fd = new FormData();
+        fd.append('_xsrf', args.xsrf);
+        fd.append('vacancy_id', args.vacancy_id);
+        fd.append('resume_hash', args.resume_hash);
+        fd.append('ignore_postponed', 'true');
+        fd.append('incomplete', 'false');
+        fd.append('mark_applicant_visible_in_vacancy_country', 'false');
+        fd.append('country_ids', '[]');
+        fd.append('letter', args.letter);
+        fd.append('lux', 'true');
+        fd.append('withoutTest', 'no');
+        fd.append('hhtmFromLabel', '');
+        fd.append('hhtmSourceLabel', '');
+        const r = await fetch('__POPUP_PATH__', {
+            method: 'POST',
+            body: fd,
+            credentials: 'include',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+                'X-Xsrftoken': args.xsrf,
+                'X-hhtmSource': 'vacancy',
+                'X-hhtmFrom': args.hhtm_from,
+            },
+        });
+        const text = await r.text();
+        return { ok: r.ok, status: r.status, text: text };
+    }
+    """.replace("__POPUP_PATH__", _POPUP_PATH)
+
+
 def try_apply_via_popup(
     page: Any,
     vacancy_url: str,
@@ -202,173 +290,187 @@ def try_apply_via_popup(
         )
         return None
 
-    try:
-        html = page.content()
-    except Exception as exc:
-        logger.info(
-            "vacancy_popup_skip",
-            log_user_id=log_user_id,
-            reason="page_content_failed",
-            error=str(exc)[:200],
-        )
-        return None
-
-    xsrf = extract_xsrf_token(html)
-    if not xsrf:
-        logger.info(
-            "vacancy_popup_skip",
-            log_user_id=log_user_id,
-            reason="xsrf_not_found",
-        )
-        return None
-
     hhtm_from = hhtm_from_for_popup(vacancy_url)
     letter = letter or ""
-
     post_url = _popup_post_url(vacancy_url)
-    if post_url:
-        cookie_header = _cookie_header_for_page(page, vacancy_url)
-        curl_cmd = build_popup_apply_curl_command(
-            vacancy_url=vacancy_url,
-            post_url=post_url,
-            cookie_header=cookie_header,
-            xsrf=xsrf,
-            vacancy_id=vacancy_id,
-            resume_hash=resume_hash,
-            letter=letter,
-            hhtm_from=hhtm_from,
-        )
+
+    for attempt in range(2):
+        xsrf = extract_xsrf_for_popup(page)
+        if not xsrf:
+            logger.info(
+                "vacancy_popup_skip",
+                log_user_id=log_user_id,
+                reason="xsrf_not_found",
+                attempt=attempt,
+            )
+            return None
+
+        if post_url:
+            cookie_header = _cookie_header_for_page(page, vacancy_url)
+            curl_cmd = build_popup_apply_curl_command(
+                vacancy_url=vacancy_url,
+                post_url=post_url,
+                cookie_header=cookie_header,
+                xsrf=xsrf,
+                vacancy_id=vacancy_id,
+                resume_hash=resume_hash,
+                letter=letter,
+                hhtm_from=hhtm_from,
+            )
+            logger.info(
+                "vacancy_popup_curl",
+                log_user_id=log_user_id,
+                vacancy_id=vacancy_id,
+                post_url=post_url,
+                cookie_included=cookie_header is not None,
+                attempt=attempt,
+                curl=curl_cmd,
+            )
+
+        try:
+            raw = page.evaluate(
+                _POPUP_FETCH_JS,
+                {
+                    "xsrf": xsrf,
+                    "vacancy_id": vacancy_id,
+                    "resume_hash": resume_hash,
+                    "letter": letter,
+                    "hhtm_from": hhtm_from,
+                },
+            )
+        except Exception as exc:
+            logger.info(
+                "vacancy_popup_failed",
+                log_user_id=log_user_id,
+                step="evaluate_fetch",
+                attempt=attempt,
+                error=str(exc)[:300],
+            )
+            return None
+
+        if not isinstance(raw, dict):
+            logger.info(
+                "vacancy_popup_skip",
+                log_user_id=log_user_id,
+                reason="unexpected_evaluate_result",
+                attempt=attempt,
+            )
+            return None
+
+        status = int(raw.get("status") or 0)
+        text = str(raw.get("text") or "")
+        ok = bool(raw.get("ok"))
+
+        if not text.strip():
+            logger.info(
+                "vacancy_popup_skip",
+                log_user_id=log_user_id,
+                vacancy_id=vacancy_id,
+                reason="empty_response_body",
+                http_status=status,
+                ok=ok,
+                attempt=attempt,
+            )
+            if status == 403 and attempt == 0:
+                logger.info(
+                    "vacancy_popup_xsrf_retry",
+                    log_user_id=log_user_id,
+                    vacancy_id=vacancy_id,
+                    attempt=attempt,
+                    reason="empty_body_403",
+                )
+                if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+                    continue
+                return None
+            return None
+
+        raw_body, raw_len, truncated = _cap_raw_body_for_log(text)
         logger.info(
-            "vacancy_popup_curl",
+            "vacancy_popup_raw_response",
             log_user_id=log_user_id,
             vacancy_id=vacancy_id,
-            post_url=post_url,
-            cookie_included=cookie_header is not None,
-            curl=curl_cmd,
-        )
-
-    js = f"""
-    async (args) => {{
-        const fd = new FormData();
-        fd.append('_xsrf', args.xsrf);
-        fd.append('vacancy_id', args.vacancy_id);
-        fd.append('resume_hash', args.resume_hash);
-        fd.append('ignore_postponed', 'true');
-        fd.append('incomplete', 'false');
-        fd.append('mark_applicant_visible_in_vacancy_country', 'false');
-        fd.append('country_ids', '[]');
-        fd.append('letter', args.letter);
-        fd.append('lux', 'true');
-        fd.append('withoutTest', 'no');
-        fd.append('hhtmFromLabel', '');
-        fd.append('hhtmSourceLabel', '');
-        const r = await fetch('{_POPUP_PATH}', {{
-            method: 'POST',
-            body: fd,
-            credentials: 'include',
-            headers: {{
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json',
-                'X-Xsrftoken': args.xsrf,
-                'X-hhtmSource': 'vacancy',
-                'X-hhtmFrom': args.hhtm_from,
-            }},
-        }});
-        const text = await r.text();
-        return {{ ok: r.ok, status: r.status, text: text }};
-    }}
-    """
-
-    try:
-        raw = page.evaluate(
-            js,
-            {
-                "xsrf": xsrf,
-                "vacancy_id": vacancy_id,
-                "resume_hash": resume_hash,
-                "letter": letter,
-                "hhtm_from": hhtm_from,
-            },
-        )
-    except Exception as exc:
-        logger.info(
-            "vacancy_popup_failed",
-            log_user_id=log_user_id,
-            step="evaluate_fetch",
-            error=str(exc)[:300],
-        )
-        return None
-
-    if not isinstance(raw, dict):
-        logger.info(
-            "vacancy_popup_skip",
-            log_user_id=log_user_id,
-            reason="unexpected_evaluate_result",
-        )
-        return None
-
-    status = int(raw.get("status") or 0)
-    text = str(raw.get("text") or "")
-    ok = bool(raw.get("ok"))
-
-    if not text.strip():
-        logger.info(
-            "vacancy_popup_skip",
-            log_user_id=log_user_id,
-            vacancy_id=vacancy_id,
-            reason="empty_response_body",
             http_status=status,
             ok=ok,
+            raw_len=raw_len,
+            truncated=truncated,
+            raw_body=raw_body,
+            attempt=attempt,
         )
-        return None
 
-    raw_body, raw_len, truncated = _cap_raw_body_for_log(text)
-    logger.info(
-        "vacancy_popup_raw_response",
-        log_user_id=log_user_id,
-        vacancy_id=vacancy_id,
-        http_status=status,
-        ok=ok,
-        raw_len=raw_len,
-        truncated=truncated,
-        raw_body=raw_body,
-    )
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            logger.info(
+                "vacancy_popup_skip",
+                log_user_id=log_user_id,
+                vacancy_id=vacancy_id,
+                reason="response_not_json",
+                body_preview=_truncate_for_log(text, 400),
+                attempt=attempt,
+            )
+            if status == 403 and attempt == 0:
+                logger.info(
+                    "vacancy_popup_xsrf_retry",
+                    log_user_id=log_user_id,
+                    vacancy_id=vacancy_id,
+                    attempt=attempt,
+                    reason="non_json_403",
+                )
+                if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+                    continue
+                return None
+            return None
 
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+        if not isinstance(data, dict):
+            return None
+
         logger.info(
-            "vacancy_popup_skip",
+            "vacancy_popup_json_parsed",
             log_user_id=log_user_id,
             vacancy_id=vacancy_id,
-            reason="response_not_json",
-            body_preview=_truncate_for_log(text, 400),
+            parsed_keys=sorted(data.keys()),
+            success_field=repr(data.get("success")),
+            attempt=attempt,
         )
-        return None
 
-    if not isinstance(data, dict):
-        return None
+        if _popup_json_indicates_xsrf_error(data) and attempt == 0:
+            logger.info(
+                "vacancy_popup_xsrf_retry",
+                log_user_id=log_user_id,
+                vacancy_id=vacancy_id,
+                attempt=attempt,
+                reason="errorPage_xsrfError",
+            )
+            if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+                continue
+            return None
 
-    logger.info(
-        "vacancy_popup_json_parsed",
-        log_user_id=log_user_id,
-        vacancy_id=vacancy_id,
-        parsed_keys=sorted(data.keys()),
-        success_field=repr(data.get("success")),
-    )
+        mapped = map_popup_json_to_apply_result(data)
+        if mapped is not None:
+            return mapped
 
-    mapped = map_popup_json_to_apply_result(data)
-    if mapped is not None:
-        return mapped
+        if ok and status == 200:
+            logger.info(
+                "vacancy_popup_skip",
+                log_user_id=log_user_id,
+                reason="unmapped_json_200",
+                body_preview=_truncate_for_log(json.dumps(data, ensure_ascii=False), 400),
+                attempt=attempt,
+            )
+            return None
 
-    # 200 OK but unknown shape — let legacy modal flow try.
-    if ok and status == 200:
-        logger.info(
-            "vacancy_popup_skip",
-            log_user_id=log_user_id,
-            reason="unmapped_json_200",
-            body_preview=_truncate_for_log(json.dumps(data, ensure_ascii=False), 400),
-        )
+        if status == 403 and attempt == 0:
+            logger.info(
+                "vacancy_popup_xsrf_retry",
+                log_user_id=log_user_id,
+                vacancy_id=vacancy_id,
+                attempt=attempt,
+                reason="http_403",
+            )
+            if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+                continue
+            return None
+
         return None
 
     return None

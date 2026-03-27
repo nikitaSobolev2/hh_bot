@@ -26,7 +26,11 @@ from src.services.hh_ui.applicant_http import (
     url_suggests_login_page,
 )
 from src.services.hh_ui.config import HhUiApplyConfig
-from src.services.hh_ui.playwright_support import CHROMIUM_LAUNCH_ARGS, dispose_sync_browser_context
+from src.services.hh_ui.playwright_support import (
+    CHROMIUM_LAUNCH_ARGS,
+    HH_UI_VIEWPORT,
+    dispose_sync_browser_context,
+)
 from src.services.hh_ui.vacancy_response_popup import try_apply_via_popup
 from src.services.hh_ui.apply_retry import (
     apply_outcome_is_retryable,
@@ -162,7 +166,10 @@ def _screenshot_url_with_storage(
                 headless=config.headless,
                 args=list(CHROMIUM_LAUNCH_ARGS),
             )
-            context = browser.new_context(storage_state=storage_state)
+            context = browser.new_context(
+                storage_state=storage_state,
+                viewport=HH_UI_VIEWPORT,
+            )
             page = context.new_page()
             page.goto(
                 url,
@@ -415,7 +422,10 @@ def apply_to_vacancy_ui(
                 headless=config.headless,
                 args=list(CHROMIUM_LAUNCH_ARGS),
             )
-            context = browser.new_context(storage_state=storage_state)
+            context = browser.new_context(
+                storage_state=storage_state,
+                viewport=HH_UI_VIEWPORT,
+            )
             page = context.new_page()
             page.goto(
                 vacancy_url,
@@ -686,31 +696,68 @@ def _apply_vacancy_flow_on_page(
             vacancy_url_safe=safe_v,
             resume_ref=resume_ref,
         )
+        page.wait_for_timeout(400)
         select_mode = "none"
-        # Always try resume selection even if sheet wait failed (layout may still expose radios).
-        try:
-            radio = page.locator(f'input[name="resumeId"][value="{resume_hh_id}"]').first
-            radio.wait_for(state="attached", timeout=config.action_timeout_ms)
-            radio.check(force=True)
-            selected = True
-            select_mode = "radio"
-        except Exception:
+
+        # Target resume already selected (multi-resume bottom sheet).
+        if not selected:
             try:
-                lbl = page.locator(
-                    f'label:has(input[name="resumeId"][value="{resume_hh_id}"])'
+                checked = page.locator(
+                    f'input[name="resumeId"][value="{resume_hh_id}"]:checked'
                 ).first
-                lbl.wait_for(state="visible", timeout=config.action_timeout_ms)
-                lbl.click(force=True)
+                checked.wait_for(
+                    state="attached",
+                    timeout=min(3000, config.action_timeout_ms),
+                )
                 selected = True
-                select_mode = "label"
+                select_mode = "pre_checked"
             except Exception:
                 pass
+
+        # Single resume row — value must match; check if needed.
+        if not selected:
+            try:
+                radios = page.locator('input[name="resumeId"]')
+                if radios.count() == 1:
+                    one = radios.first
+                    one.wait_for(state="attached", timeout=config.action_timeout_ms)
+                    if (one.get_attribute("value") or "") == resume_hh_id:
+                        one.scroll_into_view_if_needed()
+                        if not one.is_checked():
+                            one.check(force=True)
+                        selected = True
+                        select_mode = "single_resume"
+            except Exception:
+                pass
+
+        # Always try resume selection even if sheet wait failed (layout may still expose radios).
+        if not selected:
+            try:
+                radio = page.locator(f'input[name="resumeId"][value="{resume_hh_id}"]').first
+                radio.wait_for(state="attached", timeout=config.action_timeout_ms)
+                radio.scroll_into_view_if_needed()
+                radio.check(force=True)
+                selected = True
+                select_mode = "radio"
+            except Exception:
+                try:
+                    lbl = page.locator(
+                        f'label:has(input[name="resumeId"][value="{resume_hh_id}"])'
+                    ).first
+                    lbl.wait_for(state="visible", timeout=config.action_timeout_ms)
+                    lbl.scroll_into_view_if_needed()
+                    lbl.click(force=True)
+                    selected = True
+                    select_mode = "label"
+                except Exception:
+                    pass
 
         if not selected:
             for s in sel.RESUME_SELECT:
                 loc = page.locator(s).first
                 try:
                     loc.wait_for(state="visible", timeout=config.action_timeout_ms)
+                    loc.scroll_into_view_if_needed()
                     loc.select_option(value=resume_hh_id)
                     selected = True
                     select_mode = "select"
@@ -722,6 +769,7 @@ def _apply_vacancy_flow_on_page(
             card = page.locator(f'a[data-qa="resume-card-link-{resume_hh_id}"]').first
             try:
                 card.wait_for(state="visible", timeout=config.action_timeout_ms)
+                card.scroll_into_view_if_needed()
                 card.click()
                 selected = True
                 select_mode = "resume_card"
@@ -732,6 +780,7 @@ def _apply_vacancy_flow_on_page(
             alt = page.locator(f'a[href*="/resume/{resume_hh_id}"]').first
             try:
                 alt.wait_for(state="visible", timeout=config.action_timeout_ms)
+                alt.scroll_into_view_if_needed()
                 alt.click()
                 selected = True
                 select_mode = "link"
@@ -941,7 +990,10 @@ def apply_to_vacancies_ui_batch(
                 headless=config.headless,
                 args=list(CHROMIUM_LAUNCH_ARGS),
             )
-            context = browser.new_context(storage_state=storage_state)
+            context = browser.new_context(
+                storage_state=storage_state,
+                viewport=HH_UI_VIEWPORT,
+            )
             page = context.new_page()
             for spec in items:
                 if not spec.vacancy_url.startswith("https://"):

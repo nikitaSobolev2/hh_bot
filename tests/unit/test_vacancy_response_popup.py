@@ -2,10 +2,15 @@
 
 from src.services.hh_ui.outcomes import ApplyOutcome
 from src.services.hh_ui.vacancy_response_popup import (
+    _cap_raw_body_for_log,
+    _popup_json_indicates_xsrf_error,
     _popup_post_url,
     build_popup_apply_curl_command,
+    extract_xsrf_for_popup,
+    extract_xsrf_token,
+    extract_xsrf_token_from_dom,
     map_popup_json_to_apply_result,
-    _cap_raw_body_for_log,
+    try_apply_via_popup,
 )
 
 
@@ -79,3 +84,115 @@ def test_build_popup_apply_curl_command_shape():
     assert "X-Xsrftoken: tok" in curl or "X-Xsrftoken" in curl
     assert "-F" in curl
     assert "vacancy_id=123" in curl.replace("'", "")
+
+
+def test_popup_json_indicates_xsrf_error_errorpage():
+    assert _popup_json_indicates_xsrf_error(
+        {"errorPage": {"xsrfError": True}, "success": False}
+    )
+
+
+def test_popup_json_indicates_xsrf_error_top_level():
+    assert _popup_json_indicates_xsrf_error({"xsrfError": True})
+
+
+def test_popup_json_indicates_xsrf_error_negative():
+    assert not _popup_json_indicates_xsrf_error({"success": False, "errors": []})
+
+
+def test_map_popup_json_xsrf_error_shape_returns_none():
+    """Xsrf error JSON is not a terminal outcome; popup layer retries then modal."""
+    r = map_popup_json_to_apply_result(
+        {"isLightPage": True, "errorPage": {"xsrfError": True, "_xsrf": None}}
+    )
+    assert r is None
+
+
+def test_extract_xsrf_token_from_dom_reads_input():
+    class P:
+        def evaluate(self, _script: str):
+            return "abc123"
+
+    assert extract_xsrf_token_from_dom(P()) == "abc123"
+
+
+def test_extract_xsrf_for_popup_prefers_dom_over_html():
+    class P:
+        def __init__(self):
+            self.content_called = False
+
+        def evaluate(self, _script: str):
+            return "from_dom"
+
+        def content(self):
+            self.content_called = True
+            return '<input name="_xsrf" value="from_html" />'
+
+    p = P()
+    assert extract_xsrf_for_popup(p) == "from_dom"
+    assert p.content_called is False
+
+
+def test_extract_xsrf_for_popup_falls_back_to_html():
+    class P:
+        def evaluate(self, _script: str):
+            return None
+
+        def content(self):
+            return '<input name="_xsrf" value="from_html" />'
+
+    p = P()
+    assert extract_xsrf_for_popup(p) == extract_xsrf_token(p.content())
+
+
+class _FakeCtx:
+    def cookies(self, urls=None):
+        return []
+
+
+class _PageXsrfRetry:
+    """First fetch 403 + errorPage.xsrfError; after reload second fetch succeeds."""
+
+    def __init__(self) -> None:
+        self.reloads = 0
+        self._seq = [
+            "tok1",
+            {
+                "ok": False,
+                "status": 403,
+                "text": '{"errorPage":{"xsrfError":true}}',
+            },
+            "tok2",
+            {"ok": True, "status": 200, "text": '{"success": true}'},
+        ]
+        self._i = 0
+
+    @property
+    def context(self):
+        return _FakeCtx()
+
+    def evaluate(self, _script: str, _arg=None):
+        r = self._seq[self._i]
+        self._i += 1
+        return r
+
+    def reload(self, wait_until=None):
+        self.reloads += 1
+
+    def wait_for_timeout(self, _ms: int) -> None:
+        pass
+
+
+def test_try_apply_via_popup_reloads_and_retries_on_xsrf_error_json():
+    page = _PageXsrfRetry()
+    r = try_apply_via_popup(
+        page,
+        "https://hh.ru/vacancy/123",
+        "resumehash",
+        log_user_id=1,
+        letter="",
+    )
+    assert r is not None
+    assert r.outcome == ApplyOutcome.SUCCESS
+    assert page.reloads == 1
+    assert page._i == len(page._seq)

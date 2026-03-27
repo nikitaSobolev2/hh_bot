@@ -13,6 +13,9 @@ CHROMIUM_LAUNCH_ARGS: tuple[str, ...] = (
     "--no-default-browser-check",
 )
 
+# Fixed desktop viewport so Magritte bottom-sheet selectors match desktop layouts.
+HH_UI_VIEWPORT: dict[str, int] = {"width": 1280, "height": 900}
+
 
 def dispose_sync_browser_context(context: Any | None, browser: Any | None) -> None:
     """Close browser context (and its pages) then browser; swallow errors so teardown completes."""
