@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services import task_restart
 from src.services.task_restart import restart_pending_parsing_tasks
 
 
@@ -176,3 +177,15 @@ class TestRestartPendingParsingTasks:
             result = await restart_pending_parsing_tasks()
 
         assert result == 0
+
+
+class TestParseHhUiCheckpointKey:
+    def test_splits_chat_id_and_task_key_with_colons(self) -> None:
+        assert task_restart._parse_hh_ui_checkpoint_key(
+            "checkpoint:hh_ui_apply_batch:12345:autorespond:77:celeryid"
+        ) == (12345, "autorespond:77:celeryid")
+
+    def test_returns_none_for_bad_prefix(self) -> None:
+        assert task_restart._parse_hh_ui_checkpoint_key("other:key") is None
+
+

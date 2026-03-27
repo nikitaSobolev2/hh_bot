@@ -22,11 +22,18 @@ async def main() -> None:
     await _load_db_settings()
     logger.info("DB-managed settings loaded")
 
-    from src.services.task_restart import restart_pending_parsing_tasks
+    from src.services.task_restart import (
+        resume_hh_ui_batches_from_checkpoints,
+        restart_pending_parsing_tasks,
+    )
 
     enqueued = await restart_pending_parsing_tasks()
     if enqueued:
         logger.info("Restarted pending parsing tasks", count=enqueued)
+
+    hh_ui_resumed = await resume_hh_ui_batches_from_checkpoints()
+    if hh_ui_resumed:
+        logger.info("Resumed HH UI batch checkpoints", count=hh_ui_resumed)
 
     bot = create_bot()
     dp = create_dispatcher()

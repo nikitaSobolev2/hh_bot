@@ -1,44 +1,73 @@
-"""Handlers for progress bar actions (e.g. cancel task)."""
+"""Handlers for progress bar actions (cancel, title noop, try refresh)."""
+
+from __future__ import annotations
+
+import json
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
-from src.core.celery_async import run_sync_in_thread
+from src.core.celery_async import run_celery_task, run_sync_in_thread
 from src.core.i18n import I18nContext
+from src.db.engine import async_session_factory
 from src.models.user import User
 from src.services.autorespond_progress import (
     clear_autorespond_done_counter,
+    clear_autorespond_failed_counter,
+    clear_hh_ui_batch_active_sync,
+    get_hh_ui_batch_active_sync,
+    is_autorespond_cancelled_sync,
+    load_hh_ui_batch_checkpoint_full_sync,
     set_autorespond_cancelled,
 )
+from src.services.celery_active import celery_task_id_is_active
 from src.services.progress_service import ProgressService, create_progress_redis
 from src.worker.app import celery_app
 
 router = Router(name="progress")
 
 _PROGRESS_CANCEL_PREFIX = "prog:cancel:"
+_PROGRESS_TITLE_PREFIX = "prog:t:"
+_PROGRESS_REFRESH_PREFIX = "prog:r:"
 
 
-def _parse_task_key_from_callback(data: str) -> str | None:
-    """Extract task_key from callback_data. Format: prog:cancel:{encoded_key}."""
-    if not data or not data.startswith(_PROGRESS_CANCEL_PREFIX):
+def _parse_task_key_from_prefix(data: str, prefix: str) -> str | None:
+    if not data or not data.startswith(prefix):
         return None
-    encoded = data[len(_PROGRESS_CANCEL_PREFIX) :]
+    encoded = data[len(prefix) :]
     return encoded.replace("_", ":") if encoded else None
 
 
-@router.callback_query(F.data.startswith(_PROGRESS_CANCEL_PREFIX))
-async def handle_progress_cancel(
+@router.callback_query(F.data.startswith(_PROGRESS_TITLE_PREFIX))
+async def handle_progress_title(
     callback: CallbackQuery,
     user: User,
     i18n: I18nContext,
 ) -> None:
-    """Revoke the Celery task and remove it from the progress bar."""
+    """No-op label button; brief acknowledgment."""
+    chat_id = callback.message.chat.id if callback.message else None
+    if chat_id is None or chat_id != user.telegram_id:
+        await callback.answer()
+        return
+    await callback.answer(
+        i18n.get("progress-refresh-title-hint"),
+        show_alert=False,
+    )
+
+
+@router.callback_query(F.data.startswith(_PROGRESS_REFRESH_PREFIX))
+async def handle_progress_refresh(
+    callback: CallbackQuery,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    """Re-dispatch task from checkpoint when the worker is not running."""
     chat_id = callback.message.chat.id if callback.message else None
     if chat_id is None or chat_id != user.telegram_id:
         await callback.answer()
         return
 
-    task_key = _parse_task_key_from_callback(callback.data or "")
+    task_key = _parse_task_key_from_prefix(callback.data or "", _PROGRESS_REFRESH_PREFIX)
     if not task_key:
         await callback.answer()
         return
@@ -60,20 +89,256 @@ async def handle_progress_cancel(
             )
             return
 
-        import json
-
         state = json.loads(raw)
-        celery_task_id = state.get("celery_task_id")
-        if not celery_task_id:
+        if state.get("status") == "completed":
             await callback.answer(
                 i18n.get("progress-task-already-finished"),
                 show_alert=True,
             )
             return
 
-        # Stop chained autorespond work (cover_letter / hh_ui tasks) — parent may already be done.
-        await set_autorespond_cancelled(chat_id, task_key)
-        await clear_autorespond_done_counter(chat_id, task_key)
+        celery_task_id = state.get("celery_task_id")
+
+        if task_key.startswith("parse:"):
+            await _try_refresh_parse(
+                callback, i18n, task_key, user, celery_task_id
+            )
+        elif task_key.startswith("autoparse:"):
+            await _try_refresh_autoparse(
+                callback, i18n, task_key, user, svc, celery_task_id
+            )
+        elif task_key.startswith("autorespond:"):
+            await _try_refresh_autorespond(
+                callback, i18n, task_key, chat_id, svc
+            )
+        else:
+            await callback.answer(
+                i18n.get("progress-refresh-unsupported"),
+                show_alert=True,
+            )
+    finally:
+        await redis.aclose()
+
+
+async def _try_refresh_parse(
+    callback: CallbackQuery,
+    i18n: I18nContext,
+    task_key: str,
+    user: User,
+    celery_task_id: str | None,
+) -> None:
+    from src.repositories.parsing import ParsingCompanyRepository
+    from src.worker.tasks.parsing import run_parsing_company
+
+    rest = task_key[len("parse:") :]
+    try:
+        company_id = int(rest)
+    except ValueError:
+        await callback.answer(
+            i18n.get("progress-refresh-parse-failed"),
+            show_alert=True,
+        )
+        return
+
+    async with async_session_factory() as session:
+        repo = ParsingCompanyRepository(session)
+        company = await repo.get_by_id(company_id)
+        if not company or company.user_id != user.id:
+            await callback.answer(
+                i18n.get("progress-refresh-parse-failed"),
+                show_alert=True,
+            )
+            return
+
+    if celery_task_id and celery_task_id_is_active(celery_task_id):
+        await callback.answer(
+            i18n.get("progress-refresh-running"),
+            show_alert=True,
+        )
+        return
+
+    await run_celery_task(
+        run_parsing_company,
+        company_id,
+        company.user_id,
+        include_blacklisted=False,
+        telegram_chat_id=user.telegram_id,
+    )
+    await callback.answer(
+        i18n.get("progress-refresh-restarted"),
+        show_alert=True,
+    )
+
+
+async def _try_refresh_autoparse(
+    callback: CallbackQuery,
+    i18n: I18nContext,
+    task_key: str,
+    user: User,
+    svc: ProgressService,
+    celery_task_id: str | None,
+) -> None:
+    from src.repositories.autoparse import AutoparseCompanyRepository
+    from src.worker.tasks.autoparse import run_autoparse_company
+
+    rest = task_key[len("autoparse:") :]
+    try:
+        company_id = int(rest)
+    except ValueError:
+        await callback.answer(
+            i18n.get("progress-refresh-autoparse-failed"),
+            show_alert=True,
+        )
+        return
+
+    async with async_session_factory() as session:
+        repo = AutoparseCompanyRepository(session)
+        company = await repo.get_by_id(company_id)
+        if not company or company.user_id != user.id:
+            await callback.answer(
+                i18n.get("progress-refresh-autoparse-failed"),
+                show_alert=True,
+            )
+            return
+
+    if celery_task_id and celery_task_id_is_active(celery_task_id):
+        await callback.answer(
+            i18n.get("progress-refresh-running"),
+            show_alert=True,
+        )
+        return
+
+    res = await run_celery_task(
+        run_autoparse_company,
+        company_id,
+        notify_user_id=user.id,
+    )
+    new_id = getattr(res, "id", None)
+    if new_id:
+        await svc.update_celery_task_id(task_key, str(new_id))
+    await callback.answer(
+        i18n.get("progress-refresh-restarted"),
+        show_alert=True,
+    )
+
+
+async def _try_refresh_autorespond(
+    callback: CallbackQuery,
+    i18n: I18nContext,
+    task_key: str,
+    chat_id: int,
+    svc: ProgressService,
+) -> None:
+    from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
+
+    if is_autorespond_cancelled_sync(chat_id, task_key):
+        await callback.answer(
+            i18n.get("progress-refresh-cancelled"),
+            show_alert=True,
+        )
+        return
+
+    full = load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
+    if not full:
+        await callback.answer(
+            i18n.get("progress-refresh-nothing"),
+            show_alert=True,
+        )
+        return
+    items, resume = full
+    if not items:
+        await callback.answer(
+            i18n.get("progress-refresh-nothing"),
+            show_alert=True,
+        )
+        return
+    if not resume:
+        await callback.answer(
+            i18n.get("progress-refresh-no-resume"),
+            show_alert=True,
+        )
+        return
+
+    active_id = get_hh_ui_batch_active_sync(chat_id, task_key)
+    if active_id and celery_task_id_is_active(active_id):
+        await callback.answer(
+            i18n.get("progress-refresh-running"),
+            show_alert=True,
+        )
+        return
+    if active_id:
+        clear_hh_ui_batch_active_sync(chat_id, task_key)
+
+    res = await run_celery_task(
+        apply_to_vacancies_batch_ui_task,
+        **{**resume, "items": items},
+    )
+    new_id = getattr(res, "id", None)
+    if new_id:
+        await svc.update_celery_task_id(task_key, str(new_id))
+    await callback.answer(
+        i18n.get("progress-refresh-restarted"),
+        show_alert=True,
+    )
+
+
+@router.callback_query(F.data.startswith(_PROGRESS_CANCEL_PREFIX))
+async def handle_progress_cancel(
+    callback: CallbackQuery,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    """Revoke the Celery task and remove it from the progress bar."""
+    chat_id = callback.message.chat.id if callback.message else None
+    if chat_id is None or chat_id != user.telegram_id:
+        await callback.answer()
+        return
+
+    task_key = _parse_task_key_from_prefix(callback.data or "", _PROGRESS_CANCEL_PREFIX)
+    if not task_key:
+        await callback.answer()
+        return
+
+    redis = create_progress_redis()
+    try:
+        svc = ProgressService(
+            callback.bot,
+            chat_id,
+            redis,
+            user.language_code or "ru",
+        )
+
+        raw = await redis.get(svc._task_key(task_key))
+        if not raw:
+            await callback.answer(
+                i18n.get("progress-task-already-finished"),
+                show_alert=True,
+            )
+            return
+
+        state = json.loads(raw)
+        celery_task_id = state.get("celery_task_id")
+
+        if not celery_task_id:
+            if task_key.startswith("autorespond:"):
+                await set_autorespond_cancelled(chat_id, task_key)
+                await clear_autorespond_done_counter(chat_id, task_key)
+                await clear_autorespond_failed_counter(chat_id, task_key)
+                await svc.cancel_task(task_key)
+                await callback.answer(
+                    i18n.get("progress-task-cancelled"),
+                    show_alert=True,
+                )
+                return
+            await callback.answer(
+                i18n.get("progress-task-already-finished"),
+                show_alert=True,
+            )
+            return
+
+        if task_key.startswith("autorespond:"):
+            await set_autorespond_cancelled(chat_id, task_key)
+            await clear_autorespond_done_counter(chat_id, task_key)
 
         await run_sync_in_thread(
             celery_app.control.revoke,

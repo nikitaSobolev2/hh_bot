@@ -86,7 +86,7 @@ class TestHandleProgressCancel:
     async def test_answers_already_finished_when_task_state_has_no_celery_task_id(self):
         from src.bot.modules.progress.handlers import handle_progress_cancel
 
-        callback = _make_callback()
+        callback = _make_callback(data="prog:cancel:parse_1")
         user = _make_user(telegram_id=12345)
 
         state = {"title": "Test", "status": "running", "bars": [], "celery_task_id": None}
@@ -102,6 +102,50 @@ class TestHandleProgressCancel:
 
         callback.answer.assert_awaited_with(
             "Task already finished.",
+            show_alert=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancels_autorespond_without_celery_task_id(self):
+        from src.bot.modules.progress.handlers import handle_progress_cancel
+
+        callback = _make_callback(data="prog:cancel:autorespond_1_old")
+        user = _make_user(telegram_id=12345)
+
+        state = {"title": "Test", "status": "running", "bars": [], "celery_task_id": None}
+        redis = AsyncMock()
+
+        async def mock_get(key: str):
+            if "progress:pin:" in key:
+                return "42"
+            if "progress:task:12345:" in key:
+                return json.dumps(state)
+            return None
+
+        redis.get = mock_get
+        redis.delete = AsyncMock()
+        redis.keys = AsyncMock(return_value=[])
+        redis.mget = AsyncMock(return_value=[])
+        redis.aclose = AsyncMock()
+
+        with patch(
+            "src.bot.modules.progress.handlers.create_progress_redis",
+            return_value=redis,
+        ), patch(
+            "src.bot.modules.progress.handlers.set_autorespond_cancelled",
+            new_callable=AsyncMock,
+        ) as mock_cancel, patch(
+            "src.bot.modules.progress.handlers.clear_autorespond_done_counter",
+            new_callable=AsyncMock,
+        ), patch(
+            "src.bot.modules.progress.handlers.clear_autorespond_failed_counter",
+            new_callable=AsyncMock,
+        ):
+            await handle_progress_cancel(callback, user, _make_i18n())
+
+        mock_cancel.assert_awaited_once()
+        callback.answer.assert_awaited_with(
+            "Task cancelled.",
             show_alert=True,
         )
 

@@ -290,15 +290,21 @@ class TestBuildCancelKeyboard:
         result = svc._build_cancel_keyboard(tasks)
         assert result is None
 
-    def test_returns_none_when_running_task_has_no_celery_task_id(self):
-        svc, _, _ = _make_service()
+    def test_returns_keyboard_when_running_task_has_no_celery_task_id(self):
+        svc, _, _ = _make_service(locale="en")
         tasks = {
-            "parse:1": _task_state(status="running"),
+            "parse:1": _task_state(status="running", title="X"),
         }
         result = svc._build_cancel_keyboard(tasks)
-        assert result is None
+        assert result is not None
+        assert len(result.inline_keyboard) == 1
+        row = result.inline_keyboard[0]
+        assert len(row) == 3
+        assert row[0].callback_data == "prog:t:parse_1"
+        assert row[1].callback_data == "prog:r:parse_1"
+        assert row[2].callback_data == "prog:cancel:parse_1"
 
-    def test_returns_keyboard_with_button_for_running_task_with_celery_id(self):
+    def test_returns_keyboard_with_three_buttons_for_running_task_with_celery_id(self):
         svc, _, _ = _make_service(locale="en")
         state = _task_state(status="running", title="Backend Dev")
         state["celery_task_id"] = "celery-123"
@@ -306,13 +312,14 @@ class TestBuildCancelKeyboard:
         result = svc._build_cancel_keyboard(tasks)
         assert result is not None
         assert len(result.inline_keyboard) == 1
-        assert result.inline_keyboard[0][0].callback_data == "prog:cancel:parse_1"
-        btn_text = result.inline_keyboard[0][0].text
-        assert "Cancel" in btn_text
-        assert "1" in btn_text
-        assert "Backend Dev" in btn_text
+        row = result.inline_keyboard[0]
+        assert len(row) == 3
+        assert row[0].text == "Backend Dev"
+        assert row[0].callback_data == "prog:t:parse_1"
+        assert row[1].callback_data == "prog:r:parse_1"
+        assert row[2].callback_data == "prog:cancel:parse_1"
 
-    def test_includes_only_running_tasks_with_celery_id(self):
+    def test_includes_only_running_tasks_not_completed(self):
         svc, _, _ = _make_service()
         running = _task_state(status="running", title="Task A")
         running["celery_task_id"] = "celery-1"
@@ -322,10 +329,9 @@ class TestBuildCancelKeyboard:
         result = svc._build_cancel_keyboard(tasks)
         assert result is not None
         assert len(result.inline_keyboard) == 1
-        assert "1" in result.inline_keyboard[0][0].text
         assert "Task A" in result.inline_keyboard[0][0].text
 
-    def test_truncates_long_title_in_cancel_button(self):
+    def test_truncates_long_title_in_title_button(self):
         from src.services.progress_service import _MAX_TITLE_IN_BUTTON
 
         svc, _, _ = _make_service(locale="en")

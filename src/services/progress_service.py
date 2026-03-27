@@ -38,6 +38,8 @@ logger = get_logger(__name__)
 
 _BAR_WIDTH = 20
 _PROGRESS_CANCEL_PREFIX = "prog:cancel:"
+_PROGRESS_TITLE_PREFIX = "prog:t:"
+_PROGRESS_REFRESH_PREFIX = "prog:r:"
 _MAX_TITLE_IN_BUTTON = 40
 _THROTTLE_MS = 500
 _PROGRESS_TTL = 4 * 3600  # seconds
@@ -140,6 +142,23 @@ class ProgressService:
             ex=_PROGRESS_TTL,
         )
         await self._refresh_message(force=False)
+
+    async def update_celery_task_id(self, task_key: str, celery_task_id: str | None) -> None:
+        """Update stored Celery task id (e.g. after re-dispatching a child batch task)."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        if celery_task_id is not None:
+            state["celery_task_id"] = celery_task_id
+        else:
+            state.pop("celery_task_id", None)
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=True)
 
     async def update_footer(self, task_key: str, lines: list[str]) -> None:
         """Update optional footer lines shown under the task title (e.g. failure counts)."""
@@ -378,33 +397,34 @@ class ProgressService:
     # ------------------------------------------------------------------
 
     def _build_cancel_keyboard(self, tasks: dict[str, dict]):
-        """Build inline keyboard with one cancel button per running task that has celery_task_id."""
+        """Build inline keyboard: task title (noop) | try refresh | cancel per non-completed task."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
-        for idx, (task_key, state) in enumerate(
-            sorted(tasks.items()), start=1
-        ):
+        for task_key, state in sorted(tasks.items()):
             if state.get("status") == "completed":
                 continue
-            if not state.get("celery_task_id"):
-                continue
-            title = state.get("title", "")
-            if len(title) > _MAX_TITLE_IN_BUTTON:
-                title = title[: _MAX_TITLE_IN_BUTTON - 1] + "…"
-            encoded_key = task_key.replace(":", "_")
-            btn_text = get_text(
-                "progress-btn-cancel-task",
-                self._locale,
-                n=idx,
-                title=title,
+            title = state.get("title", "") or get_text(
+                "progress-btn-task-title-fallback", self._locale
             )
+            btn_title = title
+            if len(btn_title) > _MAX_TITLE_IN_BUTTON:
+                btn_title = btn_title[: _MAX_TITLE_IN_BUTTON - 1] + "…"
+            encoded_key = task_key.replace(":", "_")
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        text=btn_text,
+                        text=btn_title,
+                        callback_data=f"{_PROGRESS_TITLE_PREFIX}{encoded_key}",
+                    ),
+                    InlineKeyboardButton(
+                        text=get_text("progress-btn-try-refresh", self._locale),
+                        callback_data=f"{_PROGRESS_REFRESH_PREFIX}{encoded_key}",
+                    ),
+                    InlineKeyboardButton(
+                        text=get_text("progress-btn-cancel-inline", self._locale),
                         callback_data=f"{_PROGRESS_CANCEL_PREFIX}{encoded_key}",
-                    )
+                    ),
                 ]
             )
         if not buttons:

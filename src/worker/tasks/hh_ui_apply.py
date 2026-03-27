@@ -174,6 +174,7 @@ async def _finalize_batch_item_async(
     silent_feed: bool,
     send_error_screenshot_to_user: bool,
     autorespond_progress: dict | None,
+    resume_blob: dict | None = None,
 ) -> None:
     """Persist one batch row, tick autorespond bar, optional screenshot, Redis checkpoint."""
     from src.services.autorespond_progress import (
@@ -228,7 +229,9 @@ async def _finalize_batch_item_async(
             for x in items
             if int(x["autoparsed_vacancy_id"]) not in finalized_vids
         ]
-        save_hh_ui_batch_checkpoint_sync(chat_id, task_key, remaining)
+        save_hh_ui_batch_checkpoint_sync(
+            chat_id, task_key, remaining, resume=resume_blob
+        )
 
     if (
         silent_feed
@@ -267,6 +270,7 @@ async def _apply_batch_ui_async(
     """Apply to several vacancies in one Playwright session (autorespond batch)."""
     from src.bot.modules.autoparse import feed_services
     from src.services.autorespond_progress import (
+        hh_ui_batch_resume_payload,
         is_autorespond_cancelled_sync,
         save_hh_ui_batch_checkpoint_sync,
     )
@@ -343,8 +347,26 @@ async def _apply_batch_ui_async(
             if autorespond_progress and autorespond_progress.get("task_key")
             else None
         )
+        resume_blob = (
+            hh_ui_batch_resume_payload(
+                user_id=user_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                locale=locale,
+                hh_linked_account_id=hh_linked_account_id,
+                feed_session_id=feed_session_id,
+                cover_letter_style=cover_letter_style,
+                cover_task_enabled=cover_task_enabled,
+                silent_feed=silent_feed,
+                autorespond_progress=autorespond_progress,
+            )
+            if task_key
+            else None
+        )
         if task_key:
-            save_hh_ui_batch_checkpoint_sync(chat_id, task_key, list(items))
+            save_hh_ui_batch_checkpoint_sync(
+                chat_id, task_key, list(items), resume=resume_blob
+            )
 
         specs: list[VacancyApplySpec] = []
 
@@ -372,6 +394,7 @@ async def _apply_batch_ui_async(
                     silent_feed=silent_feed,
                     send_error_screenshot_to_user=send_error_screenshot_to_user,
                     autorespond_progress=autorespond_progress,
+                    resume_blob=resume_blob,
                 )
                 continue
             letter = ""
@@ -412,6 +435,7 @@ async def _apply_batch_ui_async(
                         silent_feed=silent_feed,
                         send_error_screenshot_to_user=send_error_screenshot_to_user,
                         autorespond_progress=autorespond_progress,
+                        resume_blob=resume_blob,
                     )
                     continue
             specs.append(
@@ -445,6 +469,7 @@ async def _apply_batch_ui_async(
                     silent_feed=silent_feed,
                     send_error_screenshot_to_user=send_error_screenshot_to_user,
                     autorespond_progress=autorespond_progress,
+                    resume_blob=resume_blob,
                 ),
                 loop,
             )
@@ -484,6 +509,7 @@ async def _apply_batch_ui_async(
                             silent_feed=silent_feed,
                             send_error_screenshot_to_user=send_error_screenshot_to_user,
                             autorespond_progress=autorespond_progress,
+                            resume_blob=resume_blob,
                         )
 
         for it in items:
@@ -508,6 +534,7 @@ async def _apply_batch_ui_async(
                     silent_feed=silent_feed,
                     send_error_screenshot_to_user=send_error_screenshot_to_user,
                     autorespond_progress=autorespond_progress,
+                    resume_blob=resume_blob,
                 )
 
         processed = len(items)
@@ -541,8 +568,16 @@ def apply_to_vacancies_batch_ui_task(
 ) -> dict:
     from celery.exceptions import SoftTimeLimitExceeded
 
-    from src.services.autorespond_progress import load_hh_ui_batch_checkpoint_sync
+    from src.services.autorespond_progress import (
+        clear_hh_ui_batch_active_sync,
+        load_hh_ui_batch_checkpoint_full_sync,
+        set_hh_ui_batch_active_sync,
+    )
 
+    tk = autorespond_progress.get("task_key") if autorespond_progress else None
+    cid = str(getattr(self.request, "id", None) or "")
+    if tk and cid:
+        set_hh_ui_batch_active_sync(int(chat_id), str(tk), cid)
     try:
         return run_async(
             lambda sf: _apply_batch_ui_async(
@@ -562,30 +597,36 @@ def apply_to_vacancies_batch_ui_task(
             )
         )
     except SoftTimeLimitExceeded:
-        tk = autorespond_progress.get("task_key") if autorespond_progress else None
         if tk:
-            remaining = load_hh_ui_batch_checkpoint_sync(int(chat_id), str(tk))
-            if remaining:
-                logger.warning(
-                    "hh_ui_apply_batch_soft_timeout_resume",
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    task_key=tk,
-                    remaining_count=len(remaining),
-                )
-                apply_to_vacancies_batch_ui_task.delay(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    locale=locale,
-                    hh_linked_account_id=hh_linked_account_id,
-                    feed_session_id=feed_session_id,
-                    items=remaining,
-                    cover_letter_style=cover_letter_style,
-                    cover_task_enabled=cover_task_enabled,
-                    silent_feed=silent_feed,
-                    autorespond_progress=autorespond_progress,
-                )
+            full = load_hh_ui_batch_checkpoint_full_sync(int(chat_id), str(tk))
+            if full:
+                remaining, resume = full
+                if remaining:
+                    logger.warning(
+                        "hh_ui_apply_batch_soft_timeout_resume",
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        task_key=tk,
+                        remaining_count=len(remaining),
+                    )
+                    if resume:
+                        apply_to_vacancies_batch_ui_task.delay(
+                            **{**resume, "items": remaining}
+                        )
+                    else:
+                        apply_to_vacancies_batch_ui_task.delay(
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            locale=locale,
+                            hh_linked_account_id=hh_linked_account_id,
+                            feed_session_id=feed_session_id,
+                            items=remaining,
+                            cover_letter_style=cover_letter_style,
+                            cover_task_enabled=cover_task_enabled,
+                            silent_feed=silent_feed,
+                            autorespond_progress=autorespond_progress,
+                        )
         else:
             logger.warning(
                 "hh_ui_apply_batch_soft_timeout",
@@ -594,6 +635,9 @@ def apply_to_vacancies_batch_ui_task(
                 has_task_key=False,
             )
         raise
+    finally:
+        if tk:
+            clear_hh_ui_batch_active_sync(int(chat_id), str(tk))
 
 
 async def _apply_ui_async(

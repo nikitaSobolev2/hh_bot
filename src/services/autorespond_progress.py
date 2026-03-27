@@ -35,21 +35,93 @@ def hh_ui_batch_checkpoint_key(chat_id: int, task_key: str) -> str:
     return f"checkpoint:hh_ui_apply_batch:{chat_id}:{task_key}"
 
 
-def save_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str, remaining_items: list[dict]) -> None:
-    """Persist remaining batch rows (JSON). Empty list deletes the key."""
+def hh_ui_batch_resume_payload(
+    *,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    feed_session_id: int,
+    cover_letter_style: str,
+    cover_task_enabled: bool,
+    silent_feed: bool,
+    autorespond_progress: dict | None,
+) -> dict[str, Any]:
+    """JSON-serializable kwargs for ``apply_to_vacancies_batch_ui_task.delay`` (excluding ``items``)."""
+    return {
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "locale": locale,
+        "hh_linked_account_id": hh_linked_account_id,
+        "feed_session_id": feed_session_id,
+        "cover_letter_style": cover_letter_style,
+        "cover_task_enabled": cover_task_enabled,
+        "silent_feed": silent_feed,
+        "autorespond_progress": autorespond_progress,
+    }
+
+
+def hh_ui_batch_active_key(chat_id: int, task_key: str) -> str:
+    """Child Celery task id for in-flight ``apply_to_vacancies_batch`` (parent may already be done)."""
+    return f"hh_ui_batch_active:{chat_id}:{task_key}"
+
+
+def set_hh_ui_batch_active_sync(chat_id: int, task_key: str, celery_task_id: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.set(hh_ui_batch_active_key(chat_id, task_key), celery_task_id, ex=_DONE_TTL_S)
+    finally:
+        r.close()
+
+
+def clear_hh_ui_batch_active_sync(chat_id: int, task_key: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.delete(hh_ui_batch_active_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+def get_hh_ui_batch_active_sync(chat_id: int, task_key: str) -> str | None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        v = r.get(hh_ui_batch_active_key(chat_id, task_key))
+        return str(v) if v else None
+    finally:
+        r.close()
+
+
+def save_hh_ui_batch_checkpoint_sync(
+    chat_id: int,
+    task_key: str,
+    remaining_items: list[dict],
+    *,
+    resume: dict[str, Any] | None = None,
+) -> None:
+    """Persist remaining batch rows and kwargs for cold resume. Empty list deletes the key."""
     r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
     key = hh_ui_batch_checkpoint_key(chat_id, task_key)
     try:
         if not remaining_items:
             r.delete(key)
         else:
-            r.set(key, json.dumps({"items": remaining_items}), ex=_DONE_TTL_S)
+            payload: dict[str, Any] = {"items": remaining_items}
+            if resume is not None:
+                payload["resume"] = resume
+            r.set(key, json.dumps(payload), ex=_DONE_TTL_S)
     finally:
         r.close()
 
 
-def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] | None:
-    """Return remaining items if a checkpoint exists."""
+def load_hh_ui_batch_checkpoint_full_sync(
+    chat_id: int, task_key: str,
+) -> tuple[list[dict], dict[str, Any] | None] | None:
+    """Return (items, resume) if checkpoint exists and has items.
+
+    ``resume`` is None when the JSON has no ``resume`` key (legacy checkpoints).
+    """
     r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
     key = hh_ui_batch_checkpoint_key(chat_id, task_key)
     try:
@@ -60,9 +132,25 @@ def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] 
         items = data.get("items")
         if not isinstance(items, list):
             return None
-        return [x for x in items if isinstance(x, dict)]
+        clean_items = [x for x in items if isinstance(x, dict)]
+        if not clean_items:
+            return None
+        if "resume" not in data:
+            return (clean_items, None)
+        resume = data.get("resume")
+        if not isinstance(resume, dict):
+            return (clean_items, None)
+        return (clean_items, resume)
     finally:
         r.close()
+
+
+def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] | None:
+    """Return remaining items if a checkpoint exists."""
+    full = load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
+    if not full:
+        return None
+    return full[0]
 
 
 def clear_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> None:
