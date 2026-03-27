@@ -32,7 +32,10 @@ from src.services.hh_ui.playwright_support import (
     HH_UI_VIEWPORT,
     dispose_sync_browser_context,
 )
-from src.services.hh_ui.vacancy_response_popup import try_apply_via_popup
+from src.services.hh_ui.vacancy_response_popup import (
+    POPUP_XSRF_ERROR_DETAIL,
+    try_apply_via_popup,
+)
 from src.services.hh_ui.apply_retry import (
     apply_outcome_is_retryable,
     apply_outcome_is_terminal_no_retry,
@@ -41,6 +44,13 @@ from src.services.hh_ui.apply_retry import (
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 
 logger = get_logger(__name__)
+
+_HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S = 10.0
+_HH_UI_BATCH_XSRF_COOLDOWN_CAP_S = 300.0
+
+
+def _is_popup_xsrf_error_result(result: ApplyResult) -> bool:
+    return (result.detail or "").strip() == POPUP_XSRF_ERROR_DETAIL
 
 
 def _safe_url_host_path(url: str | None) -> str | None:
@@ -978,6 +988,8 @@ def apply_to_vacancies_ui_batch(
     retry_initial_seconds: float = 10.0,
     retry_delay_cap_seconds: float = 600.0,
     on_item_done: Callable[[VacancyApplySpec, ApplyResult], None] | None = None,
+    xsrf_cooldown_initial_seconds: float = _HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S,
+    xsrf_cooldown_cap_seconds: float = _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S,
 ) -> list[tuple[int, ApplyResult]]:
     """One Chromium launch; sequential ``goto`` + apply per item; retries with backoff per item."""
     results: list[tuple[int, ApplyResult]] = []
@@ -997,7 +1009,8 @@ def apply_to_vacancies_ui_batch(
                 viewport=HH_UI_VIEWPORT,
             )
             page = context.new_page()
-            for spec in items:
+            consecutive_popup_xsrf = 0
+            for item_index, spec in enumerate(items):
                 if not spec.vacancy_url.startswith("https://"):
                     invalid = ApplyResult(
                         outcome=ApplyOutcome.ERROR,
@@ -1044,6 +1057,23 @@ def apply_to_vacancies_ui_batch(
                 if on_item_done:
                     on_item_done(spec, final)
                 results.append((spec.autoparsed_vacancy_id, final))
+                if item_index < len(items) - 1 and _is_popup_xsrf_error_result(final):
+                    consecutive_popup_xsrf += 1
+                    delay = min(
+                        float(xsrf_cooldown_cap_seconds),
+                        float(xsrf_cooldown_initial_seconds)
+                        * (2 ** (consecutive_popup_xsrf - 1)),
+                    )
+                    logger.info(
+                        "hh_ui_batch_xsrf_cooldown",
+                        log_user_id=log_user_id,
+                        vacancy_id=spec.autoparsed_vacancy_id,
+                        consecutive=consecutive_popup_xsrf,
+                        delay_s=delay,
+                    )
+                    time.sleep(delay)
+                elif not _is_popup_xsrf_error_result(final):
+                    consecutive_popup_xsrf = 0
         finally:
             dispose_sync_browser_context(context, browser)
     return results

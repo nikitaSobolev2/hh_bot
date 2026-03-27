@@ -2,6 +2,7 @@
 
 from src.services.hh_ui.outcomes import ApplyOutcome
 from src.services.hh_ui.vacancy_response_popup import (
+    POPUP_XSRF_ERROR_DETAIL,
     _cap_raw_body_for_log,
     _popup_json_indicates_xsrf_error,
     _popup_post_url,
@@ -108,7 +109,7 @@ def test_popup_json_indicates_xsrf_error_negative():
 
 
 def test_map_popup_json_xsrf_error_shape_returns_none():
-    """Xsrf error JSON is not a terminal outcome; popup layer retries then modal."""
+    """map_popup_json_to_apply_result does not map HH xsrf error JSON; try_apply_via_popup handles it."""
     r = map_popup_json_to_apply_result(
         {"isLightPage": True, "errorPage": {"xsrfError": True, "_xsrf": None}}
     )
@@ -158,10 +159,10 @@ class _FakeCtx:
 
 
 class _PageXsrfRetry:
-    """First fetch 403 + errorPage.xsrfError; after reload second fetch succeeds."""
+    """First fetch 403 + errorPage.xsrfError; after goto second fetch succeeds."""
 
     def __init__(self) -> None:
-        self.reloads = 0
+        self.refreshes = 0
         self._seq = [
             "tok1",
             {
@@ -183,8 +184,8 @@ class _PageXsrfRetry:
         self._i += 1
         return r
 
-    def reload(self, wait_until=None):
-        self.reloads += 1
+    def goto(self, _url, wait_until=None):
+        self.refreshes += 1
 
     def wait_for_timeout(self, _ms: int) -> None:
         pass
@@ -201,5 +202,46 @@ def test_try_apply_via_popup_reloads_and_retries_on_xsrf_error_json():
     )
     assert r is not None
     assert r.outcome == ApplyOutcome.SUCCESS
-    assert page.reloads == 1
+    assert page.refreshes == 1
     assert page._i == len(page._seq)
+
+
+class _PageXsrfAlways403:
+    """Every POST returns 403 + xsrf error JSON; refresh never fixes."""
+
+    def __init__(self) -> None:
+        self.refreshes = 0
+        self._body = '{"errorPage":{"xsrfError":true},"errorCode":403}'
+        self._eval_calls = 0
+
+    @property
+    def context(self):
+        return _FakeCtx()
+
+    def evaluate(self, _script: str, _arg=None):
+        self._eval_calls += 1
+        # Odd calls: DOM xsrf; even: popup fetch
+        if self._eval_calls % 2 == 1:
+            return "tok"
+        return {"ok": False, "status": 403, "text": self._body}
+
+    def goto(self, _url, wait_until=None):
+        self.refreshes += 1
+
+    def wait_for_timeout(self, _ms: int) -> None:
+        pass
+
+
+def test_try_apply_via_popup_persistent_xsrf_returns_error_not_none():
+    page = _PageXsrfAlways403()
+    r = try_apply_via_popup(
+        page,
+        "https://hh.ru/vacancy/999",
+        "resumehash",
+        log_user_id=1,
+        letter="",
+    )
+    assert r is not None
+    assert r.outcome == ApplyOutcome.ERROR
+    assert r.detail == POPUP_XSRF_ERROR_DETAIL
+    assert page.refreshes == 2

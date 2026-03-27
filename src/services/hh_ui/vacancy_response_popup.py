@@ -17,8 +17,12 @@ from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
 logger = get_logger(__name__)
 
 _POPUP_PATH = "/applicant/vacancy_response/popup"
+_POPUP_MAX_ATTEMPTS = 3
 _LOG_BODY_MAX = 1200
 _RAW_BODY_LOG_MAX = 64 * 1024  # cap full response in logs (ops / self-hosted)
+
+# Returned when popup POST keeps returning 403 / XSRF after refresh attempts (runner must not fall back to modal).
+POPUP_XSRF_ERROR_DETAIL = "popup_api:xsrf_403"
 
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)", re.IGNORECASE)
 _XSRF_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -96,19 +100,35 @@ def _popup_json_indicates_xsrf_error(data: dict[str, Any]) -> bool:
     return False
 
 
-def _reload_page_for_popup_xsrf_retry(page: Any, log_user_id: int | None) -> bool:
-    """Reload after XSRF failure; return False if reload failed (caller should abort popup)."""
+def _refresh_page_for_popup_xsrf_retry(
+    page: Any, vacancy_url: str, log_user_id: int | None
+) -> bool:
+    """Re-navigate to the vacancy URL (same entry as first load), then reload fallback."""
     try:
-        page.reload(wait_until="domcontentloaded")
+        page.goto(vacancy_url, wait_until="domcontentloaded")
         page.wait_for_timeout(400)
         return True
     except Exception as exc:
         logger.info(
-            "vacancy_popup_xsrf_retry_failed",
+            "vacancy_popup_goto_retry_failed",
             log_user_id=log_user_id,
             error=str(exc)[:200],
         )
-        return False
+        try:
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_timeout(400)
+            return True
+        except Exception as exc2:
+            logger.info(
+                "vacancy_popup_xsrf_retry_failed",
+                log_user_id=log_user_id,
+                error=str(exc2)[:200],
+            )
+            return False
+
+
+def _popup_xsrf_terminal_result() -> ApplyResult:
+    return ApplyResult(outcome=ApplyOutcome.ERROR, detail=POPUP_XSRF_ERROR_DETAIL)
 
 
 def _truncate_for_log(s: str, max_len: int = _LOG_BODY_MAX) -> str:
@@ -286,7 +306,11 @@ def try_apply_via_popup(
     log_user_id: int | None = None,
     letter: str = "",
 ) -> ApplyResult | None:
-    """POST vacancy_response/popup via in-page fetch. Returns None to fall back to modal UI."""
+    """POST vacancy_response/popup via in-page fetch.
+
+    Returns a terminal ApplyResult on success or known API errors; ``popup_api:xsrf_403`` when
+    403/XSRF persists after refresh attempts. Returns None to fall back to modal UI.
+    """
     vacancy_id = parse_vacancy_id_from_url(vacancy_url)
     if not vacancy_id:
         logger.info(
@@ -300,7 +324,8 @@ def try_apply_via_popup(
     letter = letter or ""
     post_url = _popup_post_url(vacancy_url)
 
-    for attempt in range(2):
+    for attempt in range(_POPUP_MAX_ATTEMPTS):
+        can_retry = attempt < _POPUP_MAX_ATTEMPTS - 1
         xsrf = extract_xsrf_for_popup(page)
         if not xsrf:
             logger.info(
@@ -377,7 +402,7 @@ def try_apply_via_popup(
                 ok=ok,
                 attempt=attempt,
             )
-            if status == 403 and attempt == 0:
+            if status == 403 and can_retry:
                 logger.info(
                     "vacancy_popup_xsrf_retry",
                     log_user_id=log_user_id,
@@ -385,9 +410,11 @@ def try_apply_via_popup(
                     attempt=attempt,
                     reason="empty_body_403",
                 )
-                if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+                if _refresh_page_for_popup_xsrf_retry(page, vacancy_url, log_user_id):
                     continue
-                return None
+                return _popup_xsrf_terminal_result()
+            if status == 403:
+                return _popup_xsrf_terminal_result()
             return None
 
         raw_body, raw_len, truncated = _cap_raw_body_for_log(text)
@@ -414,7 +441,7 @@ def try_apply_via_popup(
                 body_preview=_truncate_for_log(text, 400),
                 attempt=attempt,
             )
-            if status == 403 and attempt == 0:
+            if status == 403 and can_retry:
                 logger.info(
                     "vacancy_popup_xsrf_retry",
                     log_user_id=log_user_id,
@@ -422,9 +449,11 @@ def try_apply_via_popup(
                     attempt=attempt,
                     reason="non_json_403",
                 )
-                if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+                if _refresh_page_for_popup_xsrf_retry(page, vacancy_url, log_user_id):
                     continue
-                return None
+                return _popup_xsrf_terminal_result()
+            if status == 403:
+                return _popup_xsrf_terminal_result()
             return None
 
         if not isinstance(data, dict):
@@ -439,17 +468,18 @@ def try_apply_via_popup(
             attempt=attempt,
         )
 
-        if _popup_json_indicates_xsrf_error(data) and attempt == 0:
-            logger.info(
-                "vacancy_popup_xsrf_retry",
-                log_user_id=log_user_id,
-                vacancy_id=vacancy_id,
-                attempt=attempt,
-                reason="errorPage_xsrfError",
-            )
-            if _reload_page_for_popup_xsrf_retry(page, log_user_id):
-                continue
-            return None
+        if _popup_json_indicates_xsrf_error(data):
+            if can_retry:
+                logger.info(
+                    "vacancy_popup_xsrf_retry",
+                    log_user_id=log_user_id,
+                    vacancy_id=vacancy_id,
+                    attempt=attempt,
+                    reason="errorPage_xsrfError",
+                )
+                if _refresh_page_for_popup_xsrf_retry(page, vacancy_url, log_user_id):
+                    continue
+            return _popup_xsrf_terminal_result()
 
         mapped = map_popup_json_to_apply_result(data)
         if mapped is not None:
@@ -465,7 +495,7 @@ def try_apply_via_popup(
             )
             return None
 
-        if status == 403 and attempt == 0:
+        if status == 403 and can_retry:
             logger.info(
                 "vacancy_popup_xsrf_retry",
                 log_user_id=log_user_id,
@@ -473,9 +503,11 @@ def try_apply_via_popup(
                 attempt=attempt,
                 reason="http_403",
             )
-            if _reload_page_for_popup_xsrf_retry(page, log_user_id):
+            if _refresh_page_for_popup_xsrf_retry(page, vacancy_url, log_user_id):
                 continue
-            return None
+            return _popup_xsrf_terminal_result()
+        if status == 403:
+            return _popup_xsrf_terminal_result()
 
         return None
 
