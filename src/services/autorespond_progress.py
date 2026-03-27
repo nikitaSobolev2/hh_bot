@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import redis as sync_redis
@@ -27,6 +28,49 @@ def autorespond_cancel_redis_key(chat_id: int, task_key: str) -> str:
 def autorespond_failed_redis_key(chat_id: int, task_key: str) -> str:
     """UI apply outcomes that are not success / already / preflight-unavailable (see hh_ui_apply)."""
     return f"progress:autorespond_failed:{chat_id}:{task_key}"
+
+
+def hh_ui_batch_checkpoint_key(chat_id: int, task_key: str) -> str:
+    """Remaining ``items`` for ``hh_ui.apply_to_vacancies_batch`` resume after soft timeout."""
+    return f"checkpoint:hh_ui_apply_batch:{chat_id}:{task_key}"
+
+
+def save_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str, remaining_items: list[dict]) -> None:
+    """Persist remaining batch rows (JSON). Empty list deletes the key."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    key = hh_ui_batch_checkpoint_key(chat_id, task_key)
+    try:
+        if not remaining_items:
+            r.delete(key)
+        else:
+            r.set(key, json.dumps({"items": remaining_items}), ex=_DONE_TTL_S)
+    finally:
+        r.close()
+
+
+def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] | None:
+    """Return remaining items if a checkpoint exists."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    key = hh_ui_batch_checkpoint_key(chat_id, task_key)
+    try:
+        raw = r.get(key)
+        if not raw:
+            return None
+        data = json.loads(raw)
+        items = data.get("items")
+        if not isinstance(items, list):
+            return None
+        return [x for x in items if isinstance(x, dict)]
+    finally:
+        r.close()
+
+
+def clear_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.delete(hh_ui_batch_checkpoint_key(chat_id, task_key))
+    finally:
+        r.close()
 
 
 def increment_autorespond_failed_sync(chat_id: int, task_key: str, n: int = 1) -> int:

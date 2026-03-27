@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from aiogram.types import BufferedInputFile
@@ -153,6 +154,100 @@ async def _persist_ui_apply_attempt_and_feed_effects(
     return status, err_code
 
 
+_FINALIZE_BATCH_ITEM_THREADSAFE_TIMEOUT_S = 300
+
+
+async def _finalize_batch_item_async(
+    *,
+    self,
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    chat_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    feed_session_id: int,
+    it: dict,
+    result: ApplyResult,
+    items: list[dict],
+    finalized_vids: set[int],
+    bot: Any,
+    silent_feed: bool,
+    send_error_screenshot_to_user: bool,
+    autorespond_progress: dict | None,
+) -> None:
+    """Persist one batch row, tick autorespond bar, optional screenshot, Redis checkpoint."""
+    from src.services.autorespond_progress import (
+        increment_autorespond_failed_sync,
+        save_hh_ui_batch_checkpoint_sync,
+        tick_autorespond_bar,
+    )
+
+    vid = int(it["autoparsed_vacancy_id"])
+    resume_id = str(it["resume_id"])
+    hh_id = str(it["hh_vacancy_id"])
+    finalized_vids.add(vid)
+
+    await _persist_ui_apply_attempt_and_feed_effects(
+        session_factory=session_factory,
+        user_id=user_id,
+        hh_linked_account_id=hh_linked_account_id,
+        autoparsed_vacancy_id=vid,
+        hh_vacancy_id=hh_id,
+        resume_id=resume_id,
+        feed_session_id=feed_session_id,
+        result=result,
+        silent_feed=silent_feed,
+    )
+    logger.info(
+        "hh_ui_apply_batch_item_done",
+        task_id=getattr(self.request, "id", None),
+        user_id=user_id,
+        vacancy_id=vid,
+        outcome=result.outcome.value,
+    )
+
+    task_key = (
+        str(autorespond_progress["task_key"])
+        if autorespond_progress and autorespond_progress.get("task_key")
+        else None
+    )
+    if task_key:
+        with contextlib.suppress(Exception):
+            if _ui_outcome_increments_autorespond_failed(result.outcome):
+                increment_autorespond_failed_sync(int(chat_id), task_key, 1)
+            await tick_autorespond_bar(
+                bot=bot,
+                chat_id=chat_id,
+                task_key=task_key,
+                total=int(autorespond_progress["total"]),
+                locale=str(autorespond_progress.get("locale") or locale),
+                footer_failed_line=None,
+            )
+        remaining = [
+            x
+            for x in items
+            if int(x["autoparsed_vacancy_id"]) not in finalized_vids
+        ]
+        save_hh_ui_batch_checkpoint_sync(chat_id, task_key, remaining)
+
+    if (
+        silent_feed
+        and send_error_screenshot_to_user
+        and result.screenshot_bytes
+        and _map_outcome_to_status(result.outcome)[0] != "success"
+    ):
+        err_name = (
+            "hh_captcha.png"
+            if result.outcome == ApplyOutcome.CAPTCHA
+            else "hh_apply_error.png"
+        )
+        with contextlib.suppress(Exception):
+            await bot.send_photo(
+                chat_id,
+                BufferedInputFile(result.screenshot_bytes, err_name),
+            )
+
+
 async def _apply_batch_ui_async(
     self,
     session_factory: async_sessionmaker[AsyncSession],
@@ -171,9 +266,8 @@ async def _apply_batch_ui_async(
     """Apply to several vacancies in one Playwright session (autorespond batch)."""
     from src.bot.modules.autoparse import feed_services
     from src.services.autorespond_progress import (
-        increment_autorespond_failed_sync,
         is_autorespond_cancelled_sync,
-        tick_autorespond_bar,
+        save_hh_ui_batch_checkpoint_sync,
     )
     from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
 
@@ -241,7 +335,16 @@ async def _apply_batch_ui_async(
         cover_ai: AIClient | None = None
         from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
 
-        results_by_vid: dict[int, ApplyResult] = {}
+        item_by_vid: dict[int, dict] = {int(x["autoparsed_vacancy_id"]): x for x in items}
+        finalized_vids: set[int] = set()
+        task_key = (
+            str(autorespond_progress["task_key"])
+            if autorespond_progress and autorespond_progress.get("task_key")
+            else None
+        )
+        if task_key:
+            save_hh_ui_batch_checkpoint_sync(chat_id, task_key, list(items))
+
         specs: list[VacancyApplySpec] = []
 
         for it in items:
@@ -249,9 +352,25 @@ async def _apply_batch_ui_async(
             hh_id = str(it["hh_vacancy_id"])
             url = normalize_hh_vacancy_url(str(it.get("vacancy_url") or ""), hh_id)
             if await hh_vacancy_public_is_unavailable(hh_id):
-                results_by_vid[vid] = ApplyResult(
-                    outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
-                    detail="preflight_api",
+                await _finalize_batch_item_async(
+                    self=self,
+                    session_factory=session_factory,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    locale=locale,
+                    hh_linked_account_id=hh_linked_account_id,
+                    feed_session_id=feed_session_id,
+                    it=it,
+                    result=ApplyResult(
+                        outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
+                        detail="preflight_api",
+                    ),
+                    items=items,
+                    finalized_vids=finalized_vids,
+                    bot=bot,
+                    silent_feed=silent_feed,
+                    send_error_screenshot_to_user=send_error_screenshot_to_user,
+                    autorespond_progress=autorespond_progress,
                 )
                 continue
             letter = ""
@@ -273,9 +392,25 @@ async def _apply_batch_ui_async(
                         vacancy_id=vid,
                         error=str(exc)[:300],
                     )
-                    results_by_vid[vid] = ApplyResult(
-                        outcome=ApplyOutcome.ERROR,
-                        detail=f"cover_letter:{exc}"[:500],
+                    await _finalize_batch_item_async(
+                        self=self,
+                        session_factory=session_factory,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        locale=locale,
+                        hh_linked_account_id=hh_linked_account_id,
+                        feed_session_id=feed_session_id,
+                        it=it,
+                        result=ApplyResult(
+                            outcome=ApplyOutcome.ERROR,
+                            detail=f"cover_letter:{exc}"[:500],
+                        ),
+                        items=items,
+                        finalized_vids=finalized_vids,
+                        bot=bot,
+                        silent_feed=silent_feed,
+                        send_error_screenshot_to_user=send_error_screenshot_to_user,
+                        autorespond_progress=autorespond_progress,
                     )
                     continue
             specs.append(
@@ -288,9 +423,35 @@ async def _apply_batch_ui_async(
                 )
             )
 
+        loop = asyncio.get_running_loop()
+
+        def _on_playwright_item_done(spec: VacancyApplySpec, result: ApplyResult) -> None:
+            it_row = item_by_vid[spec.autoparsed_vacancy_id]
+            fut = asyncio.run_coroutine_threadsafe(
+                _finalize_batch_item_async(
+                    self=self,
+                    session_factory=session_factory,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    locale=locale,
+                    hh_linked_account_id=hh_linked_account_id,
+                    feed_session_id=feed_session_id,
+                    it=it_row,
+                    result=result,
+                    items=items,
+                    finalized_vids=finalized_vids,
+                    bot=bot,
+                    silent_feed=silent_feed,
+                    send_error_screenshot_to_user=send_error_screenshot_to_user,
+                    autorespond_progress=autorespond_progress,
+                ),
+                loop,
+            )
+            fut.result(timeout=_FINALIZE_BATCH_ITEM_THREADSAFE_TIMEOUT_S)
+
         if specs:
             try:
-                batch_out = await asyncio.to_thread(
+                await asyncio.to_thread(
                     apply_to_vacancies_ui_batch,
                     storage_state=storage,
                     items=specs,
@@ -299,78 +460,56 @@ async def _apply_batch_ui_async(
                     max_retries=settings.hh_ui_apply_max_retries,
                     retry_initial_seconds=settings.hh_ui_apply_retry_initial_seconds,
                     retry_delay_cap_seconds=settings.hh_ui_apply_retry_delay_cap_seconds,
+                    on_item_done=_on_playwright_item_done,
                 )
-                for vid, r in batch_out:
-                    results_by_vid[vid] = r
             except Exception as exc:
                 logger.exception("hh_ui batch apply failed", error=str(exc))
                 err = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
                 for s in specs:
-                    results_by_vid[s.autoparsed_vacancy_id] = err
+                    if s.autoparsed_vacancy_id not in finalized_vids:
+                        await _finalize_batch_item_async(
+                            self=self,
+                            session_factory=session_factory,
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            locale=locale,
+                            hh_linked_account_id=hh_linked_account_id,
+                            feed_session_id=feed_session_id,
+                            it=item_by_vid[s.autoparsed_vacancy_id],
+                            result=err,
+                            items=items,
+                            finalized_vids=finalized_vids,
+                            bot=bot,
+                            silent_feed=silent_feed,
+                            send_error_screenshot_to_user=send_error_screenshot_to_user,
+                            autorespond_progress=autorespond_progress,
+                        )
 
-        processed = 0
         for it in items:
             vid = int(it["autoparsed_vacancy_id"])
-            result = results_by_vid.get(
-                vid,
-                ApplyResult(outcome=ApplyOutcome.ERROR, detail="batch_missing_result"),
-            )
-            resume_id = str(it["resume_id"])
-            hh_id = str(it["hh_vacancy_id"])
-            await _persist_ui_apply_attempt_and_feed_effects(
-                session_factory=session_factory,
-                user_id=user_id,
-                hh_linked_account_id=hh_linked_account_id,
-                autoparsed_vacancy_id=vid,
-                hh_vacancy_id=hh_id,
-                resume_id=resume_id,
-                feed_session_id=feed_session_id,
-                result=result,
-                silent_feed=silent_feed,
-            )
-            logger.info(
-                "hh_ui_apply_batch_item_done",
-                task_id=getattr(self.request, "id", None),
-                user_id=user_id,
-                vacancy_id=vid,
-                outcome=result.outcome.value,
-            )
-            processed += 1
-
-            if autorespond_progress and autorespond_progress.get("task_key"):
-                with contextlib.suppress(Exception):
-                    if _ui_outcome_increments_autorespond_failed(result.outcome):
-                        increment_autorespond_failed_sync(
-                            int(chat_id),
-                            str(autorespond_progress["task_key"]),
-                            1,
-                        )
-                    await tick_autorespond_bar(
-                        bot=bot,
-                        chat_id=chat_id,
-                        task_key=str(autorespond_progress["task_key"]),
-                        total=int(autorespond_progress["total"]),
-                        locale=str(autorespond_progress.get("locale") or locale),
-                        footer_failed_line=None,
-                    )
-
-            if (
-                silent_feed
-                and send_error_screenshot_to_user
-                and result.screenshot_bytes
-                and _map_outcome_to_status(result.outcome)[0] != "success"
-            ):
-                err_name = (
-                    "hh_captcha.png"
-                    if result.outcome == ApplyOutcome.CAPTCHA
-                    else "hh_apply_error.png"
+            if vid not in finalized_vids:
+                await _finalize_batch_item_async(
+                    self=self,
+                    session_factory=session_factory,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    locale=locale,
+                    hh_linked_account_id=hh_linked_account_id,
+                    feed_session_id=feed_session_id,
+                    it=it,
+                    result=ApplyResult(
+                        outcome=ApplyOutcome.ERROR,
+                        detail="batch_missing_result",
+                    ),
+                    items=items,
+                    finalized_vids=finalized_vids,
+                    bot=bot,
+                    silent_feed=silent_feed,
+                    send_error_screenshot_to_user=send_error_screenshot_to_user,
+                    autorespond_progress=autorespond_progress,
                 )
-                with contextlib.suppress(Exception):
-                    await bot.send_photo(
-                        chat_id,
-                        BufferedInputFile(result.screenshot_bytes, err_name),
-                    )
 
+        processed = len(items)
         return {"status": "ok", "processed": processed}
     finally:
         with contextlib.suppress(Exception):
@@ -399,23 +538,61 @@ def apply_to_vacancies_batch_ui_task(
     silent_feed: bool = True,
     autorespond_progress: dict | None = None,
 ) -> dict:
-    return run_async(
-        lambda sf: _apply_batch_ui_async(
-            self,
-            sf,
-            user_id,
-            chat_id,
-            message_id,
-            locale,
-            hh_linked_account_id,
-            feed_session_id,
-            items,
-            cover_letter_style,
-            cover_task_enabled,
-            silent_feed=silent_feed,
-            autorespond_progress=autorespond_progress,
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.services.autorespond_progress import load_hh_ui_batch_checkpoint_sync
+
+    try:
+        return run_async(
+            lambda sf: _apply_batch_ui_async(
+                self,
+                sf,
+                user_id,
+                chat_id,
+                message_id,
+                locale,
+                hh_linked_account_id,
+                feed_session_id,
+                items,
+                cover_letter_style,
+                cover_task_enabled,
+                silent_feed=silent_feed,
+                autorespond_progress=autorespond_progress,
+            )
         )
-    )
+    except SoftTimeLimitExceeded:
+        tk = autorespond_progress.get("task_key") if autorespond_progress else None
+        if tk:
+            remaining = load_hh_ui_batch_checkpoint_sync(int(chat_id), str(tk))
+            if remaining:
+                logger.warning(
+                    "hh_ui_apply_batch_soft_timeout_resume",
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    task_key=tk,
+                    remaining_count=len(remaining),
+                )
+                apply_to_vacancies_batch_ui_task.delay(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    locale=locale,
+                    hh_linked_account_id=hh_linked_account_id,
+                    feed_session_id=feed_session_id,
+                    items=remaining,
+                    cover_letter_style=cover_letter_style,
+                    cover_task_enabled=cover_task_enabled,
+                    silent_feed=silent_feed,
+                    autorespond_progress=autorespond_progress,
+                )
+        else:
+            logger.warning(
+                "hh_ui_apply_batch_soft_timeout",
+                user_id=user_id,
+                chat_id=chat_id,
+                has_task_key=False,
+            )
+        raise
 
 
 async def _apply_ui_async(

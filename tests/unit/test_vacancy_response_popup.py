@@ -46,6 +46,13 @@ def test_map_popup_top_level_error_unknown():
     assert r.detail == "popup_api:unknown"
 
 
+def test_map_popup_top_level_error_test_required():
+    r = map_popup_json_to_apply_result({"error": "test-required"})
+    assert r is not None
+    assert r.outcome == ApplyOutcome.EMPLOYER_QUESTIONS
+    assert r.detail == "popup_api:test_required"
+
+
 def test_map_popup_errors_type_not_found():
     r = map_popup_json_to_apply_result(
         {

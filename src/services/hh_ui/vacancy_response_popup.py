@@ -230,10 +230,16 @@ def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
 
     err = data.get("error") or data.get("message")
     if err:
-        if str(err).strip().lower() == "unknown":
+        err_norm = str(err).strip().lower()
+        if err_norm == "unknown":
             return ApplyResult(
                 outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
                 detail="popup_api:unknown",
+            )
+        if err_norm == "test-required":
+            return ApplyResult(
+                outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
+                detail="popup_api:test_required",
             )
         return ApplyResult(outcome=ApplyOutcome.ERROR, detail=f"popup_api:{str(err)[:300]}")
 

@@ -7,6 +7,7 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -976,6 +977,7 @@ def apply_to_vacancies_ui_batch(
     max_retries: int = 5,
     retry_initial_seconds: float = 10.0,
     retry_delay_cap_seconds: float = 600.0,
+    on_item_done: Callable[[VacancyApplySpec, ApplyResult], None] | None = None,
 ) -> list[tuple[int, ApplyResult]]:
     """One Chromium launch; sequential ``goto`` + apply per item; retries with backoff per item."""
     results: list[tuple[int, ApplyResult]] = []
@@ -997,12 +999,13 @@ def apply_to_vacancies_ui_batch(
             page = context.new_page()
             for spec in items:
                 if not spec.vacancy_url.startswith("https://"):
-                    results.append(
-                        (
-                            spec.autoparsed_vacancy_id,
-                            ApplyResult(outcome=ApplyOutcome.ERROR, detail="invalid_vacancy_url"),
-                        )
+                    invalid = ApplyResult(
+                        outcome=ApplyOutcome.ERROR,
+                        detail="invalid_vacancy_url",
                     )
+                    if on_item_done:
+                        on_item_done(spec, invalid)
+                    results.append((spec.autoparsed_vacancy_id, invalid))
                     continue
                 last: ApplyResult | None = None
                 for attempt in range(max_retries):
@@ -1037,7 +1040,10 @@ def apply_to_vacancies_ui_batch(
                             next_delay_s=delay,
                         )
                         time.sleep(delay)
-                results.append((spec.autoparsed_vacancy_id, last or ApplyResult(outcome=ApplyOutcome.ERROR, detail="empty")))
+                final = last or ApplyResult(outcome=ApplyOutcome.ERROR, detail="empty")
+                if on_item_done:
+                    on_item_done(spec, final)
+                results.append((spec.autoparsed_vacancy_id, final))
         finally:
             dispose_sync_browser_context(context, browser)
     return results

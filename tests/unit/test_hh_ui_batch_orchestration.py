@@ -184,3 +184,95 @@ def test_batch_retries_once_on_retryable(monkeypatch) -> None:
     )
     assert out[0][1].outcome == ApplyOutcome.SUCCESS
     assert attempts["n"] == 2
+
+
+def test_apply_to_vacancies_ui_batch_on_item_done_order(monkeypatch) -> None:
+    """on_item_done is invoked after each spec with the final ApplyResult."""
+    done: list[tuple[int, str]] = []
+
+    class FakePage:
+        def goto(self, *a, **k):
+            pass
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class FakeBrowser:
+        def new_context(self, **k):
+            return FakeContext()
+
+    class FakeChromium:
+        def launch(self, **k):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_sync_playwright():
+        return FakePlaywright()
+
+    def fake_flow(page, **kwargs):
+        return ApplyResult(outcome=ApplyOutcome.SUCCESS)
+
+    def on_done(spec, result):
+        done.append((spec.autoparsed_vacancy_id, result.outcome.value))
+
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner.sync_playwright",
+        fake_sync_playwright,
+    )
+    monkeypatch.setattr("src.services.hh_ui.runner._jitter", lambda c: None)
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner._apply_vacancy_flow_on_page",
+        fake_flow,
+    )
+
+    cfg = HhUiApplyConfig(
+        headless=True,
+        navigation_timeout_ms=1000,
+        action_timeout_ms=1000,
+        min_action_delay_ms=0,
+        max_action_delay_ms=0,
+        screenshot_on_error=False,
+        use_popup_api=False,
+        debug_screenshot_dir=None,
+        attach_error_screenshot_bytes=False,
+    )
+    specs = [
+        VacancyApplySpec(
+            autoparsed_vacancy_id=1,
+            hh_vacancy_id="1",
+            vacancy_url="https://hh.ru/vacancy/1",
+            resume_hh_id="r1",
+            cover_letter="",
+        ),
+        VacancyApplySpec(
+            autoparsed_vacancy_id=2,
+            hh_vacancy_id="2",
+            vacancy_url="https://hh.ru/vacancy/2",
+            resume_hh_id="r2",
+            cover_letter="",
+        ),
+    ]
+    apply_to_vacancies_ui_batch(
+        storage_state={},
+        items=specs,
+        config=cfg,
+        max_retries=1,
+        on_item_done=on_done,
+    )
+    assert done == [(1, "success"), (2, "success")]
