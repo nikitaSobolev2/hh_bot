@@ -11,6 +11,8 @@ from src.services.hh_ui.vacancy_response_popup import (
     extract_xsrf_token,
     extract_xsrf_token_from_dom,
     map_popup_json_to_apply_result,
+    pick_xsrf_from_cookie_list,
+    probe_xsrf_light_with_source,
     try_apply_via_popup,
 )
 
@@ -151,6 +153,87 @@ def test_extract_xsrf_for_popup_falls_back_to_html():
 
     p = P()
     assert extract_xsrf_for_popup(p) == extract_xsrf_token(p.content())
+
+
+def test_pick_xsrf_from_cookie_list_subdomain():
+    cookies = [{"name": "_xsrf", "value": "tok1", "domain": ".hh.ru"}]
+    assert (
+        pick_xsrf_from_cookie_list(cookies, "https://izhevsk.hh.ru/vacancy/1") == "tok1"
+    )
+
+
+def test_pick_xsrf_from_cookie_list_host_only_domain():
+    cookies = [{"name": "_xsrf", "value": "tok2", "domain": "hh.ru"}]
+    assert pick_xsrf_from_cookie_list(cookies, "https://hh.ru/vacancy/1") == "tok2"
+
+
+def test_pick_xsrf_from_cookie_list_rejects_domain_mismatch():
+    cookies = [{"name": "_xsrf", "value": "x", "domain": ".other.ru"}]
+    assert pick_xsrf_from_cookie_list(cookies, "https://hh.ru/vacancy/1") is None
+
+
+def test_extract_xsrf_for_popup_falls_back_to_cookie_without_html_scan():
+    class P:
+        def __init__(self) -> None:
+            self.content_called = False
+
+        url = "https://hh.ru/vacancy/1"
+
+        def evaluate(self, _script: str):
+            return None
+
+        @property
+        def context(self):
+            return self
+
+        def cookies(self, urls=None):
+            return [{"name": "_xsrf", "value": "from_cookie", "domain": ".hh.ru"}]
+
+        def content(self):
+            self.content_called = True
+            return ""
+
+    p = P()
+    assert extract_xsrf_for_popup(p) == "from_cookie"
+    assert p.content_called is False
+
+
+def test_probe_xsrf_light_with_source_dom_wins():
+    class P:
+        def evaluate(self, _script: str):
+            return "domtok"
+
+        @property
+        def context(self):
+            return self
+
+        def cookies(self, urls=None):
+            return [{"name": "_xsrf", "value": "cook", "domain": ".hh.ru"}]
+
+        url = "https://hh.ru/vacancy/1"
+
+    tok, src = probe_xsrf_light_with_source(P())
+    assert tok == "domtok"
+    assert src == "dom"
+
+
+def test_probe_xsrf_light_with_source_cookie_only():
+    class P:
+        def evaluate(self, _script: str):
+            return None
+
+        @property
+        def context(self):
+            return self
+
+        def cookies(self, urls=None):
+            return [{"name": "_xsrf", "value": "ck", "domain": ".hh.ru"}]
+
+        url = "https://spb.hh.ru/vacancy/2"
+
+    tok, src = probe_xsrf_light_with_source(P())
+    assert tok == "ck"
+    assert src == "cookie"
 
 
 class _FakeCtx:

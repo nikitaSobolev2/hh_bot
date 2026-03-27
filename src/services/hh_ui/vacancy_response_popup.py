@@ -83,9 +83,52 @@ def extract_xsrf_token_from_dom(page: Any) -> str | None:
     return None
 
 
+def _host_matches_cookie_domain(request_host: str, cookie_domain: str) -> bool:
+    """Return True if Playwright cookie ``domain`` applies to ``request_host`` (hh.ru and subdomains)."""
+    if not request_host or not cookie_domain:
+        return False
+    h = request_host.strip().lower()
+    d = cookie_domain.strip().lower().lstrip(".")
+    if not h or not d:
+        return False
+    return h == d or h.endswith("." + d)
+
+
+def pick_xsrf_from_cookie_list(cookies: list[dict[str, Any]], page_url: str) -> str | None:
+    """Return ``_xsrf`` cookie value for the URL's host, if any."""
+    host = urlparse(page_url).hostname or ""
+    if not host:
+        return None
+    for c in cookies:
+        if (c.get("name") or "") != "_xsrf":
+            continue
+        dom = c.get("domain")
+        val = (c.get("value") or "").strip()
+        if not val or not dom:
+            continue
+        if _host_matches_cookie_domain(host, str(dom)):
+            return val
+    return None
+
+
+def extract_xsrf_token_from_cookies(page: Any) -> str | None:
+    """Read ``_xsrf`` from the browser cookie jar (HttpOnly-safe via Playwright context API)."""
+    try:
+        url = page.url
+        if not url:
+            return None
+        cookies = page.context.cookies(urls=[url])
+    except Exception:
+        return None
+    return pick_xsrf_from_cookie_list(cookies, url)
+
+
 def extract_xsrf_for_popup(page: Any) -> str | None:
-    """DOM-first, then HTML patterns (avoids stale tokens from unrelated embedded markup)."""
+    """DOM, then session cookie, then HTML patterns."""
     t = extract_xsrf_token_from_dom(page)
+    if t:
+        return t
+    t = extract_xsrf_token_from_cookies(page)
     if t:
         return t
     try:
@@ -93,6 +136,23 @@ def extract_xsrf_for_popup(page: Any) -> str | None:
     except Exception:
         return None
     return extract_xsrf_token(html)
+
+
+def probe_xsrf_light_with_source(page: Any) -> tuple[str | None, str | None]:
+    """Like :func:`probe_xsrf_light` but also returns whether the token came from DOM or cookies."""
+    t = extract_xsrf_token_from_dom(page)
+    if t:
+        return t, "dom"
+    t = extract_xsrf_token_from_cookies(page)
+    if t:
+        return t, "cookie"
+    return None, None
+
+
+def probe_xsrf_light(page: Any) -> str | None:
+    """Fast readiness check without ``page.content()`` (for polling)."""
+    t, _ = probe_xsrf_light_with_source(page)
+    return t
 
 
 def _popup_json_indicates_xsrf_error(data: dict[str, Any]) -> bool:

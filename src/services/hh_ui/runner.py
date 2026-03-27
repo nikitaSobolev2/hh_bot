@@ -36,6 +36,8 @@ from src.services.hh_ui.vacancy_response_popup import (
     POPUP_INCOMPLETE_DETAIL,
     POPUP_XSRF_ERROR_DETAIL,
     POPUP_XSRF_NOT_READY_DETAIL,
+    extract_xsrf_for_popup,
+    probe_xsrf_light_with_source,
     try_apply_via_popup,
 )
 from src.services.hh_ui.apply_retry import (
@@ -49,25 +51,41 @@ logger = get_logger(__name__)
 
 _HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S = 10.0
 _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S = 300.0
-_XSRF_POPUP_SELECTOR = 'input[name="_xsrf"], meta[name="_xsrf"]'
+_XSRF_POLL_INTERVAL_S = 0.25
 _XSRF_WAIT_CAP_MS = 15_000
 
 
 def _wait_for_xsrf_for_popup(
     page: Any, action_timeout_ms: int, log_user_id: int | None
 ) -> bool:
-    """Wait until vacancy page exposes XSRF for popup POST (no respond-button click)."""
+    """Wait until XSRF is available from DOM, ``_xsrf`` cookie, or HTML (no respond-button click)."""
     ms = min(int(action_timeout_ms), _XSRF_WAIT_CAP_MS)
-    try:
-        page.wait_for_selector(_XSRF_POPUP_SELECTOR, state="attached", timeout=ms)
-        return True
-    except PlaywrightTimeoutError:
+    deadline = time.monotonic() + ms / 1000.0
+    while time.monotonic() < deadline:
+        _tok, src = probe_xsrf_light_with_source(page)
+        if _tok and src:
+            logger.info(
+                "vacancy_popup_xsrf_ready",
+                log_user_id=log_user_id,
+                timeout_ms=ms,
+                xsrf_source=src,
+            )
+            return True
+        time.sleep(_XSRF_POLL_INTERVAL_S)
+    if extract_xsrf_for_popup(page):
         logger.info(
-            "vacancy_popup_xsrf_wait_timeout",
+            "vacancy_popup_xsrf_ready",
             log_user_id=log_user_id,
             timeout_ms=ms,
+            xsrf_source="html",
         )
-        return False
+        return True
+    logger.info(
+        "vacancy_popup_xsrf_wait_timeout",
+        log_user_id=log_user_id,
+        timeout_ms=ms,
+    )
+    return False
 
 
 def _is_popup_xsrf_error_result(result: ApplyResult) -> bool:

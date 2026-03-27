@@ -46,6 +46,8 @@ When the official applicant API is unavailable, set `HH_UI_APPLY_ENABLED=true` a
 
 **Apply mechanism:** With `HH_UI_APPLY_USE_POPUP_API=true` (default), the worker posts to the same `/applicant/vacancy_response/popup` endpoint the site uses (in-page `fetch` with session cookies). It does **not** automate clicking the “Respond” button or the modal. If the session is expired, the outcome is session-related and **login screenshots are not sent** to the user as error images.
 
+The anti‑CSRF token for that POST is taken from the same sources the browser uses: hidden `input` / `meta` on the page when present, otherwise often the **`_xsrf` cookie** on `.hh.ru` (visible to Playwright even when HttpOnly). The runner waits until a token is available from DOM, cookie, or embedded HTML before sending the request.
+
 ---
 
 ## Architecture
