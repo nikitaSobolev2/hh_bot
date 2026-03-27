@@ -961,7 +961,7 @@ async def show_new_vacancies_now(
     user: User,
     i18n: I18nContext,
 ) -> None:
-    from src.core.celery_async import run_celery_task, run_sync_in_thread
+    from src.core.celery_async import normalize_celery_task_id, run_celery_task, run_sync_in_thread
     from src.core.redis import create_async_redis
     from src.worker.app import celery_app
     from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
@@ -971,11 +971,13 @@ async def show_new_vacancies_now(
     try:
         scheduled_id = await redis.get(task_key)
         if scheduled_id:
-            await run_sync_in_thread(
-                celery_app.control.revoke,
-                scheduled_id,
-                terminate=False,
-            )
+            tid = normalize_celery_task_id(scheduled_id)
+            if tid:
+                await run_sync_in_thread(
+                    celery_app.control.revoke,
+                    tid,
+                    terminate=False,
+                )
             await redis.delete(task_key)
     finally:
         await redis.aclose()

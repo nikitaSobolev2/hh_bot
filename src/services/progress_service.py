@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import json
 
+from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
 
@@ -110,7 +111,9 @@ class ProgressService:
             "bars": bars,
         }
         if celery_task_id is not None:
-            state["celery_task_id"] = celery_task_id
+            nid = normalize_celery_task_id(celery_task_id)
+            if nid:
+                state["celery_task_id"] = nid
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -150,7 +153,11 @@ class ProgressService:
             return
         state = json.loads(raw)
         if celery_task_id is not None:
-            state["celery_task_id"] = celery_task_id
+            nid = normalize_celery_task_id(celery_task_id)
+            if nid:
+                state["celery_task_id"] = nid
+            else:
+                state.pop("celery_task_id", None)
         else:
             state.pop("celery_task_id", None)
         await self._redis.set(
@@ -401,7 +408,8 @@ class ProgressService:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
-        for task_key, state in sorted(tasks.items()):
+        sorted_items = sorted(tasks.items())
+        for idx, (task_key, state) in enumerate(sorted_items, start=1):
             if state.get("status") == "completed":
                 continue
             title = state.get("title", "") or get_text(
@@ -414,7 +422,7 @@ class ProgressService:
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        text=btn_title,
+                        text=f"{idx}. {btn_title}",
                         callback_data=f"{_PROGRESS_TITLE_PREFIX}{encoded_key}",
                     ),
                     InlineKeyboardButton(

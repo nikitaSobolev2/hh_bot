@@ -8,6 +8,7 @@ import httpx
 import redis
 
 from src.config import settings
+from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.worker.app import celery_app
@@ -746,7 +747,10 @@ def _revoke_prior_scheduled_deliver(r: redis.Redis, deliver_task_key: str) -> No
     if not old_id:
         return
     try:
-        celery_app.control.revoke(old_id, terminate=False)
+        tid = normalize_celery_task_id(old_id)
+        if not tid:
+            return
+        celery_app.control.revoke(tid, terminate=False)
     except Exception:
         logger.warning(
             "Failed to revoke prior scheduled deliver task",

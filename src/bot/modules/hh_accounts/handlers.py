@@ -19,6 +19,7 @@ from src.bot.modules.hh_accounts.keyboards import hh_account_row_keyboard, hh_ac
 from src.bot.modules.hh_accounts.states import HhAccountRenameForm, HhBrowserImportForm
 from src.bot.modules.user_settings.callbacks import SettingsCallback
 from src.config import settings
+from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
@@ -217,7 +218,11 @@ async def hh_cancel_login_assist(
 
     tid = await run_sync_in_thread(get_active_job_id, user.id)
     if tid:
-        await run_sync_in_thread(lambda: celery_app.control.revoke(tid, terminate=True))
+        revoke_id = normalize_celery_task_id(tid)
+        if revoke_id:
+            await run_sync_in_thread(
+                lambda rid=revoke_id: celery_app.control.revoke(rid, terminate=True)
+            )
     await run_sync_in_thread(clear_active_job_for_user, user.id)
     r = create_async_redis()
     try:

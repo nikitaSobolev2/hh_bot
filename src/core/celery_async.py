@@ -12,6 +12,21 @@ from collections.abc import Callable
 from typing import Any
 
 
+def normalize_celery_task_id(task_id: object | None) -> str | None:
+    """Return a string id safe for ``app.control.revoke``.
+
+    Celery joins revoked ids with `', '.join(task_ids)` and requires ``str``.
+    Values from JSON, Redis, or ORM may be ``int`` or ``bytes``.
+    """
+    if task_id is None:
+        return None
+    if isinstance(task_id, bytes):
+        s = task_id.decode("utf-8", errors="replace").strip()
+        return s if s else None
+    s = str(task_id).strip()
+    return s if s else None
+
+
 async def run_celery_task(
     task: Any,
     *args: Any,

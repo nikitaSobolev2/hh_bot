@@ -7,7 +7,11 @@ import json
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
-from src.core.celery_async import run_celery_task, run_sync_in_thread
+from src.core.celery_async import (
+    normalize_celery_task_id,
+    run_celery_task,
+    run_sync_in_thread,
+)
 from src.core.i18n import I18nContext
 from src.db.engine import async_session_factory
 from src.models.user import User
@@ -97,7 +101,7 @@ async def handle_progress_refresh(
             )
             return
 
-        celery_task_id = state.get("celery_task_id")
+        celery_task_id = normalize_celery_task_id(state.get("celery_task_id"))
 
         if task_key.startswith("parse:"):
             await _try_refresh_parse(
@@ -317,7 +321,7 @@ async def handle_progress_cancel(
             return
 
         state = json.loads(raw)
-        celery_task_id = state.get("celery_task_id")
+        celery_task_id = normalize_celery_task_id(state.get("celery_task_id"))
 
         if not celery_task_id:
             if task_key.startswith("autorespond:"):
