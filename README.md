@@ -44,6 +44,8 @@ When the official applicant API is unavailable, set `HH_UI_APPLY_ENABLED=true` a
 
 **Risks (server login):** CAPTCHA, datacenter IP blocks, and hh.ru terms are uncertain; prefer honest user messaging on failure. Daily limits: `HH_LOGIN_ASSIST_MAX_PER_DAY` (server login) and `HH_UI_APPLY_MAX_PER_DAY` (apply). Delays for apply: `HH_UI_MIN_ACTION_DELAY_MS`, `HH_UI_MAX_ACTION_DELAY_MS` in `.env`.
 
+**Apply mechanism:** With `HH_UI_APPLY_USE_POPUP_API=true` (default), the worker posts to the same `/applicant/vacancy_response/popup` endpoint the site uses (in-page `fetch` with session cookies). It does **not** automate clicking the “Respond” button or the modal. If the session is expired, the outcome is session-related and **login screenshots are not sent** to the user as error images.
+
 ---
 
 ## Architecture

@@ -235,6 +235,7 @@ async def _finalize_batch_item_async(
         and send_error_screenshot_to_user
         and result.screenshot_bytes
         and _map_outcome_to_status(result.outcome)[0] != "success"
+        and result.outcome != ApplyOutcome.SESSION_EXPIRED
     ):
         err_name = (
             "hh_captcha.png"
@@ -803,6 +804,7 @@ async def _apply_ui_async(
                 send_error_screenshot_to_user
                 and result.screenshot_bytes
                 and status != "success"
+                and result.outcome != ApplyOutcome.SESSION_EXPIRED
             ):
                 err_name = (
                     "hh_captcha.png"
@@ -914,6 +916,7 @@ async def _apply_ui_async(
             and result.screenshot_bytes
             and status != "success"
             and result.outcome != ApplyOutcome.CAPTCHA
+            and result.outcome != ApplyOutcome.SESSION_EXPIRED
         ):
             with contextlib.suppress(Exception):
                 await bot.send_photo(

@@ -23,6 +23,10 @@ _RAW_BODY_LOG_MAX = 64 * 1024  # cap full response in logs (ops / self-hosted)
 
 # Returned when popup POST keeps returning 403 / XSRF after refresh attempts (runner must not fall back to modal).
 POPUP_XSRF_ERROR_DETAIL = "popup_api:xsrf_403"
+# Runner: XSRF token not in DOM within wait window (page not ready for POST).
+POPUP_XSRF_NOT_READY_DETAIL = "popup_api:xsrf_not_ready"
+# Runner: try_apply_via_popup returned None (no mapped outcome); modal UI is not used when popup API is on.
+POPUP_INCOMPLETE_DETAIL = "popup_api:incomplete"
 
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)", re.IGNORECASE)
 _XSRF_PATTERNS: tuple[re.Pattern[str], ...] = (

@@ -33,7 +33,9 @@ from src.services.hh_ui.playwright_support import (
     dispose_sync_browser_context,
 )
 from src.services.hh_ui.vacancy_response_popup import (
+    POPUP_INCOMPLETE_DETAIL,
     POPUP_XSRF_ERROR_DETAIL,
+    POPUP_XSRF_NOT_READY_DETAIL,
     try_apply_via_popup,
 )
 from src.services.hh_ui.apply_retry import (
@@ -47,6 +49,25 @@ logger = get_logger(__name__)
 
 _HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S = 10.0
 _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S = 300.0
+_XSRF_POPUP_SELECTOR = 'input[name="_xsrf"], meta[name="_xsrf"]'
+_XSRF_WAIT_CAP_MS = 15_000
+
+
+def _wait_for_xsrf_for_popup(
+    page: Any, action_timeout_ms: int, log_user_id: int | None
+) -> bool:
+    """Wait until vacancy page exposes XSRF for popup POST (no respond-button click)."""
+    ms = min(int(action_timeout_ms), _XSRF_WAIT_CAP_MS)
+    try:
+        page.wait_for_selector(_XSRF_POPUP_SELECTOR, state="attached", timeout=ms)
+        return True
+    except PlaywrightTimeoutError:
+        logger.info(
+            "vacancy_popup_xsrf_wait_timeout",
+            log_user_id=log_user_id,
+            timeout_ms=ms,
+        )
+        return False
 
 
 def _is_popup_xsrf_error_result(result: ApplyResult) -> bool:
@@ -579,6 +600,24 @@ def _apply_vacancy_flow_on_page(
                 vacancy_url_safe=safe_v,
                 resume_ref=resume_ref,
             )
+            if not _wait_for_xsrf_for_popup(
+                page, config.action_timeout_ms, log_user_id
+            ):
+                logger.info(
+                    "apply_to_vacancy_ui_done",
+                    log_user_id=log_user_id,
+                    vacancy_url_safe=safe_v,
+                    resume_ref=resume_ref,
+                    outcome=ApplyOutcome.ERROR.value,
+                    detail=POPUP_XSRF_NOT_READY_DETAIL,
+                )
+                return _finish(
+                    ApplyResult(
+                        outcome=ApplyOutcome.ERROR,
+                        detail=POPUP_XSRF_NOT_READY_DETAIL,
+                    ),
+                    "popup_api_xsrf_not_ready",
+                )
             popup_result = try_apply_via_popup(
                 page,
                 vacancy_url,
@@ -600,6 +639,22 @@ def _apply_vacancy_flow_on_page(
                     detail=(popup_result.detail or "")[:200] if popup_result.detail else None,
                 )
                 return _finish(popup_result, "popup_api")
+            logger.info(
+                "apply_to_vacancy_ui_done",
+                log_user_id=log_user_id,
+                step="popup_api_incomplete",
+                vacancy_url_safe=safe_v,
+                resume_ref=resume_ref,
+                outcome=ApplyOutcome.ERROR.value,
+                detail=POPUP_INCOMPLETE_DETAIL,
+            )
+            return _finish(
+                ApplyResult(
+                    outcome=ApplyOutcome.ERROR,
+                    detail=POPUP_INCOMPLETE_DETAIL,
+                ),
+                "popup_api_incomplete",
+            )
 
         logger.info(
             "apply_to_vacancy_ui_step",
