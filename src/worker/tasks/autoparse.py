@@ -726,6 +726,48 @@ async def _run_autoparse_company_async(
 
 
 _DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
+_DELIVER_LOCK_PREFIX = "lock:autoparse:deliver:"
+_DELIVER_LOCK_TTL_S = 600
+
+_RELEASE_DELIVER_LOCK_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false then return 0 end
+if current == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+"""
+
+
+def _revoke_prior_scheduled_deliver(r: redis.Redis, deliver_task_key: str) -> None:
+    """Revoke a previously ETA-scheduled deliver task so it cannot stack with the new one."""
+    old_id = r.get(deliver_task_key)
+    if not old_id:
+        return
+    try:
+        celery_app.control.revoke(old_id, terminate=False)
+    except Exception:
+        logger.warning(
+            "Failed to revoke prior scheduled deliver task",
+            old_task_id=old_id,
+            exc_info=True,
+        )
+
+
+def _acquire_deliver_lock(r: redis.Redis, lock_key: str, celery_task_id: str) -> bool:
+    return bool(r.set(lock_key, celery_task_id, nx=True, ex=_DELIVER_LOCK_TTL_S))
+
+
+def _release_deliver_lock(r: redis.Redis, lock_key: str, celery_task_id: str) -> None:
+    try:
+        r.eval(_RELEASE_DELIVER_LOCK_SCRIPT, 1, lock_key, celery_task_id)
+    except Exception:
+        logger.warning(
+            "Failed to release autoparse deliver lock",
+            lock_key=lock_key,
+            exc_info=True,
+        )
 
 
 @celery_app.task(
@@ -944,87 +986,118 @@ async def _deliver_results_async(
         diff_minutes = abs((now_user - target_time).total_seconds()) / 60
         if not force_now and diff_minutes > 30:
             eta = target_time.astimezone(UTC).replace(tzinfo=None)
-            r = _redis_client()
-            new_task = deliver_autoparse_results.apply_async(args=[company_id, user_id], eta=eta)
-            r.set(f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}", new_task.id, ex=86400)
+            deliver_task_key = f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}"
+            r_sched = _redis_client()
+            try:
+                _revoke_prior_scheduled_deliver(r_sched, deliver_task_key)
+                new_task = deliver_autoparse_results.apply_async(
+                    args=[company_id, user_id],
+                    eta=eta,
+                )
+                r_sched.set(deliver_task_key, new_task.id, ex=86400)
+            finally:
+                r_sched.close()
             return {"status": "rescheduled", "eta": str(eta)}
 
-        locale = user.language_code or "ru"
+    r = _redis_client()
+    lock_key = f"{_DELIVER_LOCK_PREFIX}{company_id}:{user_id}"
+    celery_task_id = str(task.request.id or "")
+    try:
+        if not _acquire_deliver_lock(r, lock_key, celery_task_id):
+            logger.info(
+                "autoparse_deliver_skipped_concurrent",
+                company_id=company_id,
+                user_id=user_id,
+            )
+            return {"status": "skipped_concurrent_deliver"}
+        try:
+            async with session_factory() as session:
+                user_repo = UserRepository(session)
+                user = await user_repo.get_by_id(user_id)
+                if not user:
+                    return {"status": "user_not_found"}
 
-        company_repo = AutoparseCompanyRepository(session)
-        company = await company_repo.get_by_id(company_id)
-        if not company or company.is_deleted:
-            return {"status": "company_not_found"}
+                ap_settings = user.autoparse_settings or {}
+                locale = user.language_code or "ru"
 
-        vacancy_repo = AutoparsedVacancyRepository(session)
-        since = company.last_delivered_at or (
-            datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
-        )
-        min_compat = ap_settings.get("min_compatibility_percent", 50)
-        new_vacancies = await vacancy_repo.get_new_since(company_id, since, min_compat)
+                company_repo = AutoparseCompanyRepository(session)
+                company = await company_repo.get_by_id(company_id)
+                if not company or company.is_deleted:
+                    return {"status": "company_not_found"}
 
-        feed_repo = VacancyFeedSessionRepository(session)
-        reacted_ids = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
-        queued_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
+                vacancy_repo = AutoparsedVacancyRepository(session)
+                since = company.last_delivered_at or (
+                    datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+                )
+                min_compat = ap_settings.get("min_compatibility_percent", 50)
+                new_vacancies = await vacancy_repo.get_new_since(company_id, since, min_compat)
 
-        # Always exclude vacancies the user has already liked or disliked.
-        # include_reacted_in_feed may later control re-parsing; feed never re-shows reacted.
-        new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
+                feed_repo = VacancyFeedSessionRepository(session)
+                reacted_ids = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
+                queued_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
 
-        # Also re-surface vacancies that were queued in a previous session but
-        # never reached because the user stopped early.
-        unreviewed_ids = queued_ids - reacted_ids
-        if unreviewed_ids:
-            unreviewed = await vacancy_repo.get_by_ids(list(unreviewed_ids), min_compat)
-            already_included = {v.id for v in new_vacancies}
-            for v in unreviewed:
-                if v.id not in already_included:
-                    new_vacancies.append(v)
+                # Always exclude vacancies the user has already liked or disliked.
+                # include_reacted_in_feed may later control re-parsing; feed never re-shows reacted.
+                new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
 
-        # Newest on HH first (published_at); missing date falls back to id.
-        new_vacancies.sort(key=feed_vacancy_newest_first_key)
+                # Also re-surface vacancies that were queued in a previous session but
+                # never reached because the user stopped early.
+                unreviewed_ids = queued_ids - reacted_ids
+                if unreviewed_ids:
+                    unreviewed = await vacancy_repo.get_by_ids(list(unreviewed_ids), min_compat)
+                    already_included = {v.id for v in new_vacancies}
+                    for v in unreviewed:
+                        if v.id not in already_included:
+                            new_vacancies.append(v)
 
-    if not new_vacancies:
-        return {"status": "no_new_vacancies"}
+                # Newest on HH first (published_at); missing date falls back to id.
+                new_vacancies.sort(key=feed_vacancy_newest_first_key)
 
-    from src.services.hh.feed_gating import HhFeedAccountStatus, classify_user_hh_accounts
+            if not new_vacancies:
+                return {"status": "no_new_vacancies"}
 
-    async with session_factory() as session:
-        hh_status, hh_accounts = await classify_user_hh_accounts(session, user_id)
+            from src.services.hh.feed_gating import HhFeedAccountStatus, classify_user_hh_accounts
 
-    hh_linked_id: int | None = (
-        hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
-    )
+            async with session_factory() as session:
+                hh_status, hh_accounts = await classify_user_hh_accounts(session, user_id)
 
-    feed_session_id = await _create_feed_session(
-        session_factory,
-        user_id=user_id,
-        company_id=company_id,
-        chat_id=user.telegram_id,
-        vacancy_ids=[v.id for v in new_vacancies],
-        hh_linked_account_id=hh_linked_id,
-    )
-
-    await _send_feed_stats_card(
-        bot_token=settings.bot_token,
-        chat_id=user.telegram_id,
-        vacancy_title=company.vacancy_title,
-        vacancies=new_vacancies,
-        feed_session_id=feed_session_id,
-        locale=locale,
-        linked_accounts=hh_accounts,
-    )
-
-    async with session_factory() as session:
-        company_repo = AutoparseCompanyRepository(session)
-        refreshed = await company_repo.get_by_id(company_id)
-        if refreshed:
-            await company_repo.update(
-                refreshed,
-                last_delivered_at=datetime.now(UTC).replace(tzinfo=None),
+            hh_linked_id: int | None = (
+                hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
             )
 
-    return {"status": "delivered", "count": len(new_vacancies)}
+            feed_session_id = await _create_feed_session(
+                session_factory,
+                user_id=user_id,
+                company_id=company_id,
+                chat_id=user.telegram_id,
+                vacancy_ids=[v.id for v in new_vacancies],
+                hh_linked_account_id=hh_linked_id,
+            )
+
+            await _send_feed_stats_card(
+                bot_token=settings.bot_token,
+                chat_id=user.telegram_id,
+                vacancy_title=company.vacancy_title,
+                vacancies=new_vacancies,
+                feed_session_id=feed_session_id,
+                locale=locale,
+                linked_accounts=hh_accounts,
+            )
+
+            async with session_factory() as session:
+                company_repo = AutoparseCompanyRepository(session)
+                refreshed = await company_repo.get_by_id(company_id)
+                if refreshed:
+                    await company_repo.update(
+                        refreshed,
+                        last_delivered_at=datetime.now(UTC).replace(tzinfo=None),
+                    )
+
+            return {"status": "delivered", "count": len(new_vacancies)}
+        finally:
+            _release_deliver_lock(r, lock_key, celery_task_id)
+    finally:
+        r.close()
 
 
 async def _create_feed_session(

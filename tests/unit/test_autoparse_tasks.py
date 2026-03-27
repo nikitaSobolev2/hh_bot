@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -310,6 +311,14 @@ class TestDeliverLastDeliveredAt:
 
         return user_repo, company_repo, vacancy_repo, feed_repo
 
+    def _make_fake_deliver_redis(self) -> MagicMock:
+        """In-memory stand-in so unit tests do not connect to Redis for deliver locks."""
+        r = MagicMock()
+        r.set = MagicMock(return_value=True)
+        r.eval = MagicMock(return_value=1)
+        r.close = MagicMock()
+        return r
+
     @pytest.mark.asyncio
     async def test_uses_last_delivered_at_as_since_when_set(self):
         last_delivered = datetime(2026, 3, 9, 10, 0, 0)
@@ -320,6 +329,10 @@ class TestDeliverLastDeliveredAt:
         )
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -352,6 +365,10 @@ class TestDeliverLastDeliveredAt:
         before = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -383,6 +400,10 @@ class TestDeliverLastDeliveredAt:
         )
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -413,6 +434,10 @@ class TestDeliverLastDeliveredAt:
         )
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -443,6 +468,10 @@ class TestDeliverLastDeliveredAt:
         feed_repo = self._make_feed_repo()
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -488,6 +517,10 @@ class TestDeliverLastDeliveredAt:
         before = datetime.now(UTC).replace(tzinfo=None)
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -522,6 +555,100 @@ class TestDeliverLastDeliveredAt:
         company_repo.update.assert_called_once()
         _, kwargs = company_repo.update.call_args
         assert before <= kwargs["last_delivered_at"] <= after
+
+
+class TestDeliverDedupe:
+    """Reschedule must revoke stacked ETA tasks; deliver path must single-flight."""
+
+    def _make_session_factory(self, session: MagicMock):
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        return factory
+
+    def _make_user(self) -> MagicMock:
+        user = MagicMock()
+        user.language_code = "ru"
+        user.timezone = "Europe/Moscow"
+        user.autoparse_settings = {}
+        user.telegram_id = 100
+        return user
+
+    @pytest.mark.asyncio
+    async def test_reschedule_revokes_prior_scheduled_task_id(self):
+        """Replacing an ETA deliver must revoke the previous Celery task id."""
+        user = self._make_user()
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+
+        fake_redis = MagicMock()
+        fake_redis.get = MagicMock(return_value="old-celery-task-id")
+        fake_redis.set = MagicMock(return_value=True)
+        fake_redis.close = MagicMock()
+
+        new_async_result = MagicMock()
+        new_async_result.id = "new-task-id"
+
+        moscow = ZoneInfo("Europe/Moscow")
+
+        class _FixedDateTime:
+            UTC = UTC
+            timedelta = timedelta
+
+            @staticmethod
+            def now(tz=None):
+                return datetime(2026, 3, 27, 8, 0, 0, tzinfo=tz or moscow)
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch("src.worker.tasks.autoparse._redis_client", return_value=fake_redis),
+            patch(
+                "src.worker.tasks.autoparse.deliver_autoparse_results.apply_async",
+                return_value=new_async_result,
+            ) as apply_async,
+            patch("src.worker.tasks.autoparse.celery_app.control.revoke") as revoke,
+            patch("src.worker.tasks.autoparse.datetime", _FixedDateTime),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 7, 42, force_now=False
+            )
+
+        assert result is not None
+        assert result.get("status") == "rescheduled"
+        assert "eta" in result
+        revoke.assert_called_once_with("old-celery-task-id", terminate=False)
+        apply_async.assert_called_once()
+        fake_redis.get.assert_called_once_with("autoparse:deliver_task:7:42")
+        fake_redis.set.assert_called_once()
+        assert fake_redis.set.call_args[0][1] == "new-task-id"
+        fake_redis.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_deliver_lock_not_acquired(self):
+        user = self._make_user()
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+
+        fake_redis = MagicMock()
+        fake_redis.set = MagicMock(return_value=False)
+        fake_redis.close = MagicMock()
+
+        task = MagicMock()
+        task.request.id = "celery-task-1"
+
+        with (
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch("src.worker.tasks.autoparse._redis_client", return_value=fake_redis),
+            patch("src.worker.tasks.autoparse._send_feed_stats_card", AsyncMock()) as send_card,
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), task, 1, 1, force_now=True
+            )
+
+        assert result == {"status": "skipped_concurrent_deliver"}
+        send_card.assert_not_called()
+        fake_redis.close.assert_called_once()
 
 
 class TestSendRunCompletedNotification:
@@ -656,6 +783,13 @@ class TestDeliverSeenIdsFilter:
         v.raw_skills = None
         return v
 
+    def _make_fake_deliver_redis(self) -> MagicMock:
+        r = MagicMock()
+        r.set = MagicMock(return_value=True)
+        r.eval = MagicMock(return_value=1)
+        r.close = MagicMock()
+        return r
+
     @pytest.mark.asyncio
     async def test_excludes_vacancies_already_reacted_to_in_previous_sessions(self):
         """Vacancies the user explicitly liked or disliked are not re-delivered."""
@@ -677,6 +811,10 @@ class TestDeliverSeenIdsFilter:
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -734,6 +872,10 @@ class TestDeliverSeenIdsFilter:
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -786,6 +928,10 @@ class TestDeliverSeenIdsFilter:
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={1})
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -824,6 +970,10 @@ class TestDeliverSeenIdsFilter:
         feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value=set())
 
         with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
