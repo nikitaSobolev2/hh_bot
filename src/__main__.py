@@ -38,6 +38,10 @@ async def main() -> None:
     bot = create_bot()
     dp = create_dispatcher()
 
+    from src.services.progress_service import refresh_progress_pins_for_active_chats
+
+    await refresh_progress_pins_for_active_chats(bot)
+
     logger.info("Bot is polling...")
     try:
         await dp.start_polling(bot)

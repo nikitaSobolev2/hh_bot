@@ -2,7 +2,10 @@
 
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
-from src.services.hh_ui.vacancy_response_popup import POPUP_XSRF_ERROR_DETAIL
+from src.services.hh_ui.vacancy_response_popup import (
+    POPUP_NEGOTIATIONS_LIMIT_DETAIL,
+    POPUP_XSRF_ERROR_DETAIL,
+)
 from src.services.hh_ui.runner import VacancyApplySpec, apply_to_vacancies_ui_batch
 
 
@@ -88,7 +91,7 @@ def test_apply_to_vacancies_ui_batch_single_launch(monkeypatch) -> None:
             cover_letter="",
         ),
     ]
-    out = apply_to_vacancies_ui_batch(
+    out, _ = apply_to_vacancies_ui_batch(
         storage_state={},
         items=items,
         config=cfg,
@@ -96,6 +99,107 @@ def test_apply_to_vacancies_ui_batch_single_launch(monkeypatch) -> None:
     )
     assert len(out) == 2
     assert calls.count("goto") == 2
+
+
+def test_batch_stops_on_negotiations_limit_without_second_goto(monkeypatch) -> None:
+    """negotiations-limit-exceeded aborts batch; second vacancy is not loaded."""
+    gotos = []
+
+    class FakePage:
+        def goto(self, *a, **k):
+            gotos.append(1)
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class FakeBrowser:
+        def new_context(self, **k):
+            return FakeContext()
+
+    class FakeChromium:
+        def launch(self, **k):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_sync_playwright():
+        return FakePlaywright()
+
+    n = {"i": 0}
+
+    def fake_flow(page, **kwargs):
+        n["i"] += 1
+        if n["i"] == 1:
+            return ApplyResult(outcome=ApplyOutcome.ERROR, detail=POPUP_NEGOTIATIONS_LIMIT_DETAIL)
+        return ApplyResult(outcome=ApplyOutcome.SUCCESS)
+
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner.sync_playwright",
+        fake_sync_playwright,
+    )
+    monkeypatch.setattr("src.services.hh_ui.runner._jitter", lambda c: None)
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner.time.sleep",
+        lambda s: None,
+    )
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner._apply_vacancy_flow_on_page",
+        fake_flow,
+    )
+
+    cfg = HhUiApplyConfig(
+        headless=True,
+        navigation_timeout_ms=1000,
+        action_timeout_ms=1000,
+        min_action_delay_ms=0,
+        max_action_delay_ms=0,
+        screenshot_on_error=False,
+        use_popup_api=False,
+        debug_screenshot_dir=None,
+        attach_error_screenshot_bytes=False,
+    )
+    specs = [
+        VacancyApplySpec(
+            autoparsed_vacancy_id=1,
+            hh_vacancy_id="1",
+            vacancy_url="https://hh.ru/vacancy/1",
+            resume_hh_id="r1",
+            cover_letter="",
+        ),
+        VacancyApplySpec(
+            autoparsed_vacancy_id=2,
+            hh_vacancy_id="2",
+            vacancy_url="https://hh.ru/vacancy/2",
+            resume_hh_id="r2",
+            cover_letter="",
+        ),
+    ]
+    out, reason = apply_to_vacancies_ui_batch(
+        storage_state={},
+        items=specs,
+        config=cfg,
+        max_retries=5,
+        retry_initial_seconds=0.0,
+        retry_delay_cap_seconds=1.0,
+    )
+    assert reason == "negotiations_limit"
+    assert len(out) == 1
+    assert len(gotos) == 1
 
 
 def test_batch_retries_once_on_retryable(monkeypatch) -> None:
@@ -175,7 +279,7 @@ def test_batch_retries_once_on_retryable(monkeypatch) -> None:
         resume_hh_id="r1",
         cover_letter="",
     )
-    out = apply_to_vacancies_ui_batch(
+    out, _ = apply_to_vacancies_ui_batch(
         storage_state={},
         items=[spec],
         config=cfg,
@@ -269,7 +373,7 @@ def test_apply_to_vacancies_ui_batch_on_item_done_order(monkeypatch) -> None:
             cover_letter="",
         ),
     ]
-    apply_to_vacancies_ui_batch(
+    _, _ = apply_to_vacancies_ui_batch(
         storage_state={},
         items=specs,
         config=cfg,
@@ -356,7 +460,7 @@ def test_batch_xsrf_cooldown_exponential_between_items(monkeypatch) -> None:
         )
         for i in range(1, 4)
     ]
-    apply_to_vacancies_ui_batch(
+    _, _ = apply_to_vacancies_ui_batch(
         storage_state={},
         items=specs,
         config=cfg,
@@ -448,7 +552,7 @@ def test_batch_xsrf_cooldown_resets_after_non_xsrf(monkeypatch) -> None:
         )
         for i in range(1, 5)
     ]
-    apply_to_vacancies_ui_batch(
+    _, _ = apply_to_vacancies_ui_batch(
         storage_state={},
         items=specs,
         config=cfg,

@@ -314,7 +314,7 @@ class TestBuildCancelKeyboard:
         assert len(result.inline_keyboard) == 1
         row = result.inline_keyboard[0]
         assert len(row) == 3
-        assert row[0].text == "Backend Dev"
+        assert row[0].text == "1. Backend Dev"
         assert row[0].callback_data == "prog:t:parse_1"
         assert row[1].callback_data == "prog:r:parse_1"
         assert row[2].callback_data == "prog:cancel:parse_1"
@@ -728,6 +728,72 @@ class TestIsDm:
     def test_zero_chat_id_is_not_dm(self):
         svc, _, _ = _make_service(chat_id=0)
         assert svc._is_dm is False
+
+
+# ---------------------------------------------------------------------------
+# _refresh_message — recreate when Telegram message is gone
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshMessageRecreate:
+    @pytest.mark.asyncio
+    async def test_recreates_pin_when_edit_fails_message_deleted(self):
+        from aiogram.exceptions import TelegramBadRequest
+
+        svc, bot, redis = _make_service(chat_id=111)
+        pin_holder: dict[str, str | None] = {"v": "42"}
+
+        async def mock_get(key: str):
+            if "progress:pin:" in key:
+                return pin_holder["v"]
+            if "progress:task:" in key:
+                return json.dumps(_task_state())
+            return None
+
+        async def mock_delete(*args, **kwargs):
+            key = args[0]
+            if key == "progress:pin:111":
+                pin_holder["v"] = None
+
+        redis.get = mock_get
+        redis.delete = AsyncMock(side_effect=mock_delete)
+        redis.keys = AsyncMock(return_value=["progress:task:111:parse:1"])
+        redis.mget = AsyncMock(return_value=[json.dumps(_task_state())])
+
+        async def failing_edit(*args, **kwargs):
+            raise TelegramBadRequest(
+                method=MagicMock(),
+                message="Bad Request: message to edit not found",
+            )
+
+        bot.edit_message_text = AsyncMock(side_effect=failing_edit)
+
+        await svc._refresh_message(force=True)
+
+        redis.delete.assert_any_call("progress:pin:111")
+        bot.send_message.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_edit_unchanged_does_not_recreate(self):
+        from aiogram.exceptions import TelegramBadRequest
+
+        svc, bot, redis = _make_service(chat_id=111)
+        redis.get = _key_router(pin="42", task=json.dumps(_task_state()))
+        redis.keys = AsyncMock(return_value=["progress:task:111:parse:1"])
+        redis.mget = AsyncMock(return_value=[json.dumps(_task_state())])
+
+        async def unchanged(*args, **kwargs):
+            raise TelegramBadRequest(
+                method=MagicMock(),
+                message="Bad Request: message is not modified",
+            )
+
+        bot.edit_message_text = AsyncMock(side_effect=unchanged)
+
+        await svc._refresh_message(force=True)
+
+        bot.send_message.assert_not_called()
+        redis.delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

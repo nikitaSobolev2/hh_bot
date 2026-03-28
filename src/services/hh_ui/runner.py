@@ -37,12 +37,13 @@ from src.services.hh_ui.vacancy_response_popup import (
     POPUP_XSRF_ERROR_DETAIL,
     POPUP_XSRF_NOT_READY_DETAIL,
     extract_xsrf_for_popup,
+    is_negotiations_limit_popup_result,
     probe_xsrf_light_with_source,
     try_apply_via_popup,
 )
 from src.services.hh_ui.apply_retry import (
-    apply_outcome_is_retryable,
     apply_outcome_is_terminal_no_retry,
+    apply_result_should_retry_popup_batch,
     apply_retry_delay_seconds,
 )
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
@@ -1061,13 +1062,18 @@ def apply_to_vacancies_ui_batch(
     retry_initial_seconds: float = 10.0,
     retry_delay_cap_seconds: float = 600.0,
     on_item_done: Callable[[VacancyApplySpec, ApplyResult], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
     xsrf_cooldown_initial_seconds: float = _HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S,
     xsrf_cooldown_cap_seconds: float = _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S,
-) -> list[tuple[int, ApplyResult]]:
-    """One Chromium launch; sequential ``goto`` + apply per item; retries with backoff per item."""
+) -> tuple[list[tuple[int, ApplyResult]], str | None]:
+    """One Chromium launch; sequential ``goto`` + apply per item; retries with backoff per item.
+
+    Returns ``(results, abort_reason)``. ``abort_reason`` is ``\"negotiations_limit\"``,
+    ``\"cancelled\"``, or ``None`` when the loop finished normally.
+    """
     results: list[tuple[int, ApplyResult]] = []
     if not items:
-        return results
+        return results, None
 
     with sync_playwright() as p:
         browser = None
@@ -1084,6 +1090,8 @@ def apply_to_vacancies_ui_batch(
             page = context.new_page()
             consecutive_popup_xsrf = 0
             for item_index, spec in enumerate(items):
+                if cancel_check and cancel_check():
+                    return results, "cancelled"
                 if not spec.vacancy_url.startswith("https://"):
                     invalid = ApplyResult(
                         outcome=ApplyOutcome.ERROR,
@@ -1111,7 +1119,7 @@ def apply_to_vacancies_ui_batch(
                     )
                     if apply_outcome_is_terminal_no_retry(last.outcome):
                         break
-                    if not apply_outcome_is_retryable(last.outcome):
+                    if not apply_result_should_retry_popup_batch(last):
                         break
                     if attempt < max_retries - 1:
                         delay = apply_retry_delay_seconds(
@@ -1130,6 +1138,8 @@ def apply_to_vacancies_ui_batch(
                 if on_item_done:
                     on_item_done(spec, final)
                 results.append((spec.autoparsed_vacancy_id, final))
+                if is_negotiations_limit_popup_result(final):
+                    return results, "negotiations_limit"
                 if item_index < len(items) - 1 and _is_popup_xsrf_error_result(final):
                     consecutive_popup_xsrf += 1
                     delay = min(
@@ -1149,7 +1159,7 @@ def apply_to_vacancies_ui_batch(
                     consecutive_popup_xsrf = 0
         finally:
             dispose_sync_browser_context(context, browser)
-    return results
+    return results, None
 
 
 def vacancy_url_from_hh_id(hh_vacancy_id: str) -> str:

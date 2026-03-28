@@ -68,6 +68,67 @@ def create_progress_redis():
     return create_async_redis()
 
 
+def _telegram_edit_failed_because_message_gone(exc: BaseException) -> bool:
+    """True when edit fails because the message was deleted or id is invalid."""
+    s = str(exc).lower()
+    return any(
+        x in s
+        for x in (
+            "message to edit not found",
+            "message_id_invalid",
+            "message not found",
+            "bad request: message to edit not found",
+        )
+    )
+
+
+def _telegram_edit_unchanged(exc: BaseException) -> bool:
+    """True when Telegram rejects edit because body is identical to current."""
+    s = str(exc).lower()
+    return "message is not modified" in s or "message_not_modified" in s
+
+
+async def _scan_progress_task_chat_ids(redis) -> set[int]:
+    """Collect distinct chat IDs from ``progress:task:{chat_id}:...`` keys (SCAN, not KEYS)."""
+    chat_ids: set[int] = set()
+    cursor = 0
+    while True:
+        cursor, keys = await redis.scan(cursor, match="progress:task:*", count=256)
+        for raw in keys:
+            key = raw.decode() if isinstance(raw, bytes) else raw
+            parts = key.split(":", 3)
+            if len(parts) >= 4 and parts[0] == "progress" and parts[1] == "task":
+                with contextlib.suppress(ValueError):
+                    chat_ids.add(int(parts[2]))
+        if cursor == 0:
+            break
+    return chat_ids
+
+
+async def refresh_progress_pins_for_active_chats(bot, *, default_locale: str = "ru") -> int:
+    """After bot restart: re-post or refresh pinned progress for every chat with task state in Redis.
+
+    Ensures users see the combined progress message again if Telegram messages were lost
+    or if edits had failed silently before the restart.
+    """
+    redis = create_progress_redis()
+    try:
+        chat_ids = await _scan_progress_task_chat_ids(redis)
+        n = 0
+        for chat_id in sorted(chat_ids):
+            svc = ProgressService(bot, chat_id, redis, default_locale)
+            tasks = await svc._load_all_tasks()
+            if not tasks:
+                continue
+            await svc._refresh_message(force=True)
+            n += 1
+        if n:
+            logger.info("progress_pins_refreshed_after_restart", chats=n)
+        return n
+    finally:
+        await redis.aclose()
+
+
 class ProgressService:
     """Manages user progress bars as a single pinned message in DM chats.
 
@@ -300,9 +361,23 @@ class ProgressService:
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
-        except TelegramBadRequest:
-            # Message was deleted externally or text is unchanged — safe to ignore.
-            pass
+        except TelegramBadRequest as exc:
+            if _telegram_edit_unchanged(exc):
+                return
+            if _telegram_edit_failed_because_message_gone(exc):
+                logger.info(
+                    "progress_pin_message_gone_recreating",
+                    chat_id=self._chat_id,
+                    detail=str(exc)[:300],
+                )
+                await self._redis.delete(self._pin_key())
+                await self._get_or_create_pin_message(text, reply_markup)
+            else:
+                logger.warning(
+                    "progress_message_edit_failed",
+                    chat_id=self._chat_id,
+                    detail=str(exc)[:300],
+                )
         except TelegramRetryAfter as exc:
             logger.warning("Progress edit flood control", retry_after=exc.retry_after)
             await asyncio.sleep(exc.retry_after)

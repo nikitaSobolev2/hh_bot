@@ -27,6 +27,14 @@ POPUP_XSRF_ERROR_DETAIL = "popup_api:xsrf_403"
 POPUP_XSRF_NOT_READY_DETAIL = "popup_api:xsrf_not_ready"
 # Runner: try_apply_via_popup returned None (no mapped outcome); modal UI is not used when popup API is on.
 POPUP_INCOMPLETE_DETAIL = "popup_api:incomplete"
+# HH returned 400 {"error":"negotiations-limit-exceeded"} — account hit response/negotiation cap.
+POPUP_NEGOTIATIONS_LIMIT_DETAIL = "popup_api:negotiations-limit-exceeded"
+
+
+def is_negotiations_limit_popup_result(result: ApplyResult) -> bool:
+    """True when popup JSON was ``negotiations-limit-exceeded`` (do not retry; stop batch)."""
+    return "negotiations-limit-exceeded" in (result.detail or "").lower()
+
 
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)", re.IGNORECASE)
 _XSRF_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -324,6 +332,11 @@ def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
             return ApplyResult(
                 outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
                 detail="popup_api:test_required",
+            )
+        if err_norm == "negotiations-limit-exceeded":
+            return ApplyResult(
+                outcome=ApplyOutcome.ERROR,
+                detail=POPUP_NEGOTIATIONS_LIMIT_DETAIL,
             )
         return ApplyResult(outcome=ApplyOutcome.ERROR, detail=f"popup_api:{str(err)[:300]}")
 

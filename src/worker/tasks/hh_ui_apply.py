@@ -157,6 +157,43 @@ async def _persist_ui_apply_attempt_and_feed_effects(
 _FINALIZE_BATCH_ITEM_THREADSAFE_TIMEOUT_S = 300
 
 
+async def _notify_negotiations_limit_exceeded(
+    bot: Any,
+    chat_id: int,
+    locale: str,
+    autorespond_progress: dict | None,
+) -> None:
+    """HH account hit active-response limit; notify user and stop autorespond progress if any."""
+    msg = get_text("hh-ui-negotiations-limit-notice", locale)
+    with contextlib.suppress(Exception):
+        await bot.send_message(chat_id, msg)
+    if not autorespond_progress or not autorespond_progress.get("task_key"):
+        return
+    task_key = str(autorespond_progress["task_key"])
+    from src.services.autorespond_progress import (
+        clear_autorespond_done_counter,
+        clear_autorespond_failed_counter,
+        clear_hh_ui_batch_checkpoint_sync,
+        set_autorespond_cancelled,
+    )
+    from src.services.progress_service import ProgressService, create_progress_redis
+
+    await set_autorespond_cancelled(chat_id, task_key)
+    clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+    await clear_autorespond_done_counter(chat_id, task_key)
+    await clear_autorespond_failed_counter(chat_id, task_key)
+    redis = create_progress_redis()
+    try:
+        svc = ProgressService(bot, chat_id, redis, locale)
+        await svc.finish_task(
+            task_key,
+            shortage_note=get_text("hh-ui-negotiations-limit-shortage", locale),
+            complete_bars=True,
+        )
+    finally:
+        await redis.aclose()
+
+
 async def _finalize_batch_item_async(
     *,
     self,
@@ -175,6 +212,8 @@ async def _finalize_batch_item_async(
     send_error_screenshot_to_user: bool,
     autorespond_progress: dict | None,
     resume_blob: dict | None = None,
+    skip_progress_tick: bool = False,
+    skip_persist: bool = False,
 ) -> None:
     """Persist one batch row, tick autorespond bar, optional screenshot, Redis checkpoint."""
     from src.services.autorespond_progress import (
@@ -188,23 +227,25 @@ async def _finalize_batch_item_async(
     hh_id = str(it["hh_vacancy_id"])
     finalized_vids.add(vid)
 
-    await _persist_ui_apply_attempt_and_feed_effects(
-        session_factory=session_factory,
-        user_id=user_id,
-        hh_linked_account_id=hh_linked_account_id,
-        autoparsed_vacancy_id=vid,
-        hh_vacancy_id=hh_id,
-        resume_id=resume_id,
-        feed_session_id=feed_session_id,
-        result=result,
-        silent_feed=silent_feed,
-    )
+    if not skip_persist:
+        await _persist_ui_apply_attempt_and_feed_effects(
+            session_factory=session_factory,
+            user_id=user_id,
+            hh_linked_account_id=hh_linked_account_id,
+            autoparsed_vacancy_id=vid,
+            hh_vacancy_id=hh_id,
+            resume_id=resume_id,
+            feed_session_id=feed_session_id,
+            result=result,
+            silent_feed=silent_feed,
+        )
     logger.info(
         "hh_ui_apply_batch_item_done",
         task_id=getattr(self.request, "id", None),
         user_id=user_id,
         vacancy_id=vid,
         outcome=result.outcome.value,
+        skip_persist=skip_persist,
     )
 
     task_key = (
@@ -214,16 +255,17 @@ async def _finalize_batch_item_async(
     )
     if task_key:
         with contextlib.suppress(Exception):
-            if _ui_outcome_increments_autorespond_failed(result.outcome):
-                increment_autorespond_failed_sync(int(chat_id), task_key, 1)
-            await tick_autorespond_bar(
-                bot=bot,
-                chat_id=chat_id,
-                task_key=task_key,
-                total=int(autorespond_progress["total"]),
-                locale=str(autorespond_progress.get("locale") or locale),
-                footer_failed_line=None,
-            )
+            if not skip_progress_tick:
+                if _ui_outcome_increments_autorespond_failed(result.outcome):
+                    increment_autorespond_failed_sync(int(chat_id), task_key, 1)
+                await tick_autorespond_bar(
+                    bot=bot,
+                    chat_id=chat_id,
+                    task_key=task_key,
+                    total=int(autorespond_progress["total"]),
+                    locale=str(autorespond_progress.get("locale") or locale),
+                    footer_failed_line=None,
+                )
         remaining = [
             x
             for x in items
@@ -475,10 +517,20 @@ async def _apply_batch_ui_async(
             )
             fut.result(timeout=_FINALIZE_BATCH_ITEM_THREADSAFE_TIMEOUT_S)
 
+        abort_reason: str | None = None
         if specs:
-            try:
-                await asyncio.to_thread(
-                    apply_to_vacancies_ui_batch,
+
+            def _cancel_check_sync() -> bool:
+                if not autorespond_progress or not autorespond_progress.get("task_key"):
+                    return False
+                from src.services.autorespond_progress import is_autorespond_cancelled_sync
+
+                return is_autorespond_cancelled_sync(
+                    int(chat_id), str(autorespond_progress["task_key"])
+                )
+
+            def _run_batch():
+                return apply_to_vacancies_ui_batch(
                     storage_state=storage,
                     items=specs,
                     config=config,
@@ -487,7 +539,11 @@ async def _apply_batch_ui_async(
                     retry_initial_seconds=settings.hh_ui_apply_retry_initial_seconds,
                     retry_delay_cap_seconds=settings.hh_ui_apply_retry_delay_cap_seconds,
                     on_item_done=_on_playwright_item_done,
+                    cancel_check=_cancel_check_sync,
                 )
+
+            try:
+                _, abort_reason = await asyncio.to_thread(_run_batch)
             except Exception as exc:
                 logger.exception("hh_ui batch apply failed", error=str(exc))
                 err = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
@@ -512,32 +568,48 @@ async def _apply_batch_ui_async(
                             resume_blob=resume_blob,
                         )
 
-        for it in items:
-            vid = int(it["autoparsed_vacancy_id"])
-            if vid not in finalized_vids:
-                await _finalize_batch_item_async(
-                    self=self,
-                    session_factory=session_factory,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    locale=locale,
-                    hh_linked_account_id=hh_linked_account_id,
-                    feed_session_id=feed_session_id,
-                    it=it,
-                    result=ApplyResult(
-                        outcome=ApplyOutcome.ERROR,
-                        detail="batch_missing_result",
-                    ),
-                    items=items,
-                    finalized_vids=finalized_vids,
-                    bot=bot,
-                    silent_feed=silent_feed,
-                    send_error_screenshot_to_user=send_error_screenshot_to_user,
-                    autorespond_progress=autorespond_progress,
-                    resume_blob=resume_blob,
+            if abort_reason == "negotiations_limit":
+                await _notify_negotiations_limit_exceeded(
+                    bot, int(chat_id), locale, autorespond_progress
                 )
+            elif abort_reason == "cancelled":
+                from src.services.autorespond_progress import clear_hh_ui_batch_checkpoint_sync
+
+                tk = autorespond_progress.get("task_key") if autorespond_progress else None
+                if tk:
+                    clear_hh_ui_batch_checkpoint_sync(int(chat_id), str(tk))
+
+        if not abort_reason:
+            for it in items:
+                vid = int(it["autoparsed_vacancy_id"])
+                if vid not in finalized_vids:
+                    await _finalize_batch_item_async(
+                        self=self,
+                        session_factory=session_factory,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        locale=locale,
+                        hh_linked_account_id=hh_linked_account_id,
+                        feed_session_id=feed_session_id,
+                        it=it,
+                        result=ApplyResult(
+                            outcome=ApplyOutcome.ERROR,
+                            detail="batch_missing_result",
+                        ),
+                        items=items,
+                        finalized_vids=finalized_vids,
+                        bot=bot,
+                        silent_feed=silent_feed,
+                        send_error_screenshot_to_user=send_error_screenshot_to_user,
+                        autorespond_progress=autorespond_progress,
+                        resume_blob=resume_blob,
+                    )
 
         processed = len(items)
+        if abort_reason == "negotiations_limit":
+            return {"status": "ok", "processed": processed, "abort": "negotiations_limit"}
+        if abort_reason == "cancelled":
+            return {"status": "cancelled", "processed": processed, "abort": "cancelled"}
         return {"status": "ok", "processed": processed}
     finally:
         with contextlib.suppress(Exception):
@@ -777,7 +849,7 @@ async def _apply_ui_async(
             )
         else:
             try:
-                played = await asyncio.to_thread(
+                played, abort_reason_single = await asyncio.to_thread(
                     apply_to_vacancies_ui_batch,
                     storage_state=storage,
                     items=[
@@ -796,6 +868,10 @@ async def _apply_ui_async(
                     retry_delay_cap_seconds=settings.hh_ui_apply_retry_delay_cap_seconds,
                 )
                 result = played[0][1]
+                if abort_reason_single == "negotiations_limit":
+                    await _notify_negotiations_limit_exceeded(
+                        bot, int(chat_id), locale, autorespond_progress
+                    )
             except Exception as exc:
                 logger.exception("hh_ui apply failed", error=str(exc))
                 result = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
