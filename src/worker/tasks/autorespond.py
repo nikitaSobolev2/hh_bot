@@ -357,7 +357,13 @@ async def _run_autorespond_async(
             await clear_autorespond_failed_counter(user.telegram_id, task_key)
 
         ar_prog = (
-            {"task_key": task_key, "total": work_units, "locale": locale}
+            {
+                "task_key": task_key,
+                "total": work_units,
+                "locale": locale,
+                "title": company.vacancy_title,
+                "celery_task_id": celery_id,
+            }
             if (task_key and progress and progress_bot)
             else None
         )
@@ -434,6 +440,8 @@ async def _run_autorespond_async(
                             footer_failed_line=get_text(
                                 "autorespond-progress-failed", locale, count=failed
                             ),
+                            title=ar_prog.get("title"),
+                            celery_task_id=ar_prog.get("celery_task_id"),
                         )
                     continue
 
@@ -489,6 +497,8 @@ async def _run_autorespond_async(
                                 footer_failed_line=get_text(
                                     "autorespond-progress-failed", locale, count=failed
                                 ),
+                                title=ar_prog.get("title"),
+                                celery_task_id=ar_prog.get("celery_task_id"),
                             )
                         continue
                     ui_batch_buffer.append((vac, resume_id))
@@ -515,6 +525,8 @@ async def _run_autorespond_async(
                                 footer_failed_line=get_text(
                                     "autorespond-progress-failed", locale, count=failed
                                 ),
+                                title=ar_prog.get("title"),
+                                celery_task_id=ar_prog.get("celery_task_id"),
                             )
                         continue
                     letter_for_api: str | None = None
@@ -601,6 +613,8 @@ async def _run_autorespond_async(
                             footer_failed_line=get_text(
                                 "autorespond-progress-failed", locale, count=failed
                             ),
+                            title=ar_prog.get("title"),
+                            celery_task_id=ar_prog.get("celery_task_id"),
                         )
 
             await flush_ui_batch()

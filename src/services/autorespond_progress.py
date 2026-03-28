@@ -8,6 +8,7 @@ from typing import Any
 import redis as sync_redis
 
 from src.config import settings
+from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.services.progress_service import ProgressService, create_progress_redis
@@ -212,6 +213,8 @@ async def tick_autorespond_bar(
     total: int,
     locale: str,
     footer_failed_line: str | None = None,
+    title: str | None = None,
+    celery_task_id: str | None = None,
 ) -> bool:
     """Increment done counter, refresh bar, finish pinned progress when done >= total.
 
@@ -221,59 +224,82 @@ async def tick_autorespond_bar(
         return False
 
     redis = create_progress_redis()
-    key = autorespond_done_redis_key(chat_id, task_key)
-    done = int(await redis.incr(key))
-    await redis.expire(key, _DONE_TTL_S)
-
-    display_done = min(done, total)
-    svc = ProgressService(bot, chat_id, redis, locale)
-
-    if footer_failed_line is not None:
-        footer_lines = [footer_failed_line]
-    else:
-        failed_n = int(
-            await redis.get(autorespond_failed_redis_key(chat_id, task_key)) or 0
-        )
-        footer_lines = [get_text("autorespond-progress-failed", locale, count=failed_n)]
     try:
-        await svc.update_bar(task_key, 0, display_done, total)
-        await svc.update_footer(task_key, footer_lines)
-    except Exception as exc:
-        # Telegram / aiohttp timeouts or SSL stalls must not abort autorespond (SoftTimeLimitExceeded).
-        logger.warning(
-            "autorespond_progress_bar_update_failed",
-            error=str(exc)[:400],
-            chat_id=chat_id,
-            task_key=task_key,
-        )
-
-    if done >= total:
-        failed_n = int(await redis.get(autorespond_failed_redis_key(chat_id, task_key)) or 0)
-        logger.info(
-            "autorespond_progress_finish_task",
-            chat_id=chat_id,
-            task_key=task_key,
-            done=done,
-            total=total,
-            failed_ui=failed_n,
-        )
-        finish_note = None
-        if failed_n > 0:
-            finish_note = get_text(
-                "autorespond-progress-completed-with-failures",
-                locale,
-                count=failed_n,
+        svc = ProgressService(bot, chat_id, redis, locale)
+        state_key = f"progress:task:{chat_id}:{task_key}"
+        if not await redis.get(state_key):
+            # TTL expiry or cold resume: HH UI / Celery still has autorespond_progress but
+            # ProgressService state is gone — recreate so update_bar can run.
+            logger.info(
+                "autorespond_progress_rehydrating_task_state",
+                chat_id=chat_id,
+                task_key=task_key,
+                total=total,
             )
+            nid = normalize_celery_task_id(celery_task_id) if celery_task_id else None
+            bar_lbl = get_text("progress-bar-autorespond", locale)
+            await svc.start_task(
+                task_key=task_key,
+                title=title or bar_lbl,
+                bar_labels=[bar_lbl],
+                celery_task_id=nid,
+                initial_totals=[total],
+            )
+
+        key = autorespond_done_redis_key(chat_id, task_key)
+        done = int(await redis.incr(key))
+        await redis.expire(key, _DONE_TTL_S)
+
+        display_done = min(done, total)
+
+        if footer_failed_line is not None:
+            footer_lines = [footer_failed_line]
+        else:
+            failed_n = int(
+                await redis.get(autorespond_failed_redis_key(chat_id, task_key)) or 0
+            )
+            footer_lines = [get_text("autorespond-progress-failed", locale, count=failed_n)]
         try:
-            await svc.finish_task(task_key, shortage_note=finish_note)
+            await svc.update_bar(task_key, 0, display_done, total)
+            await svc.update_footer(task_key, footer_lines)
         except Exception as exc:
+            # Telegram / aiohttp timeouts or SSL stalls must not abort autorespond (SoftTimeLimitExceeded).
             logger.warning(
-                "autorespond_progress_finish_failed",
+                "autorespond_progress_bar_update_failed",
                 error=str(exc)[:400],
                 chat_id=chat_id,
                 task_key=task_key,
             )
-        await redis.delete(key)
-        await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
-        return True
-    return False
+
+        if done >= total:
+            failed_n = int(await redis.get(autorespond_failed_redis_key(chat_id, task_key)) or 0)
+            logger.info(
+                "autorespond_progress_finish_task",
+                chat_id=chat_id,
+                task_key=task_key,
+                done=done,
+                total=total,
+                failed_ui=failed_n,
+            )
+            finish_note = None
+            if failed_n > 0:
+                finish_note = get_text(
+                    "autorespond-progress-completed-with-failures",
+                    locale,
+                    count=failed_n,
+                )
+            try:
+                await svc.finish_task(task_key, shortage_note=finish_note)
+            except Exception as exc:
+                logger.warning(
+                    "autorespond_progress_finish_failed",
+                    error=str(exc)[:400],
+                    chat_id=chat_id,
+                    task_key=task_key,
+                )
+            await redis.delete(key)
+            await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
+            return True
+        return False
+    finally:
+        await redis.aclose()

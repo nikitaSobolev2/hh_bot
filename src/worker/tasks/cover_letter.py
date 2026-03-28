@@ -482,6 +482,8 @@ async def _generate_cover_letter_async(
                         total=int(ap["total"]),
                         locale=str(ap.get("locale") or locale),
                         footer_failed_line=None,
+                        title=ap.get("title"),
+                        celery_task_id=ap.get("celery_task_id"),
                     )
                 finally:
                     await tick_bot.session.close()
