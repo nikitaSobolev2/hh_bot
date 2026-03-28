@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,14 @@ class AppSettingRepository(BaseRepository[AppSetting]):
         if setting is None or setting.value is None:
             return default
         return setting.value
+
+    async def get_values_for_keys(self, keys: Sequence[str]) -> dict[str, Any]:
+        """Return key → value for existing rows (one query). Values may be None."""
+        if not keys:
+            return {}
+        stmt = select(AppSetting.key, AppSetting.value).where(AppSetting.key.in_(keys))
+        result = await self._session.execute(stmt)
+        return dict(result.all())
 
     async def set_value(
         self,

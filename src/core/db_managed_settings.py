@@ -10,10 +10,11 @@ from src.repositories.app_settings import AppSettingRepository
 
 async def load_managed_settings_to_runtime() -> None:
     """Apply all MANAGED_SETTINGS keys present in the DB to ``src.config.settings``."""
+    keys = [item[0] for item in MANAGED_SETTINGS]
     async with async_session_factory() as session:
         repo = AppSettingRepository(session)
-        for item in MANAGED_SETTINGS:
-            key = item[0]
-            val = await repo.get_value(key)
+        by_key = await repo.get_values_for_keys(keys)
+        for key in keys:
+            val = by_key.get(key)
             if val is not None:
                 sync_setting_to_runtime(key, val)

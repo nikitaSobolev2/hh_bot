@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.config import settings
+from src.core.db_managed_settings import load_managed_settings_to_runtime
 
 
 def _create_task_session_factory() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
@@ -59,6 +60,10 @@ def run_async(
     async def _run() -> Any:
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(_suppress_closed_loop_errors)
+        # Admin panel updates ``app_settings`` in the DB; Celery workers do not receive
+        # ``sync_setting_to_runtime`` from the bot process — reload before each task so
+        # OpenAI URL/key/model and other managed flags match the database.
+        await load_managed_settings_to_runtime()
         engine, session_factory = _create_task_session_factory()
         try:
             return await task_fn(session_factory)
