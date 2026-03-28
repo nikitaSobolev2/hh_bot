@@ -691,6 +691,9 @@ async def _run_autorespond_async(
                     )
             if task_key and user.telegram_id:
                 clear_autorespond_parent_loop_active_sync(user.telegram_id, task_key)
+            if cover_ai_client is not None:
+                with contextlib.suppress(Exception):
+                    await cover_ai_client.aclose()
             if progress_bot:
                 with contextlib.suppress(Exception):
                     await progress_bot.session.close()

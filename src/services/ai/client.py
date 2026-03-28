@@ -254,6 +254,10 @@ class AIClient:
             max_retries=0,
         )
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP stack (httpx). Call before the event loop stops."""
+        await self._client.close()
+
     async def _acquire_rate_limit(self) -> None:
         """Wait for an AI rate-limit slot if a limiter is configured."""
         if self._rate_limiter is not None:

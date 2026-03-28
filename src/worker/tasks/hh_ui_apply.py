@@ -328,7 +328,10 @@ async def _apply_batch_ui_async(
         return {"status": "cancelled", "reason": "autorespond_cancelled", "count": len(items)}
 
     bot = self.create_bot()
+    cover_ai = None
     try:
+        from src.services.ai.client import AIClient
+
         cipher = HhTokenCipher(settings.hh_token_encryption_key)
 
         async with session_factory() as session:
@@ -379,9 +382,6 @@ async def _apply_batch_ui_async(
             if attach_error_bytes:
                 config = replace(config, attach_error_screenshot_bytes=True)
 
-        from src.services.ai.client import AIClient
-
-        cover_ai: AIClient | None = None
         from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
 
         item_by_vid: dict[int, dict] = {int(x["autoparsed_vacancy_id"]): x for x in items}
@@ -637,6 +637,9 @@ async def _apply_batch_ui_async(
             return {"status": "cancelled", "processed": processed, "abort": "cancelled"}
         return {"status": "ok", "processed": processed}
     finally:
+        if cover_ai is not None:
+            with contextlib.suppress(Exception):
+                await cover_ai.aclose()
         with contextlib.suppress(Exception):
             await bot.session.close()
 
