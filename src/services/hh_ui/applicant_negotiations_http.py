@@ -14,10 +14,16 @@ from src.services.hh_ui.applicant_http import (
     httpx_cookies_from_storage_state,
     url_suggests_login_page,
 )
+from src.core.logging import get_logger
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.selectors import APPLICANT_NEGOTIATIONS_PATH
 
+logger = get_logger(__name__)
+
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)")
+# Embedded JSON in Magritte / state blobs (6+ digits — HH vacancy ids are long).
+_JSON_VACANCY_ID_RE = re.compile(r'"vacancyId"\s*:\s*"?(\d{6,})"?')
+_JSON_VACANCY_ID_ALT_RE = re.compile(r'"vacancy_id"\s*:\s*"?(\d{6,})"?')
 
 
 def _negotiations_url(base: str, page: int) -> str:
@@ -71,7 +77,11 @@ def fetch_applicant_negotiations_html(
 
 
 def parse_negotiation_vacancy_ids_from_html(html: str) -> set[str]:
-    """Extract numeric vacancy ids from negotiations list HTML."""
+    """Extract numeric vacancy ids from negotiations list HTML.
+
+    HH «Все» can count negotiation *threads* (incl. duplicates / non-vacancy rows);
+    we dedupe by vacancy id. Rows may expose id in ``data-*``, links, or embedded JSON.
+    """
     soup = BeautifulSoup(html, "html.parser")
     seen: set[str] = set()
     items = soup.select('[data-qa="negotiations-item"]')
@@ -81,6 +91,27 @@ def parse_negotiation_vacancy_ids_from_html(html: str) -> set[str]:
             href = str(a.get("href") or "")
             m = _VACANCY_ID_RE.search(href)
             if m:
+                seen.add(m.group(1))
+    for item in items:
+        for attr in ("data-vacancy-id", "data-hh-vacancy-id", "data-vacancyId"):
+            v = item.get(attr)
+            if v and str(v).strip().isdigit():
+                seen.add(str(v).strip())
+    # All /vacancy/<id> in main list area (some rows hide the link outside <a>).
+    scope = soup.select_one("main") or soup.select_one('[data-qa="negotiations-list"]')
+    if scope is None:
+        scope = soup
+    scope_html = str(scope)
+    for m in _VACANCY_ID_RE.finditer(scope_html):
+        seen.add(m.group(1))
+    # Embedded JSON (SSR may be partial; state blob can list more ids).
+    for rx in (_JSON_VACANCY_ID_RE, _JSON_VACANCY_ID_ALT_RE):
+        for m in rx.finditer(scope_html):
+            seen.add(m.group(1))
+    for script in soup.find_all("script"):
+        chunk = script.string or script.get_text() or ""
+        for rx in (_JSON_VACANCY_ID_RE, _JSON_VACANCY_ID_ALT_RE):
+            for m in rx.finditer(chunk):
                 seen.add(m.group(1))
     if not seen:
         for m in _VACANCY_ID_RE.finditer(html):
@@ -111,6 +142,12 @@ def fetch_all_negotiation_vacancy_ids(
         except Exception:
             pass
         page_ids = parse_negotiation_vacancy_ids_from_html(html)
+        logger.info(
+            "negotiations_parse_page",
+            page=page,
+            page_unique_ids=len(page_ids),
+            cumulative_unique=len(all_ids | page_ids),
+        )
         if not page_ids:
             break
         new_only = page_ids - all_ids
