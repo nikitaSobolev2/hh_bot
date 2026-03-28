@@ -163,10 +163,12 @@ async def _run_autorespond_async(
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
         clear_autorespond_failed_counter,
+        clear_autorespond_parent_loop_active_sync,
         clear_autorespond_ui_tail_sync,
         clear_hh_ui_batch_checkpoint_sync,
         is_autorespond_cancelled_sync,
         save_autorespond_ui_tail_sync,
+        set_autorespond_parent_loop_active_sync,
         tick_autorespond_bar,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
@@ -410,6 +412,9 @@ async def _run_autorespond_async(
                         queue_ui_items.pop(0)
                 if task_key and user.telegram_id:
                     save_autorespond_ui_tail_sync(user.telegram_id, task_key, list(queue_ui_items))
+
+            if settings.hh_ui_apply_enabled and task_key and user.telegram_id:
+                set_autorespond_parent_loop_active_sync(user.telegram_id, task_key)
 
             for idx, vac in enumerate(capped, start=1):
                 if task_key and user.telegram_id and is_autorespond_cancelled_sync(
@@ -684,6 +689,8 @@ async def _run_autorespond_async(
                         company_id=company_id,
                         error=str(exc)[:400],
                     )
+            if task_key and user.telegram_id:
+                clear_autorespond_parent_loop_active_sync(user.telegram_id, task_key)
             if progress_bot:
                 with contextlib.suppress(Exception):
                     await progress_bot.session.close()

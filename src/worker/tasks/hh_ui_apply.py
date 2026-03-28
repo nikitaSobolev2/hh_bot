@@ -676,7 +676,7 @@ def apply_to_vacancies_batch_ui_task(
     if tk and cid:
         set_hh_ui_batch_active_sync(int(chat_id), str(tk), cid)
     try:
-        return run_async(
+        result = run_async(
             lambda sf: _apply_batch_ui_async(
                 self,
                 sf,
@@ -693,6 +693,20 @@ def apply_to_vacancies_batch_ui_task(
                 autorespond_progress=autorespond_progress,
             )
         )
+        _maybe_enqueue_next_ui_batch_from_tail(
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            locale=locale,
+            hh_linked_account_id=hh_linked_account_id,
+            feed_session_id=feed_session_id,
+            cover_letter_style=cover_letter_style,
+            cover_task_enabled=cover_task_enabled,
+            silent_feed=silent_feed,
+            autorespond_progress=autorespond_progress,
+            batch_result=result,
+        )
+        return result
     except SoftTimeLimitExceeded:
         if tk:
             full = load_hh_ui_batch_checkpoint_full_sync(int(chat_id), str(tk))
@@ -735,6 +749,75 @@ def apply_to_vacancies_batch_ui_task(
     finally:
         if tk:
             clear_hh_ui_batch_active_sync(int(chat_id), str(tk))
+
+
+def _maybe_enqueue_next_ui_batch_from_tail(
+    *,
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+    hh_linked_account_id: int,
+    feed_session_id: int,
+    cover_letter_style: str,
+    cover_task_enabled: bool,
+    silent_feed: bool,
+    autorespond_progress: dict | None,
+    batch_result: dict,
+) -> None:
+    """When ``run_autorespond`` stopped but Redis still holds parent tail rows, enqueue the next batch.
+
+    The parent normally calls ``.delay()`` for every chunk while its loop runs. If the parent
+    task exited (crash, timeout, worker restart) before dispatching the rest, only the first
+    ``hh_ui`` task(s) exist; this picks up the remaining rows from ``save_autorespond_ui_tail_sync``.
+    """
+    if not autorespond_progress or not autorespond_progress.get("task_key"):
+        return
+    if not isinstance(batch_result, dict) or batch_result.get("status") != "ok":
+        return
+    if batch_result.get("abort"):
+        return
+    task_key = str(autorespond_progress["task_key"])
+    from src.core.celery_async import normalize_celery_task_id
+    from src.services.autorespond_progress import (
+        clear_autorespond_parent_loop_active_sync,
+        hh_ui_batch_resume_payload,
+        is_autorespond_parent_loop_active_sync,
+        pop_autorespond_ui_tail_batch_sync,
+    )
+    from src.services.celery_active import celery_task_id_is_active
+
+    parent_celery_id = normalize_celery_task_id(autorespond_progress.get("celery_task_id"))
+    if parent_celery_id and celery_task_id_is_active(parent_celery_id):
+        return
+    if is_autorespond_parent_loop_active_sync(int(chat_id), task_key):
+        # Stale flag if the parent worker died without running ``finally``.
+        clear_autorespond_parent_loop_active_sync(int(chat_id), task_key)
+    batch = pop_autorespond_ui_tail_batch_sync(
+        int(chat_id), task_key, settings.hh_ui_apply_batch_size
+    )
+    if not batch:
+        return
+    resume = hh_ui_batch_resume_payload(
+        user_id=user_id,
+        chat_id=chat_id,
+        message_id=message_id,
+        locale=locale,
+        hh_linked_account_id=hh_linked_account_id,
+        feed_session_id=feed_session_id,
+        cover_letter_style=cover_letter_style,
+        cover_task_enabled=cover_task_enabled,
+        silent_feed=silent_feed,
+        autorespond_progress=autorespond_progress,
+    )
+    logger.info(
+        "hh_ui_apply_batch_tail_chain",
+        user_id=user_id,
+        chat_id=chat_id,
+        task_key=task_key,
+        next_batch=len(batch),
+    )
+    apply_to_vacancies_batch_ui_task.delay(**{**resume, "items": batch})
 
 
 async def _apply_ui_async(

@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 import redis as sync_redis
-from redis.exceptions import RedisError
+from redis.exceptions import RedisError, WatchError
 
 from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
@@ -40,6 +40,11 @@ def hh_ui_batch_checkpoint_key(chat_id: int, task_key: str) -> str:
 def autorespond_ui_tail_key(chat_id: int, task_key: str) -> str:
     """Parent ``run_autorespond`` pending UI rows not yet dispatched (between child batches)."""
     return f"progress:autorespond_ui_tail:{chat_id}:{task_key}"
+
+
+def autorespond_parent_loop_key(chat_id: int, task_key: str) -> str:
+    """Set while ``run_autorespond`` is still iterating (dispatches multiple ``hh_ui`` batches)."""
+    return f"progress:autorespond_parent_loop:{chat_id}:{task_key}"
 
 
 def hh_ui_batch_resume_payload(
@@ -202,6 +207,78 @@ def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
     r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
     try:
         r.delete(autorespond_ui_tail_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+def set_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.set(autorespond_parent_loop_key(chat_id, task_key), "1", ex=_DONE_TTL_S)
+    finally:
+        r.close()
+
+
+def clear_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.delete(autorespond_parent_loop_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+def is_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> bool:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        return bool(r.get(autorespond_parent_loop_key(chat_id, task_key)))
+    finally:
+        r.close()
+
+
+def pop_autorespond_ui_tail_batch_sync(
+    chat_id: int,
+    task_key: str,
+    batch_size: int,
+) -> list[dict]:
+    """Atomically remove up to ``batch_size`` items from the parent tail; return popped rows."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    key = autorespond_ui_tail_key(chat_id, task_key)
+    try:
+        for _ in range(30):
+            try:
+                r.watch(key)
+                raw = r.get(key)
+                if not raw:
+                    r.unwatch()
+                    return []
+                data = json.loads(raw)
+                items = data.get("items")
+                if not isinstance(items, list):
+                    r.unwatch()
+                    return []
+                clean = [x for x in items if isinstance(x, dict)]
+                if not clean:
+                    r.unwatch()
+                    return []
+                take = min(batch_size, len(clean))
+                batch = clean[:take]
+                rest = clean[take:]
+                p = r.pipeline()
+                p.multi()
+                if not rest:
+                    p.delete(key)
+                else:
+                    p.set(key, json.dumps({"items": rest}), ex=_DONE_TTL_S)
+                p.execute()
+                return batch
+            except WatchError:
+                continue
+        logger.warning(
+            "pop_autorespond_ui_tail_batch_sync_gave_up",
+            chat_id=chat_id,
+            task_key=task_key,
+        )
+        return []
     finally:
         r.close()
 
