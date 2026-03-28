@@ -650,9 +650,9 @@ async def _run_autorespond_async(
 
             await flush_ui_batch()
 
-            if task_key and user.telegram_id:
-                clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
-                clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
+            # Do not clear hh_ui checkpoint / parent UI tail here: children may still be
+            # applying in Playwright. Cleanup runs when ``tick_autorespond_bar`` reaches
+            # done >= total (all units accounted for).
 
         except Exception:
             if progress and task_key and user.telegram_id:

@@ -444,6 +444,12 @@ async def tick_autorespond_bar(
                 )
             await redis.delete(key)
             await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
+            # Parent ``run_autorespond`` used to clear these as soon as it finished
+            # dispatching ``.delay()`` batches, while hh_ui children were still running.
+            # That deleted ``resume`` + empty ``items`` checkpoints and broke refresh merge;
+            # clear only when every work unit has ticked (done >= total).
+            clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+            clear_autorespond_ui_tail_sync(chat_id, task_key)
             return True
         return False
     finally:
