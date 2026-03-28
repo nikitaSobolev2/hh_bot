@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import redis as sync_redis
+from redis.exceptions import RedisError
 
 from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
@@ -177,13 +178,27 @@ def increment_autorespond_failed_sync(chat_id: int, task_key: str, n: int = 1) -
 
 
 def is_autorespond_cancelled_sync(chat_id: int, task_key: str) -> bool:
-    """Set by the progress Cancel button; checked by Celery child tasks (sync Redis)."""
+    """Set by the progress Cancel button; checked by Celery child tasks (sync Redis).
+
+    If Redis is unreachable (DNS, network, broker down), returns False so autorespond
+    continues; cancel cannot be observed until Redis works again.
+    """
     key = autorespond_cancel_redis_key(chat_id, task_key)
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r: sync_redis.Redis | None = None
     try:
+        r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
         return bool(r.get(key))
+    except RedisError as exc:
+        logger.warning(
+            "autorespond_cancel_check_redis_failed",
+            chat_id=chat_id,
+            task_key=task_key,
+            error=str(exc),
+        )
+        return False
     finally:
-        r.close()
+        if r is not None:
+            r.close()
 
 
 async def set_autorespond_cancelled(chat_id: int, task_key: str) -> None:
