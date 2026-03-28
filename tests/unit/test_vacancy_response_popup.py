@@ -56,6 +56,14 @@ def test_map_popup_top_level_error_test_required():
     assert r.detail == "popup_api:test_required"
 
 
+def test_map_popup_top_level_error_already_applied_is_already_responded():
+    """HH sends ``{"error":"alreadyApplied"}``; must persist as success path, not generic error."""
+    r = map_popup_json_to_apply_result({"error": "alreadyApplied"})
+    assert r is not None
+    assert r.outcome == ApplyOutcome.ALREADY_RESPONDED
+    assert r.detail == "popup_api:alreadyApplied"
+
+
 def test_map_popup_errors_type_not_found():
     r = map_popup_json_to_apply_result(
         {

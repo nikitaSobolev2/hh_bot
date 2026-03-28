@@ -412,6 +412,18 @@ async def _apply_batch_ui_async(
                 chat_id, task_key, list(items), resume=resume_blob
             )
 
+        if task_key and autorespond_progress:
+            from src.services.autorespond_progress import (
+                ensure_autorespond_progress_task_state_if_missing,
+            )
+
+            await ensure_autorespond_progress_task_state_if_missing(
+                bot=bot,
+                chat_id=int(chat_id),
+                autorespond_progress=autorespond_progress,
+                locale=locale,
+            )
+
         specs: list[VacancyApplySpec] = []
 
         for it in items:

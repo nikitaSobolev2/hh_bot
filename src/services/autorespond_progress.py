@@ -205,6 +205,94 @@ async def clear_autorespond_failed_counter(chat_id: int, task_key: str) -> None:
     await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
 
 
+async def _rehydrate_autorespond_progress_task_if_missing(
+    *,
+    redis,
+    svc: ProgressService,
+    chat_id: int,
+    task_key: str,
+    total: int,
+    locale: str,
+    title: str | None,
+    celery_task_id: str | None,
+) -> bool:
+    """If ProgressService task JSON is missing, run ``start_task``. Returns True if rehydrated."""
+    state_key = f"progress:task:{chat_id}:{task_key}"
+    if await redis.get(state_key):
+        return False
+    logger.info(
+        "autorespond_progress_rehydrating_task_state",
+        chat_id=chat_id,
+        task_key=task_key,
+        total=total,
+    )
+    nid = normalize_celery_task_id(celery_task_id) if celery_task_id else None
+    bar_lbl = get_text("progress-bar-autorespond", locale)
+    await svc.start_task(
+        task_key=task_key,
+        title=title or bar_lbl,
+        bar_labels=[bar_lbl],
+        celery_task_id=nid,
+        initial_totals=[total],
+    )
+    return True
+
+
+async def ensure_autorespond_progress_task_state_if_missing(
+    *,
+    bot: Any,
+    chat_id: int,
+    autorespond_progress: dict,
+    locale: str,
+) -> None:
+    """When HH UI batch starts: recreate pinned progress if Redis TTL dropped task state.
+
+    Without this, the bar only appears after the first vacancy finalizes (first ``tick``).
+    """
+    if not autorespond_progress or not autorespond_progress.get("task_key"):
+        return
+    total = int(autorespond_progress.get("total") or 0)
+    if total <= 0:
+        return
+    task_key = str(autorespond_progress["task_key"])
+    title = autorespond_progress.get("title")
+    celery_task_id = autorespond_progress.get("celery_task_id")
+    loc = str(autorespond_progress.get("locale") or locale)
+
+    redis = create_progress_redis()
+    try:
+        svc = ProgressService(bot, chat_id, redis, loc)
+        rehydrated = await _rehydrate_autorespond_progress_task_if_missing(
+            redis=redis,
+            svc=svc,
+            chat_id=chat_id,
+            task_key=task_key,
+            total=total,
+            locale=loc,
+            title=title if isinstance(title, str) else None,
+            celery_task_id=celery_task_id if isinstance(celery_task_id, str) else None,
+        )
+        if not rehydrated:
+            return
+        done_key = autorespond_done_redis_key(chat_id, task_key)
+        done = int(await redis.get(done_key) or 0)
+        display_done = min(done, total)
+        failed_n = int(await redis.get(autorespond_failed_redis_key(chat_id, task_key)) or 0)
+        footer_lines = [get_text("autorespond-progress-failed", loc, count=failed_n)]
+        try:
+            await svc.update_bar(task_key, 0, display_done, total)
+            await svc.update_footer(task_key, footer_lines)
+        except Exception as exc:
+            logger.warning(
+                "ensure_autorespond_progress_bar_failed",
+                error=str(exc)[:400],
+                chat_id=chat_id,
+                task_key=task_key,
+            )
+    finally:
+        await redis.aclose()
+
+
 async def tick_autorespond_bar(
     *,
     bot: Any,
@@ -226,25 +314,16 @@ async def tick_autorespond_bar(
     redis = create_progress_redis()
     try:
         svc = ProgressService(bot, chat_id, redis, locale)
-        state_key = f"progress:task:{chat_id}:{task_key}"
-        if not await redis.get(state_key):
-            # TTL expiry or cold resume: HH UI / Celery still has autorespond_progress but
-            # ProgressService state is gone — recreate so update_bar can run.
-            logger.info(
-                "autorespond_progress_rehydrating_task_state",
-                chat_id=chat_id,
-                task_key=task_key,
-                total=total,
-            )
-            nid = normalize_celery_task_id(celery_task_id) if celery_task_id else None
-            bar_lbl = get_text("progress-bar-autorespond", locale)
-            await svc.start_task(
-                task_key=task_key,
-                title=title or bar_lbl,
-                bar_labels=[bar_lbl],
-                celery_task_id=nid,
-                initial_totals=[total],
-            )
+        await _rehydrate_autorespond_progress_task_if_missing(
+            redis=redis,
+            svc=svc,
+            chat_id=chat_id,
+            task_key=task_key,
+            total=total,
+            locale=locale,
+            title=title,
+            celery_task_id=celery_task_id,
+        )
 
         key = autorespond_done_redis_key(chat_id, task_key)
         done = int(await redis.incr(key))

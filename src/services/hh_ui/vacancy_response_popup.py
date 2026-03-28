@@ -338,6 +338,14 @@ def map_popup_json_to_apply_result(data: dict[str, Any]) -> ApplyResult | None:
                 outcome=ApplyOutcome.ERROR,
                 detail=POPUP_NEGOTIATIONS_LIMIT_DETAIL,
             )
+        # HH returns this when the user already responded; must map like success/already so
+        # we persist status=success and autorespond skips the vacancy next time (see
+        # hh_vacancy_ids_with_success_or_employer_questions).
+        if err_norm in ("alreadyapplied", "already_applied"):
+            return ApplyResult(
+                outcome=ApplyOutcome.ALREADY_RESPONDED,
+                detail="popup_api:alreadyApplied",
+            )
         return ApplyResult(outcome=ApplyOutcome.ERROR, detail=f"popup_api:{str(err)[:300]}")
 
     return None

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.hh_application_attempt import HhApplicationAttempt
@@ -79,15 +79,27 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
         user_id: int,
         hh_vacancy_ids: list[str],
     ) -> set[str]:
-        """Vacancies to skip in autorespond: success or employer questions pending (any resume)."""
+        """Vacancies to skip in autorespond: success or employer questions pending (any resume).
+
+        Also skips vacancies where we previously mis-classified HH ``alreadyApplied`` popup JSON
+        as ``status=error`` (before ``popup_api:alreadyApplied`` was mapped to ALREADY_RESPONDED).
+        """
         if not hh_vacancy_ids:
             return set()
+        legacy_already = (
+            (HhApplicationAttempt.status == "error")
+            & (HhApplicationAttempt.response_excerpt.isnot(None))
+            & (HhApplicationAttempt.response_excerpt.contains("popup_api:alreadyApplied"))
+        )
         stmt = (
             select(HhApplicationAttempt.hh_vacancy_id)
             .where(
                 HhApplicationAttempt.user_id == user_id,
                 HhApplicationAttempt.hh_vacancy_id.in_(hh_vacancy_ids),
-                HhApplicationAttempt.status.in_(("success", "needs_employer_questions")),
+                or_(
+                    HhApplicationAttempt.status.in_(("success", "needs_employer_questions")),
+                    legacy_already,
+                ),
             )
             .distinct()
         )
