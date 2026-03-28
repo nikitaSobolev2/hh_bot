@@ -788,15 +788,30 @@ def _maybe_enqueue_next_ui_batch_from_tail(
     from src.services.celery_active import celery_task_id_is_active
 
     parent_celery_id = normalize_celery_task_id(autorespond_progress.get("celery_task_id"))
-    if parent_celery_id and celery_task_id_is_active(parent_celery_id):
-        return
+    # Parent loop flag is cleared in ``run_autorespond`` ``finally`` when dispatch finished.
+    # Only while that flag is set may the parent still be enqueueing more ``.delay()`` calls.
+    # Do NOT call ``celery_task_id_is_active`` when the flag is clear: ``inspect().active()``
+    # can falsely keep the parent id (timing / broker) and block tail recovery forever.
     if is_autorespond_parent_loop_active_sync(int(chat_id), task_key):
-        # Stale flag if the parent worker died without running ``finally``.
+        if parent_celery_id and celery_task_id_is_active(parent_celery_id):
+            logger.info(
+                "hh_ui_apply_batch_tail_chain_skip_parent_dispatching",
+                chat_id=chat_id,
+                task_key=task_key,
+                parent_celery_id=parent_celery_id,
+            )
+            return
+        # Stale loop flag (e.g. parent process killed without ``finally``).
         clear_autorespond_parent_loop_active_sync(int(chat_id), task_key)
     batch = pop_autorespond_ui_tail_batch_sync(
         int(chat_id), task_key, settings.hh_ui_apply_batch_size
     )
     if not batch:
+        logger.info(
+            "hh_ui_apply_batch_tail_chain_no_pending_rows",
+            chat_id=chat_id,
+            task_key=task_key,
+        )
         return
     resume = hh_ui_batch_resume_payload(
         user_id=user_id,
