@@ -60,12 +60,14 @@ def run_async(
     async def _run() -> Any:
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(_suppress_closed_loop_errors)
-        # Admin panel updates ``app_settings`` in the DB; Celery workers do not receive
-        # ``sync_setting_to_runtime`` from the bot process — reload before each task so
-        # OpenAI URL/key/model and other managed flags match the database.
-        await load_managed_settings_to_runtime()
         engine, session_factory = _create_task_session_factory()
         try:
+            # Admin panel updates ``app_settings`` in the DB; Celery workers do not receive
+            # ``sync_setting_to_runtime`` from the bot process — reload before each task so
+            # OpenAI URL/key/model and other managed flags match the database.
+            # Use *this* task's session factory so asyncpg shares the same loop as ``run_async``
+            # (the global ``async_session_factory`` is bound to a different loop and breaks).
+            await load_managed_settings_to_runtime(session_factory)
             return await task_fn(session_factory)
         finally:
             await engine.dispose()
