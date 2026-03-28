@@ -582,21 +582,21 @@ async def _apply_batch_ui_async(
                             resume_blob=resume_blob,
                         )
 
-            if abort_reason == "negotiations_limit":
-                await _notify_negotiations_limit_exceeded(
-                    bot, int(chat_id), locale, autorespond_progress
-                )
-            elif abort_reason == "cancelled":
-                from src.services.autorespond_progress import clear_hh_ui_batch_checkpoint_sync
-
-                tk = autorespond_progress.get("task_key") if autorespond_progress else None
-                if tk:
-                    clear_hh_ui_batch_checkpoint_sync(int(chat_id), str(tk))
-
-        if not abort_reason:
+            # ``apply_to_vacancies_ui_batch`` can return early with abort_reason set:
+            # - negotiations_limit: stops after the vacancy that hit HH's response limit;
+            #   later specs in this batch never get ``on_item_done``.
+            # - cancelled: ``cancel_check`` returns True before remaining specs run.
+            # In those cases we must still finalize every row in ``items`` so autorespond
+            # progress ticks once per work unit (otherwise done < total forever).
             for it in items:
                 vid = int(it["autoparsed_vacancy_id"])
                 if vid not in finalized_vids:
+                    if abort_reason == "negotiations_limit":
+                        detail = "batch_abort:negotiations_limit"
+                    elif abort_reason == "cancelled":
+                        detail = "batch_abort:cancelled"
+                    else:
+                        detail = "batch_missing_result"
                     await _finalize_batch_item_async(
                         self=self,
                         session_factory=session_factory,
@@ -608,7 +608,7 @@ async def _apply_batch_ui_async(
                         it=it,
                         result=ApplyResult(
                             outcome=ApplyOutcome.ERROR,
-                            detail="batch_missing_result",
+                            detail=detail,
                         ),
                         items=items,
                         finalized_vids=finalized_vids,
@@ -618,6 +618,17 @@ async def _apply_batch_ui_async(
                         autorespond_progress=autorespond_progress,
                         resume_blob=resume_blob,
                     )
+
+            if abort_reason == "negotiations_limit":
+                await _notify_negotiations_limit_exceeded(
+                    bot, int(chat_id), locale, autorespond_progress
+                )
+            elif abort_reason == "cancelled":
+                from src.services.autorespond_progress import clear_hh_ui_batch_checkpoint_sync
+
+                tk = autorespond_progress.get("task_key") if autorespond_progress else None
+                if tk:
+                    clear_hh_ui_batch_checkpoint_sync(int(chat_id), str(tk))
 
         processed = len(items)
         if abort_reason == "negotiations_limit":
