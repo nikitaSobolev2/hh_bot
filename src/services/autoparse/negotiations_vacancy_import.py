@@ -39,7 +39,8 @@ async def fetch_merged_vac_dicts_for_hh_ids(
 ) -> dict[str, dict]:
     """For each HH vacancy id, GET api.hh.ru vacancy and build merged dict like HHParserService.
 
-    Skips ids where the API returns nothing. Returns hh_vacancy_id -> vac dict.
+    When the API returns nothing (404), uses a minimal placeholder dict for persistence.
+    Returns hh_vacancy_id -> vac dict.
     """
     if not hh_ids:
         return {}
@@ -65,7 +66,7 @@ async def fetch_merged_vac_dicts_for_hh_ids(
                     "negotiations_vacancy_fetch_empty_placeholder",
                     hh_vacancy_id=hid,
                 )
-                out[hid] = _placeholder_negotiation_vac_dict(hid)
+                out[hid] = _placeholder_negotiation_vacancy_dict(hid)
                 return
             skills = page_data.get("skills", [])
             orm_fields = page_data.get("orm_fields", {})
