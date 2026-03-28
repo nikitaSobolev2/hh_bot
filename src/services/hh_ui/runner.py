@@ -52,6 +52,8 @@ logger = get_logger(__name__)
 
 _HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S = 10.0
 _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S = 300.0
+# Chromium can crash under memory pressure; recover with a fresh browser instead of aborting the batch.
+_HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM = 8
 _XSRF_POLL_INTERVAL_S = 0.25
 _XSRF_WAIT_CAP_MS = 15_000
 
@@ -1041,6 +1043,33 @@ def _apply_vacancy_flow_on_page(
 
 
 
+def _is_target_closed_error(exc: BaseException) -> bool:
+    """True when Playwright page/context/browser died (crash or explicit close)."""
+    name = type(exc).__name__
+    if "TargetClosed" in name or "BrowserClosed" in name:
+        return True
+    msg = str(exc).lower()
+    return "has been closed" in msg or "target closed" in msg or "browser has been closed" in msg
+
+
+def _launch_batch_browser_session(
+    playwright: Any,
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+) -> tuple[Any, Any, Any]:
+    """New Chromium + context + page for :func:`apply_to_vacancies_ui_batch`."""
+    browser = playwright.chromium.launch(
+        headless=config.headless,
+        args=list(CHROMIUM_LAUNCH_ARGS),
+    )
+    context = browser.new_context(
+        storage_state=storage_state,
+        viewport=HH_UI_VIEWPORT,
+    )
+    page = context.new_page()
+    return browser, context, page
+
+
 @dataclass(frozen=True)
 class VacancyApplySpec:
     """One vacancy in a UI apply batch (same browser session)."""
@@ -1066,7 +1095,10 @@ def apply_to_vacancies_ui_batch(
     xsrf_cooldown_initial_seconds: float = _HH_UI_BATCH_XSRF_COOLDOWN_INITIAL_S,
     xsrf_cooldown_cap_seconds: float = _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S,
 ) -> tuple[list[tuple[int, ApplyResult]], str | None]:
-    """One Chromium launch; sequential ``goto`` + apply per item; retries with backoff per item.
+    """Sequential ``goto`` + apply per item in one browser session; retries with backoff per item.
+
+    If Chromium crashes or the page target closes (OOM, ``Target crashed``), launches a fresh
+    browser with the same ``storage_state`` and retries the current attempt (capped per vacancy).
 
     Returns ``(results, abort_reason)``. ``abort_reason`` is ``\"negotiations_limit\"``,
     ``\"cancelled\"``, or ``None`` when the loop finished normally.
@@ -1079,15 +1111,7 @@ def apply_to_vacancies_ui_batch(
         browser = None
         context = None
         try:
-            browser = p.chromium.launch(
-                headless=config.headless,
-                args=list(CHROMIUM_LAUNCH_ARGS),
-            )
-            context = browser.new_context(
-                storage_state=storage_state,
-                viewport=HH_UI_VIEWPORT,
-            )
-            page = context.new_page()
+            browser, context, page = _launch_batch_browser_session(p, storage_state, config)
             consecutive_popup_xsrf = 0
             for item_index, spec in enumerate(items):
                 if cancel_check and cancel_check():
@@ -1102,21 +1126,56 @@ def apply_to_vacancies_ui_batch(
                     results.append((spec.autoparsed_vacancy_id, invalid))
                     continue
                 last: ApplyResult | None = None
-                for attempt in range(max_retries):
-                    page.goto(
-                        spec.vacancy_url,
-                        wait_until="domcontentloaded",
-                        timeout=config.navigation_timeout_ms,
-                    )
-                    _jitter(config)
-                    last = _apply_vacancy_flow_on_page(
-                        page,
-                        vacancy_url=spec.vacancy_url,
-                        resume_hh_id=spec.resume_hh_id,
-                        config=config,
-                        log_user_id=log_user_id,
-                        cover_letter=spec.cover_letter,
-                    )
+                attempt = 0
+                target_closed_recoveries = 0
+                while attempt < max_retries:
+                    try:
+                        page.goto(
+                            spec.vacancy_url,
+                            wait_until="domcontentloaded",
+                            timeout=config.navigation_timeout_ms,
+                        )
+                        _jitter(config)
+                        last = _apply_vacancy_flow_on_page(
+                            page,
+                            vacancy_url=spec.vacancy_url,
+                            resume_hh_id=spec.resume_hh_id,
+                            config=config,
+                            log_user_id=log_user_id,
+                            cover_letter=spec.cover_letter,
+                        )
+                    except Exception as exc:
+                        if not _is_target_closed_error(exc):
+                            raise
+                        target_closed_recoveries += 1
+                        if target_closed_recoveries > _HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM:
+                            logger.error(
+                                "hh_ui_batch_target_closed_recoveries_exhausted",
+                                log_user_id=log_user_id,
+                                vacancy_id=spec.autoparsed_vacancy_id,
+                                recoveries=target_closed_recoveries,
+                                error=str(exc)[:400],
+                            )
+                            last = ApplyResult(
+                                outcome=ApplyOutcome.ERROR,
+                                detail=f"browser_target_closed:{target_closed_recoveries}",
+                            )
+                            break
+                        logger.warning(
+                            "hh_ui_batch_target_closed_recovering",
+                            log_user_id=log_user_id,
+                            vacancy_id=spec.autoparsed_vacancy_id,
+                            apply_attempt=attempt + 1,
+                            recovery_n=target_closed_recoveries,
+                            error=str(exc)[:400],
+                        )
+                        dispose_sync_browser_context(context, browser)
+                        browser, context, page = _launch_batch_browser_session(
+                            p, storage_state, config
+                        )
+                        continue
+                    if last is None:
+                        last = ApplyResult(outcome=ApplyOutcome.ERROR, detail="empty")
                     if apply_outcome_is_terminal_no_retry(last.outcome):
                         break
                     if not apply_result_should_retry_popup_batch(last):
@@ -1134,6 +1193,7 @@ def apply_to_vacancies_ui_batch(
                             next_delay_s=delay,
                         )
                         time.sleep(delay)
+                    attempt += 1
                 final = last or ApplyResult(outcome=ApplyOutcome.ERROR, detail="empty")
                 if on_item_done:
                     on_item_done(spec, final)
