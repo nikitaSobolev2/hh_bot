@@ -74,3 +74,20 @@ def apply_max_cap(vacancies: list[AutoparsedVacancy], max_per_run: int) -> list[
     if max_per_run < 0:
         return vacancies
     return vacancies[:max_per_run]
+
+
+def work_units_for_autorespond_progress(
+    capped: list[AutoparsedVacancy],
+    already_handled: set[str],
+) -> tuple[int, int]:
+    """How many capped rows get a progress tick vs pre-skipped (already applied / employer questions).
+
+    Returns ``(work_units, pre_skipped_autorespond)``. Must match the autorespond loop
+    branch that continues without ticking.
+    """
+    pre_skipped = sum(
+        1
+        for v in capped
+        if v.hh_vacancy_id in already_handled or v.needs_employer_questions
+    )
+    return len(capped) - pre_skipped, pre_skipped

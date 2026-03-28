@@ -306,6 +306,19 @@ async def _run_autorespond_async(
                 [v.hh_vacancy_id for v in capped],
             )
 
+        work_units, pre_skipped_autorespond = autorespond_logic.work_units_for_autorespond_progress(
+            capped, already_handled
+        )
+        logger.info(
+            "autorespond_progress_totals",
+            company_id=company_id,
+            trigger=trigger,
+            user_id=user.id,
+            after_cap=len(capped),
+            work_units=work_units,
+            pre_skipped_autorespond=pre_skipped_autorespond,
+        )
+
         cover_ai_client: AIClient | None = None
 
         queued = 0
@@ -323,6 +336,7 @@ async def _run_autorespond_async(
             celery_task
             and user.telegram_id
             and capped
+            and work_units > 0
             and user.telegram_id > 0
         )
         if show_progress:
@@ -334,7 +348,7 @@ async def _run_autorespond_async(
                 title=company.vacancy_title,
                 bar_labels=[get_text("progress-bar-autorespond", locale)],
                 celery_task_id=celery_id,
-                initial_totals=[len(capped)],
+                initial_totals=[work_units],
             )
             await progress.update_footer(
                 task_key,
@@ -342,9 +356,8 @@ async def _run_autorespond_async(
             )
             await clear_autorespond_failed_counter(user.telegram_id, task_key)
 
-        total_v = len(capped)
         ar_prog = (
-            {"task_key": task_key, "total": total_v, "locale": locale}
+            {"task_key": task_key, "total": work_units, "locale": locale}
             if (task_key and progress and progress_bot)
             else None
         )
@@ -400,17 +413,6 @@ async def _run_autorespond_async(
 
                 if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
                     skipped += 1
-                    if ar_prog and progress_bot:
-                        await tick_autorespond_bar(
-                            bot=progress_bot,
-                            chat_id=user.telegram_id,
-                            task_key=ar_prog["task_key"],
-                            total=ar_prog["total"],
-                            locale=ar_prog["locale"],
-                            footer_failed_line=get_text(
-                                "autorespond-progress-failed", locale, count=failed
-                            ),
-                        )
                     continue
 
                 if await hh_vacancy_public_is_unavailable(vac.hh_vacancy_id):
