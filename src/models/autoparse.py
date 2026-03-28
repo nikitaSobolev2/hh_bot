@@ -129,3 +129,8 @@ class AutoparsedVacancy(Base):
 
     def __repr__(self) -> str:
         return f"<AutoparsedVacancy id={self.id} hh={self.hh_vacancy_id} title={self.title!r}>"
+
+
+# Negotiations sync: HH public API returned 404 — we still store a stub row for feed/liked merge.
+# This score is excluded from feed delivery and compat-update queries (see AutoparsedVacancyRepository).
+NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT = -1.0

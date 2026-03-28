@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.config import settings
 from src.core.i18n import get_text
 from src.core.logging import get_logger
-from src.models.autoparse import AutoparsedVacancy
+from src.models.autoparse import NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT, AutoparsedVacancy
 from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
 from src.repositories.hh import HHAreaRepository, HHEmployerRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
@@ -130,6 +130,7 @@ async def _sync_negotiations_async(
             )
             if dup.scalar_one_or_none() is not None:
                 continue
+            is_placeholder = bool(vac_dict.pop("_negotiations_placeholder", False))
             employer_id = vac_dict.get("_employer_id")
             area_id = vac_dict.get("_area_id")
             if employer_id is None or area_id is None:
@@ -141,10 +142,13 @@ async def _sync_negotiations_async(
                 if area_id is None and area_data.get("id"):
                     area = await area_repo.get_or_create_by_hh_id(area_data)
                     area_id = area.id
+            compat_score = (
+                NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT if is_placeholder else None
+            )
             row = _build_autoparsed_vacancy(
                 vac_dict,
                 autoparse_company_id,
-                compat_score=None,
+                compat_score=compat_score,
                 ai_summary=None,
                 ai_stack=None,
                 employer_id=employer_id,

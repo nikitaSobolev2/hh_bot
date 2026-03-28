@@ -15,6 +15,23 @@ logger = get_logger(__name__)
 _DEFAULT_CONCURRENCY = 5
 
 
+def _placeholder_negotiation_vacancy_dict(hid: str) -> dict:
+    """Minimal vac dict when HH API has no vacancy (404). Still persisted for liked-feed merge."""
+    url = f"https://hh.ru/vacancy/{hid}"
+    return {
+        "hh_vacancy_id": hid,
+        "url": url,
+        "title": "\u2014",
+        "description": "",
+        "orm_fields": {},
+        "employer_data": {},
+        "area_data": {},
+        "company_name": None,
+        "raw_skills": [],
+        "_negotiations_placeholder": True,
+    }
+
+
 async def fetch_merged_vac_dicts_for_hh_ids(
     hh_ids: list[str],
     *,
@@ -44,7 +61,11 @@ async def fetch_merged_vac_dicts_for_hh_ids(
                 )
                 return
             if not page_data:
-                logger.info("negotiations_vacancy_fetch_empty", hh_vacancy_id=hid)
+                logger.info(
+                    "negotiations_vacancy_fetch_empty_placeholder",
+                    hh_vacancy_id=hid,
+                )
+                out[hid] = _placeholder_negotiation_vac_dict(hid)
                 return
             skills = page_data.get("skills", [])
             orm_fields = page_data.get("orm_fields", {})

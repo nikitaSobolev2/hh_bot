@@ -1,11 +1,15 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
+from src.models.autoparse import (
+    NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT,
+    AutoparseCompany,
+    AutoparsedVacancy,
+)
 from src.repositories.base import BaseRepository
 
 
@@ -21,6 +25,14 @@ def _feed_order_by_clause() -> tuple:
     return (
         AutoparsedVacancy.published_at.desc().nulls_last(),
         AutoparsedVacancy.id.desc(),
+    )
+
+
+def _exclude_negotiations_placeholder_compat():
+    """Stub rows from negotiations sync (HH 404) use compatibility_score = -1."""
+    return or_(
+        AutoparsedVacancy.compatibility_score.is_(None),
+        AutoparsedVacancy.compatibility_score != NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT,
     )
 
 
@@ -284,6 +296,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
             .where(
                 AutoparseCompany.user_id == user_id,
                 AutoparseCompany.is_deleted.is_(False),
+                _exclude_negotiations_placeholder_compat(),
             )
             .order_by(*_feed_order_by_clause())
             .limit(limit)
@@ -308,9 +321,12 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
             .where(
                 AutoparseCompany.user_id == user_id,
                 AutoparseCompany.is_deleted.is_(False),
-                or_(
-                    AutoparsedVacancy.compatibility_score.is_(None),
-                    AutoparsedVacancy.compatibility_score < min_compat,
+                and_(
+                    or_(
+                        AutoparsedVacancy.compatibility_score.is_(None),
+                        AutoparsedVacancy.compatibility_score < min_compat,
+                    ),
+                    _exclude_negotiations_placeholder_compat(),
                 ),
             )
             .order_by(*_feed_order_by_clause())
