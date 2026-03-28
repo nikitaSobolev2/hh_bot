@@ -55,6 +55,7 @@ async def test_browser_import_reactivates_revoked_row(monkeypatch: pytest.Monkey
     repo_inst.get_by_user_and_hh_user_id = AsyncMock(return_value=existing)
     repo_inst.update = AsyncMock()
     repo_inst.create = AsyncMock()
+    repo_inst.clear_resume_list_cache = AsyncMock()
 
     with (
         patch(

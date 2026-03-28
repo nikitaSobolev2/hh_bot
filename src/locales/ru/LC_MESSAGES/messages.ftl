@@ -752,7 +752,6 @@ autorespond-pick-default-resume =
     При нескольких резюме AI обычно подбирает лучшее под вакансию.
 autorespond-disabled-global = Автоответ отключён глобально (админ).
 autorespond-no-hh-account = Нет привязанного аккаунта HH.
-autorespond-resume-cache-empty = Сначала откройте ленту или обновите список резюме (кэш пуст).
 autorespond-saved = Настройки сохранены.
 autorespond-queued = Задача автоответа поставлена в очередь.
 autorespond-manual-pipeline-queued = Запущен ручной парсинг; затем автоответ (с письмами) по вакансиям без реакции в ленте.

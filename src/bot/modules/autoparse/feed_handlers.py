@@ -19,10 +19,14 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.autoparse import feed_services
-from src.core.logging import get_logger
 from src.bot.modules.autoparse.callbacks import FeedCallback
+from src.bot.modules.autoparse.hh_resume_list_ui_async import (
+    LIST_RESUMES_TIMEOUT_S,
+    run_list_resumes_ui_async,
+)
 from src.bot.modules.autoparse.states import FeedRespondForm
 from src.core.i18n import I18nContext
+from src.core.logging import get_logger
 from src.models.user import User
 from src.models.vacancy_feed import VacancyFeedSession
 from src.repositories.autoparse import AutoparsedVacancyRepository
@@ -33,9 +37,6 @@ from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 router = Router(name="feed")
 
 logger = get_logger(__name__)
-
-# Playwright resume list can be slow; show loading UI and cap wait so the user is not stuck silent.
-_LIST_RESUMES_TIMEOUT_S = 120.0
 
 
 async def _feed_vacancy_card_text(
@@ -1073,13 +1074,13 @@ async def _feed_respond_core(
                     parse_mode="HTML",
                 )
             try:
-                lr = await _run_list_resumes_ui_feed(storage, user.id)
+                lr = await run_list_resumes_ui_async(storage, user.id)
             except asyncio.TimeoutError:
                 logger.warning(
                     "feed_respond_list_resumes_timeout",
                     user_id=user.id,
                     vacancy_id=vacancy.id,
-                    timeout_s=_LIST_RESUMES_TIMEOUT_S,
+                    timeout_s=LIST_RESUMES_TIMEOUT_S,
                 )
                 with contextlib.suppress(TelegramBadRequest):
                     await callback.message.edit_text(
@@ -1311,13 +1312,13 @@ async def handle_feed_respond_refresh_resumes(
         )
 
     try:
-        lr = await _run_list_resumes_ui_feed(storage, user.id)
+        lr = await run_list_resumes_ui_async(storage, user.id)
     except asyncio.TimeoutError:
         logger.warning(
             "feed_respond_list_resumes_timeout",
             user_id=user.id,
             vacancy_id=vacancy.id,
-            timeout_s=_LIST_RESUMES_TIMEOUT_S,
+            timeout_s=LIST_RESUMES_TIMEOUT_S,
         )
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(

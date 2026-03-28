@@ -84,7 +84,7 @@ class TestRestartPendingParsingTasks:
                 return_value=company_repo,
             ),
             patch(
-                "src.core.celery_async.run_celery_task",
+                "src.services.task_restart.run_celery_task",
                 new=capture_run_celery_task,
             ),
         ):
@@ -139,7 +139,7 @@ class TestRestartPendingParsingTasks:
                 return_value=company_repo,
             ),
             patch(
-                "src.core.celery_async.run_celery_task",
+                "src.services.task_restart.run_celery_task",
                 new=capture_run_celery_task,
             ),
         ):

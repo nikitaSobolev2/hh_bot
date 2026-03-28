@@ -752,7 +752,6 @@ autorespond-pick-default-resume =
     If you have several resumes, AI usually picks the best match per vacancy.
 autorespond-disabled-global = Autorespond is disabled globally (admin).
 autorespond-no-hh-account = No linked HH account.
-autorespond-resume-cache-empty = Open the feed or refresh resumes first (resume list is empty).
 autorespond-saved = Settings saved.
 autorespond-queued = Autorespond task queued.
 autorespond-manual-pipeline-queued = Manual parse started; then autorespond (with cover letters) will run for unreacted vacancies.

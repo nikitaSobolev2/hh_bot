@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.autoparse import services as ap_service
@@ -14,12 +15,14 @@ from src.bot.modules.autoparse.callbacks import AutoparseCallback
 from src.bot.modules.autoparse.keyboards import autorespond_settings_keyboard, autoparse_detail_keyboard
 from src.core.celery_async import run_celery_task
 from src.core.i18n import I18nContext
+from src.core.logging import get_logger
 from src.models.user import User
 from src.repositories.app_settings import AppSettingRepository
 from src.repositories.autoparse import AutoparseCompanyRepository
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 
 router = Router(name="autoparse_autorespond")
+logger = get_logger(__name__)
 
 
 async def autorespond_globally_enabled(session: AsyncSession) -> bool:
@@ -276,10 +279,161 @@ async def ar_resume_acc(
     if not acc or acc.user_id != user.id:
         await callback.answer(i18n.get("autorespond-no-hh-account"), show_alert=True)
         return
+    callback_answered = False
     cache = acc.resume_list_cache or []
     if not cache:
-        await callback.answer(i18n.get("autorespond-resume-cache-empty"), show_alert=True)
+        from src.config import settings
+        from src.bot.modules.autoparse.hh_resume_list_ui_async import (
+            LIST_RESUMES_TIMEOUT_S,
+            run_list_resumes_ui_async,
+        )
+        from src.services.hh.client import HhApiClient
+        from src.services.hh.crypto import HhTokenCipher
+        from src.services.hh.token_service import ensure_access_token
+        from src.services.hh_ui.outcomes import ApplyOutcome
+        from src.services.hh_ui.storage import decrypt_browser_storage
+
+        if settings.hh_ui_apply_enabled:
+            if not acc.browser_storage_enc:
+                await callback.answer(
+                    i18n.get("feed-respond-no-browser-session"), show_alert=True
+                )
+                return
+            try:
+                cipher = HhTokenCipher(settings.hh_token_encryption_key)
+                storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+            except Exception:
+                await callback.answer(i18n.get("hh-token-error"), show_alert=True)
+                return
+            if not storage:
+                await callback.answer(
+                    i18n.get("feed-respond-no-browser-session"), show_alert=True
+                )
+                return
+
+            await callback.answer()
+            callback_answered = True
+            with contextlib.suppress(TelegramBadRequest):
+                await callback.message.edit_text(
+                    i18n.get("feed-respond-loading-resumes"),
+                    parse_mode="HTML",
+                )
+            try:
+                lr = await run_list_resumes_ui_async(storage, user.id)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "autorespond_list_resumes_timeout",
+                    user_id=user.id,
+                    hh_linked_account_id=acc.id,
+                    timeout_s=LIST_RESUMES_TIMEOUT_S,
+                )
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-load-timeout"),
+                        parse_mode="HTML",
+                    )
+                return
+            except Exception as exc:
+                logger.exception(
+                    "autorespond_list_resumes_failed",
+                    user_id=user.id,
+                    hh_linked_account_id=acc.id,
+                    error=str(exc),
+                )
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+                    )
+                return
+            if lr.outcome == ApplyOutcome.CAPTCHA:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-ui-captcha"), parse_mode="HTML"
+                    )
+                if lr.screenshot_bytes:
+                    await callback.message.answer_photo(
+                        BufferedInputFile(lr.screenshot_bytes, "hh_captcha.png"),
+                    )
+                return
+            if lr.outcome == ApplyOutcome.SESSION_EXPIRED:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-ui-session-expired"), parse_mode="HTML"
+                    )
+                return
+            if lr.outcome != ApplyOutcome.SUCCESS or not lr.resumes:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+                    )
+                return
+            logger.info(
+                "autorespond_resume_cache_miss",
+                user_id=user.id,
+                hh_linked_account_id=acc.id,
+                resume_count=len(lr.resumes),
+            )
+            await acc_repo.update_resume_list_cache(
+                acc,
+                [{"id": r.id, "title": r.title} for r in lr.resumes[:12]],
+            )
+            await session.commit()
+            await session.refresh(acc)
+        else:
+            try:
+                _, access = await ensure_access_token(session, acc.id)
+            except Exception:
+                await callback.answer(i18n.get("hh-token-error"), show_alert=True)
+                return
+
+            await callback.answer()
+            callback_answered = True
+            with contextlib.suppress(TelegramBadRequest):
+                await callback.message.edit_text(
+                    i18n.get("feed-respond-loading-resumes"),
+                    parse_mode="HTML",
+                )
+            client = HhApiClient(access)
+            try:
+                data = await client.get_resumes_mine(per_page=20)
+            except Exception:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-fetch-error"), parse_mode="HTML"
+                    )
+                return
+
+            items = data.get("items") or []
+            cache_items: list[dict[str, str]] = []
+            for it in items:
+                rid = it.get("id")
+                if not rid:
+                    continue
+                title = it.get("title") or rid
+                cache_items.append(
+                    {"id": str(rid).strip(), "title": str(title)[:60]}
+                )
+            if not cache_items:
+                with contextlib.suppress(TelegramBadRequest):
+                    await callback.message.edit_text(
+                        i18n.get("feed-respond-no-resumes"), parse_mode="HTML"
+                    )
+                return
+            await acc_repo.update_resume_list_cache(acc, cache_items[:12])
+            await session.commit()
+            await session.refresh(acc)
+
+        cache = acc.resume_list_cache or []
+
+    if not cache:
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("feed-respond-no-resumes"), parse_mode="HTML"
+            )
+        if not callback_answered:
+            await callback.answer()
         return
+
     rows = []
     for idx, item in enumerate(cache[:12]):
         rid = str(item.get("id", ""))
@@ -310,7 +464,8 @@ async def ar_resume_acc(
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         parse_mode="HTML",
     )
-    await callback.answer()
+    if not callback_answered:
+        await callback.answer()
 
 
 @router.callback_query(AutoparseCallback.filter(F.action == "ar_resume_pick"))

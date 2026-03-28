@@ -294,7 +294,7 @@ class TestRunAutoparseCompanyLock:
                 return_value=we_repo,
             ),
             patch(
-                "src.services.parser.hh_parser_service.HHParserService.parse_vacancies",
+                "src.services.parser.scraper.HHScraper.collect_vacancy_urls",
                 new_callable=AsyncMock,
                 return_value=[],
             ),

@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
@@ -33,11 +32,11 @@ def test_popup_only_returns_incomplete_when_try_popup_returns_none(
     monkeypatch, base_cfg: HhUiApplyConfig
 ) -> None:
     page = MagicMock()
-    page.wait_for_selector = MagicMock(return_value=None)
 
     monkeypatch.setattr("src.services.hh_ui.runner._detect_login", lambda p: False)
     monkeypatch.setattr("src.services.hh_ui.runner._detect_captcha", lambda p: False)
     monkeypatch.setattr("src.services.hh_ui.runner._detect_already_applied", lambda p: False)
+    monkeypatch.setattr("src.services.hh_ui.runner._wait_for_xsrf_for_popup", lambda *a, **k: True)
     monkeypatch.setattr(
         "src.services.hh_ui.runner.try_apply_via_popup",
         lambda *a, **k: None,
@@ -53,20 +52,19 @@ def test_popup_only_returns_incomplete_when_try_popup_returns_none(
     )
     assert r.outcome == ApplyOutcome.ERROR
     assert r.detail == POPUP_INCOMPLETE_DETAIL
-    page.wait_for_selector.assert_called_once()
 
 
 def test_popup_only_xsrf_wait_timeout_returns_not_ready(
     monkeypatch, base_cfg: HhUiApplyConfig
 ) -> None:
     page = MagicMock()
-    page.wait_for_selector = MagicMock(
-        side_effect=PlaywrightTimeoutError("timeout")
-    )
 
     monkeypatch.setattr("src.services.hh_ui.runner._detect_login", lambda p: False)
     monkeypatch.setattr("src.services.hh_ui.runner._detect_captcha", lambda p: False)
     monkeypatch.setattr("src.services.hh_ui.runner._detect_already_applied", lambda p: False)
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner._wait_for_xsrf_for_popup", lambda *a, **k: False
+    )
     monkeypatch.setattr(
         "src.services.hh_ui.runner.try_apply_via_popup",
         lambda *a, **k: pytest.fail("try_apply_via_popup must not run"),
@@ -86,11 +84,11 @@ def test_popup_only_xsrf_wait_timeout_returns_not_ready(
 
 def test_popup_path_returns_on_success(monkeypatch, base_cfg: HhUiApplyConfig) -> None:
     page = MagicMock()
-    page.wait_for_selector = MagicMock(return_value=None)
 
     monkeypatch.setattr("src.services.hh_ui.runner._detect_login", lambda p: False)
     monkeypatch.setattr("src.services.hh_ui.runner._detect_captcha", lambda p: False)
     monkeypatch.setattr("src.services.hh_ui.runner._detect_already_applied", lambda p: False)
+    monkeypatch.setattr("src.services.hh_ui.runner._wait_for_xsrf_for_popup", lambda *a, **k: True)
     monkeypatch.setattr(
         "src.services.hh_ui.runner.try_apply_via_popup",
         lambda *a, **k: ApplyResult(outcome=ApplyOutcome.SUCCESS, detail="popup_api"),
