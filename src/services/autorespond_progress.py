@@ -37,6 +37,11 @@ def hh_ui_batch_checkpoint_key(chat_id: int, task_key: str) -> str:
     return f"checkpoint:hh_ui_apply_batch:{chat_id}:{task_key}"
 
 
+def autorespond_ui_tail_key(chat_id: int, task_key: str) -> str:
+    """Parent ``run_autorespond`` pending UI rows not yet dispatched (between child batches)."""
+    return f"progress:autorespond_ui_tail:{chat_id}:{task_key}"
+
+
 def hh_ui_batch_resume_payload(
     *,
     user_id: int,
@@ -102,17 +107,22 @@ def save_hh_ui_batch_checkpoint_sync(
     *,
     resume: dict[str, Any] | None = None,
 ) -> None:
-    """Persist remaining batch rows and kwargs for cold resume. Empty list deletes the key."""
+    """Persist remaining batch rows and kwargs for cold resume.
+
+    Empty ``remaining_items`` still stores JSON with ``items: []`` when ``resume`` is set
+    so progress refresh can merge with the parent tail between Playwright batches.
+    Without ``resume``, an empty list deletes the key (nothing to resume).
+    """
     r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
     key = hh_ui_batch_checkpoint_key(chat_id, task_key)
     try:
-        if not remaining_items:
+        if not remaining_items and resume is None:
             r.delete(key)
-        else:
-            payload: dict[str, Any] = {"items": remaining_items}
-            if resume is not None:
-                payload["resume"] = resume
-            r.set(key, json.dumps(payload), ex=_DONE_TTL_S)
+            return
+        payload: dict[str, Any] = {"items": remaining_items}
+        if resume is not None:
+            payload["resume"] = resume
+        r.set(key, json.dumps(payload), ex=_DONE_TTL_S)
     finally:
         r.close()
 
@@ -120,8 +130,9 @@ def save_hh_ui_batch_checkpoint_sync(
 def load_hh_ui_batch_checkpoint_full_sync(
     chat_id: int, task_key: str,
 ) -> tuple[list[dict], dict[str, Any] | None] | None:
-    """Return (items, resume) if checkpoint exists and has items.
+    """Return (items, resume) when a checkpoint exists.
 
+    ``items`` may be empty when the child batch finished but ``resume`` is kept for refresh.
     ``resume`` is None when the JSON has no ``resume`` key (legacy checkpoints).
     """
     r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
@@ -135,24 +146,64 @@ def load_hh_ui_batch_checkpoint_full_sync(
         if not isinstance(items, list):
             return None
         clean_items = [x for x in items if isinstance(x, dict)]
-        if not clean_items:
-            return None
+        resume: dict[str, Any] | None
         if "resume" not in data:
-            return (clean_items, None)
-        resume = data.get("resume")
-        if not isinstance(resume, dict):
-            return (clean_items, None)
+            resume = None
+        else:
+            rsum = data.get("resume")
+            resume = rsum if isinstance(rsum, dict) else None
+        if not clean_items and not resume:
+            return None
         return (clean_items, resume)
     finally:
         r.close()
 
 
 def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] | None:
-    """Return remaining items if a checkpoint exists."""
+    """Return remaining items if a checkpoint exists (may be empty list when resume-only)."""
     full = load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
     if not full:
         return None
     return full[0]
+
+
+def save_autorespond_ui_tail_sync(chat_id: int, task_key: str, pending_items: list[dict]) -> None:
+    """Parent queue: UI item dicts not yet dispatched to ``apply_to_vacancies_batch_ui_task``."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    key = autorespond_ui_tail_key(chat_id, task_key)
+    try:
+        if not pending_items:
+            r.delete(key)
+        else:
+            r.set(key, json.dumps({"items": pending_items}), ex=_DONE_TTL_S)
+    finally:
+        r.close()
+
+
+def load_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> list[dict] | None:
+    """Load parent pending UI rows for refresh between child batches."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    key = autorespond_ui_tail_key(chat_id, task_key)
+    try:
+        raw = r.get(key)
+        if not raw:
+            return None
+        data = json.loads(raw)
+        items = data.get("items")
+        if not isinstance(items, list):
+            return None
+        out = [x for x in items if isinstance(x, dict)]
+        return out if out else None
+    finally:
+        r.close()
+
+
+def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.delete(autorespond_ui_tail_key(chat_id, task_key))
+    finally:
+        r.close()
 
 
 def clear_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> None:

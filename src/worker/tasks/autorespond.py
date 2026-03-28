@@ -163,7 +163,10 @@ async def _run_autorespond_async(
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
         clear_autorespond_failed_counter,
+        clear_autorespond_ui_tail_sync,
+        clear_hh_ui_batch_checkpoint_sync,
         is_autorespond_cancelled_sync,
+        save_autorespond_ui_tail_sync,
         tick_autorespond_bar,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
@@ -326,6 +329,7 @@ async def _run_autorespond_async(
         failed = 0
         locale = user.language_code or "ru"
         ui_batch_buffer: list[tuple[AutoparsedVacancy, str]] = []
+        queue_ui_items: list[dict] = []
 
         progress: object | None = None
         task_key: str | None = None
@@ -373,6 +377,16 @@ async def _run_autorespond_async(
                 nonlocal queued
                 if not ui_batch_buffer:
                     return
+                n = len(ui_batch_buffer)
+                batch_payload = [
+                    {
+                        "autoparsed_vacancy_id": vac.id,
+                        "hh_vacancy_id": vac.hh_vacancy_id,
+                        "resume_id": rid,
+                        "vacancy_url": normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id),
+                    }
+                    for vac, rid in ui_batch_buffer
+                ]
                 apply_to_vacancies_batch_ui_task.delay(
                     user.id,
                     user.telegram_id,
@@ -380,22 +394,19 @@ async def _run_autorespond_async(
                     locale,
                     hh_acc_id,
                     0,
-                    [
-                        {
-                            "autoparsed_vacancy_id": vac.id,
-                            "hh_vacancy_id": vac.hh_vacancy_id,
-                            "resume_id": rid,
-                            "vacancy_url": normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id),
-                        }
-                        for vac, rid in ui_batch_buffer
-                    ],
+                    batch_payload,
                     cover_letter_style,
                     cover_task_enabled,
                     silent_feed=True,
                     autorespond_progress=ar_prog,
                 )
-                queued += len(ui_batch_buffer)
+                queued += n
                 ui_batch_buffer.clear()
+                for _ in range(n):
+                    if queue_ui_items:
+                        queue_ui_items.pop(0)
+                if task_key and user.telegram_id:
+                    save_autorespond_ui_tail_sync(user.telegram_id, task_key, list(queue_ui_items))
 
             for idx, vac in enumerate(capped, start=1):
                 if task_key and user.telegram_id and is_autorespond_cancelled_sync(
@@ -409,6 +420,9 @@ async def _run_autorespond_async(
                         trigger=trigger,
                         queued=queued,
                     )
+                    if task_key and user.telegram_id:
+                        clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
+                        clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
                     return {
                         "status": "cancelled",
                         "queued": queued,
@@ -470,6 +484,9 @@ async def _run_autorespond_async(
                                 complete_bars=False,
                             )
                             progress = None
+                        if task_key and user.telegram_id:
+                            clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
+                            clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
                         return {
                             "status": "rate_limited",
                             "queued": queued,
@@ -501,7 +518,16 @@ async def _run_autorespond_async(
                                 celery_task_id=ar_prog.get("celery_task_id"),
                             )
                         continue
+                    item_d = {
+                        "autoparsed_vacancy_id": vac.id,
+                        "hh_vacancy_id": vac.hh_vacancy_id,
+                        "resume_id": str(resume_id),
+                        "vacancy_url": normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id),
+                    }
+                    queue_ui_items.append(item_d)
                     ui_batch_buffer.append((vac, resume_id))
+                    if task_key and user.telegram_id:
+                        save_autorespond_ui_tail_sync(user.telegram_id, task_key, list(queue_ui_items))
                     if len(ui_batch_buffer) >= settings.hh_ui_apply_batch_size:
                         await flush_ui_batch()
                 else:
@@ -618,6 +644,10 @@ async def _run_autorespond_async(
                         )
 
             await flush_ui_batch()
+
+            if task_key and user.telegram_id:
+                clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
+                clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
 
         except Exception:
             if progress and task_key and user.telegram_id:

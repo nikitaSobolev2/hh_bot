@@ -18,9 +18,12 @@ from src.models.user import User
 from src.services.autorespond_progress import (
     clear_autorespond_done_counter,
     clear_autorespond_failed_counter,
+    clear_autorespond_ui_tail_sync,
     clear_hh_ui_batch_active_sync,
+    clear_hh_ui_batch_checkpoint_sync,
     get_hh_ui_batch_active_sync,
     is_autorespond_cancelled_sync,
+    load_autorespond_ui_tail_sync,
     load_hh_ui_batch_checkpoint_full_sync,
     set_autorespond_cancelled,
 )
@@ -243,34 +246,35 @@ async def _try_refresh_autorespond(
         return
 
     full = load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
-    if not full:
-        await callback.answer(
-            i18n.get("progress-refresh-nothing"),
-            show_alert=True,
-        )
-        return
-    items, resume = full
-    if not items:
-        await callback.answer(
-            i18n.get("progress-refresh-nothing"),
-            show_alert=True,
-        )
-        return
+    tail_items = load_autorespond_ui_tail_sync(chat_id, task_key) or []
+
+    items: list[dict] = []
+    resume: dict | None = None
+    if full:
+        items, resume = full
     if not resume:
         await callback.answer(
             i18n.get("progress-refresh-no-resume"),
             show_alert=True,
         )
         return
-
-    active_id = get_hh_ui_batch_active_sync(chat_id, task_key)
-    if active_id and celery_task_id_is_active(active_id):
+    if not items:
+        items = list(tail_items)
+    if not items:
         await callback.answer(
-            i18n.get("progress-refresh-running"),
+            i18n.get("progress-refresh-nothing"),
             show_alert=True,
         )
         return
+
+    active_id = get_hh_ui_batch_active_sync(chat_id, task_key)
     if active_id:
+        if celery_task_id_is_active(active_id):
+            await run_sync_in_thread(
+                celery_app.control.revoke,
+                active_id,
+                terminate=True,
+            )
         clear_hh_ui_batch_active_sync(chat_id, task_key)
 
     res = await run_celery_task(
@@ -328,6 +332,8 @@ async def handle_progress_cancel(
                 await set_autorespond_cancelled(chat_id, task_key)
                 await clear_autorespond_done_counter(chat_id, task_key)
                 await clear_autorespond_failed_counter(chat_id, task_key)
+                clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+                clear_autorespond_ui_tail_sync(chat_id, task_key)
                 await svc.cancel_task(task_key)
                 await callback.answer(
                     i18n.get("progress-task-cancelled"),
@@ -343,6 +349,8 @@ async def handle_progress_cancel(
         if task_key.startswith("autorespond:"):
             await set_autorespond_cancelled(chat_id, task_key)
             await clear_autorespond_done_counter(chat_id, task_key)
+            clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+            clear_autorespond_ui_tail_sync(chat_id, task_key)
 
         await run_sync_in_thread(
             celery_app.control.revoke,
