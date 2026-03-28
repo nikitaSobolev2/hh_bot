@@ -372,6 +372,9 @@ async def _run_autorespond_async(
             else None
         )
 
+        # cancelled / rate_limited returns skip the safety flush below
+        _autorespond_exit = "ok"
+
         try:
             async def flush_ui_batch() -> None:
                 nonlocal queued
@@ -423,6 +426,7 @@ async def _run_autorespond_async(
                     if task_key and user.telegram_id:
                         clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
                         clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
+                    _autorespond_exit = "cancelled"
                     return {
                         "status": "cancelled",
                         "queued": queued,
@@ -487,6 +491,7 @@ async def _run_autorespond_async(
                         if task_key and user.telegram_id:
                             clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
                             clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
+                        _autorespond_exit = "rate_limited"
                         return {
                             "status": "rate_limited",
                             "queued": queued,
@@ -659,6 +664,26 @@ async def _run_autorespond_async(
                     await progress.finish_task(task_key, complete_bars=False)
             raise
         finally:
+            # If Celery soft-timeout or another error stops the loop mid-way, the last
+            # partial UI batch may never reach the normal ``await flush_ui_batch()`` — then
+            # no hh_ui tasks run for those rows and the progress bar never reaches ``total``.
+            if _autorespond_exit not in ("cancelled", "rate_limited"):
+                try:
+                    if ui_batch_buffer:
+                        logger.warning(
+                            "autorespond_flush_ui_batch_finally",
+                            company_id=company_id,
+                            user_id=user.id,
+                            trigger=trigger,
+                            pending=len(ui_batch_buffer),
+                        )
+                    await flush_ui_batch()
+                except Exception as exc:
+                    logger.warning(
+                        "autorespond_flush_ui_batch_finally_failed",
+                        company_id=company_id,
+                        error=str(exc)[:400],
+                    )
             if progress_bot:
                 with contextlib.suppress(Exception):
                     await progress_bot.session.close()
@@ -684,8 +709,11 @@ async def _run_autorespond_async(
     bind=True,
     base=HHBotTask,
     name="autoparse.run_autorespond",
-    soft_time_limit=600,
-    time_limit=660,
+    # Parent task only enqueues hh_ui batches (Playwright runs elsewhere). The loop still
+    # does DB + HH API + optional cover/AI per vacancy — 10m was too short and left a
+    # partial ``ui_batch_buffer`` unflushed, stalling the progress bar short of ``total``.
+    soft_time_limit=settings.autoparse_run_company_soft_time_limit_seconds,
+    time_limit=settings.autoparse_run_company_time_limit_seconds,
 )
 def run_autorespond_company(
     self,
