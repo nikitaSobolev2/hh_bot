@@ -32,12 +32,14 @@ _SYNC_RESUME_PLACEHOLDER = "sync"
 
 async def _sync_negotiations_async(
     session_factory: async_sessionmaker[AsyncSession],
-    task: HHBotTask,
+    task: HHBotTask | None,
     user_id: int,
     hh_linked_account_id: int,
     autoparse_company_id: int,
     chat_id: int,
     locale: str,
+    *,
+    notify_user: bool = True,
 ) -> dict:
     async with session_factory() as session:
         acc_repo = HhLinkedAccountRepository(session)
@@ -75,12 +77,13 @@ async def _sync_negotiations_async(
             return {"status": "error", "reason": fetch_err}
 
     if not vacancy_ids:
-        bot = task.create_bot()
-        try:
-            body = get_text("autoparse-sync-empty", locale)
-            await bot.send_message(chat_id, body, parse_mode="HTML")
-        finally:
-            await bot.session.close()
+        if notify_user and task is not None:
+            bot = task.create_bot()
+            try:
+                body = get_text("autoparse-sync-empty", locale)
+                await bot.send_message(chat_id, body, parse_mode="HTML")
+            finally:
+                await bot.session.close()
         return {
             "status": "ok",
             "inserted": 0,
@@ -213,20 +216,21 @@ async def _sync_negotiations_async(
 
         await session.commit()
 
-    bot = task.create_bot()
-    try:
-        body = get_text(
-            "autoparse-sync-done",
-            locale,
-            inserted=inserted,
-            skipped=skipped_existing,
-            total=len(vacancy_ids),
-            liked_in_feed=liked_in_feed,
-            vacancies_imported=vacancies_imported,
-        )
-        await bot.send_message(chat_id, body, parse_mode="HTML")
-    finally:
-        await bot.session.close()
+    if notify_user and task is not None:
+        bot = task.create_bot()
+        try:
+            body = get_text(
+                "autoparse-sync-done",
+                locale,
+                inserted=inserted,
+                skipped=skipped_existing,
+                total=len(vacancy_ids),
+                liked_in_feed=liked_in_feed,
+                vacancies_imported=vacancies_imported,
+            )
+            await bot.send_message(chat_id, body, parse_mode="HTML")
+        finally:
+            await bot.session.close()
 
     logger.info(
         "negotiations_sync_completed",

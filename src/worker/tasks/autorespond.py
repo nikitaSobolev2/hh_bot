@@ -26,6 +26,7 @@ from src.services.hh_ui.rate_limit import (
 from src.services.hh_ui.runner import normalize_hh_vacancy_url
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
+from src.worker.tasks.negotiations_sync import _sync_negotiations_async
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -255,6 +256,39 @@ async def _run_autorespond_async(
             )
             return {"status": "not_configured"}
 
+        locale = user.language_code or "ru"
+        sync_task = celery_task if isinstance(celery_task, HHBotTask) else None
+        sync_res = await _sync_negotiations_async(
+            session_factory,
+            sync_task,
+            user.id,
+            hh_acc_id,
+            company_id,
+            user.telegram_id,
+            locale,
+            notify_user=False,
+        )
+        if sync_res.get("status") == "error":
+            reason = sync_res.get("reason")
+            logger.warning(
+                "autorespond_exit",
+                company_id=company_id,
+                trigger=trigger,
+                reason="negotiations_sync_failed",
+                sync_reason=reason,
+            )
+            return {"status": "negotiations_sync_failed", "reason": reason}
+        logger.info(
+            "autorespond_preflight_negotiations_sync",
+            company_id=company_id,
+            user_id=user.id,
+            trigger=trigger,
+            inserted=sync_res.get("inserted"),
+            skipped_existing=sync_res.get("skipped_existing"),
+            total_parsed=sync_res.get("total_parsed"),
+            vacancies_imported=sync_res.get("vacancies_imported"),
+        )
+
         ap_settings = await ap_service.get_user_autoparse_settings(session, user.id)
         cover_letter_style = ap_settings.get("cover_letter_style", "professional")
         cover_task_enabled = bool(
@@ -330,7 +364,6 @@ async def _run_autorespond_async(
         queued = 0
         skipped = 0
         failed = 0
-        locale = user.language_code or "ru"
         ui_batch_buffer: list[tuple[AutoparsedVacancy, str]] = []
         queue_ui_items: list[dict] = []
 
