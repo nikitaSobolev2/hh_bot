@@ -77,11 +77,12 @@ def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
 
 
 def _ui_outcome_increments_autorespond_failed(outcome: ApplyOutcome) -> bool:
-    """Redis footer: count everything except clear success / already applied / preflight unavailable."""
+    """Redis footer: count everything except clear success / already applied / preflight skip."""
     return outcome not in (
         ApplyOutcome.SUCCESS,
         ApplyOutcome.ALREADY_RESPONDED,
         ApplyOutcome.VACANCY_UNAVAILABLE,
+        ApplyOutcome.EMPLOYER_QUESTIONS,
     )
 
 
@@ -384,7 +385,7 @@ async def _apply_batch_ui_async(
             if attach_error_bytes:
                 config = replace(config, attach_error_screenshot_bytes=True)
 
-        from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+        from src.services.hh.vacancy_public import hh_vacancy_public_preflight
 
         item_by_vid: dict[int, dict] = {int(x["autoparsed_vacancy_id"]): x for x in items}
         finalized_vids: set[int] = set()
@@ -432,7 +433,8 @@ async def _apply_batch_ui_async(
             vid = int(it["autoparsed_vacancy_id"])
             hh_id = str(it["hh_vacancy_id"])
             url = normalize_hh_vacancy_url(str(it.get("vacancy_url") or ""), hh_id)
-            if await hh_vacancy_public_is_unavailable(hh_id):
+            preflight = await hh_vacancy_public_preflight(hh_id)
+            if preflight.unavailable:
                 await _finalize_batch_item_async(
                     self=self,
                     session_factory=session_factory,
@@ -445,6 +447,29 @@ async def _apply_batch_ui_async(
                     result=ApplyResult(
                         outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
                         detail="preflight_api",
+                    ),
+                    items=items,
+                    finalized_vids=finalized_vids,
+                    bot=bot,
+                    silent_feed=silent_feed,
+                    send_error_screenshot_to_user=send_error_screenshot_to_user,
+                    autorespond_progress=autorespond_progress,
+                    resume_blob=resume_blob,
+                )
+                continue
+            if preflight.requires_employer_test:
+                await _finalize_batch_item_async(
+                    self=self,
+                    session_factory=session_factory,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    locale=locale,
+                    hh_linked_account_id=hh_linked_account_id,
+                    feed_session_id=feed_session_id,
+                    it=it,
+                    result=ApplyResult(
+                        outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
+                        detail="preflight_api:test_required",
                     ),
                     items=items,
                     finalized_vids=finalized_vids,
@@ -968,12 +993,18 @@ async def _apply_ui_async(
             vacancy_url_safe=_vacancy_url_safe_for_log(url),
         )
 
-        from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+        from src.services.hh.vacancy_public import hh_vacancy_public_preflight
 
-        if await hh_vacancy_public_is_unavailable(hh_vacancy_id):
+        preflight = await hh_vacancy_public_preflight(hh_vacancy_id)
+        if preflight.unavailable:
             result = ApplyResult(
                 outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
                 detail="preflight_api",
+            )
+        elif preflight.requires_employer_test:
+            result = ApplyResult(
+                outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
+                detail="preflight_api:test_required",
             )
         else:
             try:

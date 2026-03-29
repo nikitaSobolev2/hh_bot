@@ -405,9 +405,10 @@ async def _generate_cover_letter_async(
         return {"status": "vacancy_not_found"}
 
     from src.bot.modules.autoparse import feed_services
-    from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+    from src.services.hh.vacancy_public import hh_vacancy_public_preflight
 
-    if await hh_vacancy_public_is_unavailable(vacancy.hh_vacancy_id):
+    preflight = await hh_vacancy_public_preflight(vacancy.hh_vacancy_id)
+    if preflight.unavailable:
         if apply_after and source != "standalone":
             async with session_factory() as session:
                 await feed_services.merge_dislike_vacancy_into_feed_sessions(
@@ -419,6 +420,20 @@ async def _generate_cover_letter_async(
         return {
             "status": "skipped",
             "reason": "vacancy_unavailable",
+            "vacancy_id": vacancy_id,
+            "locale": locale,
+        }
+    if preflight.requires_employer_test:
+        if source != "standalone":
+            async with session_factory() as session:
+                vac_repo = AutoparsedVacancyRepository(session)
+                v = await vac_repo.get_by_id(vacancy_id)
+                if v:
+                    await vac_repo.update(v, needs_employer_questions=True)
+                await session.commit()
+        return {
+            "status": "skipped",
+            "reason": "vacancy_requires_test",
             "vacancy_id": vacancy_id,
             "locale": locale,
         }

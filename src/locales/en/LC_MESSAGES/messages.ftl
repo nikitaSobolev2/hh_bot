@@ -112,6 +112,7 @@ feed-respond-loading-resumes = ⏳ Loading your resumes from hh.ru (this can tak
 feed-respond-load-timeout = Timed out loading resumes from hh.ru. Check network, worker logs, or try again.
 feed-respond-vacancy-missing = This vacancy is no longer available in the feed session. Refresh the feed or open the company again.
 feed-respond-vacancy-unavailable = This vacancy is closed, archived, or removed on hh.ru. Skipping.
+feed-respond-vacancy-test-required = This vacancy requires an employer test on hh.ru — skipping auto-apply. Finish on the site; the vacancy is marked in the feed. Next.
 feed-respond-vacancy-unavailable-feed-end = This vacancy is no longer on hh.ru. Feed review finished.
 feed-respond-no-resumes = No resumes found on this HeadHunter account.
 feed-respond-fetch-error = Could not load resumes from hh.ru.

@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 MAX_DESCRIPTION_LENGTH = AI_MAX_DESCRIPTION_LENGTH
 
 # 429 rate limit retry: Cloudflare recommends 30s minimum, exponential backoff
-_RATE_LIMIT_MIN_WAIT = 30
+_RATE_LIMIT_MIN_WAIT = 10
 _RATE_LIMIT_MAX_RETRIES = 5
 # Matches retry_after in JSON-like strings: "retry_after": 30 or 'retry_after': 30
 _RETRY_AFTER_RE = re.compile(r"retry_after['\"]?\s*:\s*(\d+)", re.IGNORECASE)

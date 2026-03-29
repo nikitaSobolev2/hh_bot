@@ -112,6 +112,7 @@ feed-respond-loading-resumes = ⏳ Загружаем список резюме 
 feed-respond-load-timeout = Не удалось загрузить резюме за отведённое время. Проверьте сеть, логи воркера или попробуйте снова.
 feed-respond-vacancy-missing = Вакансия недоступна в этой сессии ленты. Обновите ленту или откройте компанию снова.
 feed-respond-vacancy-unavailable = Вакансия на hh.ru закрыта, архивирована или удалена. Пропускаем.
+feed-respond-vacancy-test-required = На hh.ru для этой вакансии нужен тест работодателя — автоотклик не выполняем. Завершите на сайте; вакансия отмечена в ленте. Следующая.
 feed-respond-vacancy-unavailable-feed-end = Вакансия на hh.ru больше недоступна. Лента просмотра завершена.
 feed-respond-no-resumes = На этом аккаунте hh.ru не найдено резюме.
 feed-respond-fetch-error = Не удалось загрузить резюме с hh.ru.

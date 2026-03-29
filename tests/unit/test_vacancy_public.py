@@ -4,7 +4,12 @@ import httpx
 import pytest
 import respx
 
-from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+from src.services.hh.vacancy_public import (
+    hh_vacancy_public_is_unavailable,
+    hh_vacancy_public_preflight,
+    vacancy_public_json_is_archived_or_hidden,
+    vacancy_public_json_requires_employer_test,
+)
 
 
 @pytest.mark.asyncio
@@ -52,3 +57,89 @@ async def test_not_unavailable_on_429():
 async def test_invalid_id_returns_false():
     assert await hh_vacancy_public_is_unavailable("") is False
     assert await hh_vacancy_public_is_unavailable("abc") is False
+
+
+def test_vacancy_public_json_archived_or_hidden_flags():
+    assert vacancy_public_json_is_archived_or_hidden({"archived": True}) is True
+    assert vacancy_public_json_is_archived_or_hidden({"hidden": True}) is True
+    assert vacancy_public_json_is_archived_or_hidden({"archived": True, "hidden": False}) is True
+    assert vacancy_public_json_is_archived_or_hidden({"archived": False, "hidden": True}) is True
+    assert vacancy_public_json_is_archived_or_hidden({"archived": False, "hidden": False}) is False
+    assert vacancy_public_json_is_archived_or_hidden({"id": "1"}) is False
+
+
+def test_vacancy_public_json_requires_employer_test_flags():
+    assert vacancy_public_json_requires_employer_test({"has_test": True}) is True
+    assert vacancy_public_json_requires_employer_test({"test": {"required": True}}) is True
+    assert (
+        vacancy_public_json_requires_employer_test(
+            {"has_test": True, "test": {"required": True}}
+        )
+        is True
+    )
+    assert vacancy_public_json_requires_employer_test({"has_test": False}) is False
+    assert vacancy_public_json_requires_employer_test({"test": {"required": False}}) is False
+    assert vacancy_public_json_requires_employer_test({"id": "1", "name": "x"}) is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preflight_requires_test_on_200():
+    body = {
+        "id": "129569197",
+        "name": "PHP",
+        "has_test": True,
+        "test": {"required": True},
+    }
+    respx.get("https://api.hh.ru/vacancies/129569197").mock(
+        return_value=httpx.Response(200, json=body)
+    )
+    p = await hh_vacancy_public_preflight("129569197")
+    assert p.unavailable is False
+    assert p.requires_employer_test is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preflight_unavailable_on_404_numeric_id():
+    respx.get("https://api.hh.ru/vacancies/999001").mock(return_value=httpx.Response(404))
+    p = await hh_vacancy_public_preflight("999001")
+    assert p.unavailable is True
+    assert p.requires_employer_test is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preflight_unavailable_when_archived_true():
+    body = {"id": "111", "name": "X", "archived": True, "hidden": False}
+    respx.get("https://api.hh.ru/vacancies/111").mock(return_value=httpx.Response(200, json=body))
+    p = await hh_vacancy_public_preflight("111")
+    assert p.unavailable is True
+    assert p.requires_employer_test is False
+    assert await hh_vacancy_public_is_unavailable("111") is True
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preflight_unavailable_when_hidden_true():
+    body = {"id": "222", "name": "Y", "archived": False, "hidden": True}
+    respx.get("https://api.hh.ru/vacancies/222").mock(return_value=httpx.Response(200, json=body))
+    p = await hh_vacancy_public_preflight("222")
+    assert p.unavailable is True
+    assert p.requires_employer_test is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preflight_archived_before_employer_test():
+    """Archived/hidden wins over has_test — same routing as closed vacancy (dislike)."""
+    body = {
+        "id": "333",
+        "archived": True,
+        "has_test": True,
+        "test": {"required": True},
+    }
+    respx.get("https://api.hh.ru/vacancies/333").mock(return_value=httpx.Response(200, json=body))
+    p = await hh_vacancy_public_preflight("333")
+    assert p.unavailable is True
+    assert p.requires_employer_test is False

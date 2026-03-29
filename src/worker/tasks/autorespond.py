@@ -182,7 +182,7 @@ async def _run_autorespond_async(
         resolve_resume_id_for_autorespond_vacancy,
     )
     from src.bot.modules.autoparse import feed_services as feed_services_autorespond
-    from src.services.hh.vacancy_public import hh_vacancy_public_is_unavailable
+    from src.services.hh.vacancy_public import hh_vacancy_public_preflight
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -446,7 +446,8 @@ async def _run_autorespond_async(
                     skipped += 1
                     continue
 
-                if await hh_vacancy_public_is_unavailable(vac.hh_vacancy_id):
+                preflight = await hh_vacancy_public_preflight(vac.hh_vacancy_id)
+                if preflight.unavailable:
                     skipped += 1
                     async with session_factory() as s_merge:
                         await feed_services_autorespond.merge_dislike_vacancy_into_feed_sessions(
@@ -455,6 +456,28 @@ async def _run_autorespond_async(
                             company_id,
                             vac.id,
                         )
+                    if ar_prog and progress_bot:
+                        await tick_autorespond_bar(
+                            bot=progress_bot,
+                            chat_id=user.telegram_id,
+                            task_key=ar_prog["task_key"],
+                            total=ar_prog["total"],
+                            locale=ar_prog["locale"],
+                            footer_failed_line=get_text(
+                                "autorespond-progress-failed", locale, count=failed
+                            ),
+                            title=ar_prog.get("title"),
+                            celery_task_id=ar_prog.get("celery_task_id"),
+                        )
+                    continue
+                if preflight.requires_employer_test:
+                    skipped += 1
+                    async with session_factory() as s_eq:
+                        vac_repo = AutoparsedVacancyRepository(s_eq)
+                        row = await vac_repo.get_by_id(vac.id)
+                        if row:
+                            await vac_repo.update(row, needs_employer_questions=True)
+                        await s_eq.commit()
                     if ar_prog and progress_bot:
                         await tick_autorespond_bar(
                             bot=progress_bot,
