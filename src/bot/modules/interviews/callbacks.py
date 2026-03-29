@@ -9,6 +9,7 @@ class InterviewCallback(CallbackData, prefix="iv"):
     test_q_index: int = 0
     test_answer: int = -1
     page: int = 0
+    employer_qa_id: int = 0
 
 
 class InterviewFormCallback(CallbackData, prefix="ivf"):

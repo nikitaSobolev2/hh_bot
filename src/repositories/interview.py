@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.interview import (
     Interview,
+    InterviewEmployerQuestion,
     InterviewImprovement,
     InterviewNote,
     InterviewPreparationStep,
@@ -19,6 +20,54 @@ from src.models.interview import (
 from src.repositories.base import BaseRepository
 
 _PAGE_SIZE = 5
+
+
+class InterviewEmployerQuestionRepository(BaseRepository[InterviewEmployerQuestion]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, InterviewEmployerQuestion)
+
+    async def list_by_interview_newest_first(self, interview_id: int) -> list[InterviewEmployerQuestion]:
+        stmt = (
+            select(InterviewEmployerQuestion)
+            .where(InterviewEmployerQuestion.interview_id == interview_id)
+            .order_by(desc(InterviewEmployerQuestion.id))
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def create_qa(
+        self,
+        interview_id: int,
+        question_text: str,
+        answer_text: str,
+    ) -> InterviewEmployerQuestion:
+        row = InterviewEmployerQuestion(
+            interview_id=interview_id,
+            question_text=question_text,
+            answer_text=answer_text,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def get_by_id_and_interview(
+        self, qa_id: int, interview_id: int
+    ) -> InterviewEmployerQuestion | None:
+        result = await self._session.execute(
+            select(InterviewEmployerQuestion).where(
+                InterviewEmployerQuestion.id == qa_id,
+                InterviewEmployerQuestion.interview_id == interview_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def delete_by_id(self, qa_id: int) -> bool:
+        row = await self.get_by_id(qa_id)
+        if row:
+            await self._session.delete(row)
+            await self._session.flush()
+            return True
+        return False
 
 
 class InterviewRepository(BaseRepository[Interview]):

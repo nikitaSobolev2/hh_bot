@@ -10,6 +10,7 @@ from src.models.hh_application_attempt import HhApplicationAttempt
 from src.models.hh_linked_account import HhLinkedAccount
 from src.models.interview import (
     Interview,
+    InterviewEmployerQuestion,
     InterviewImprovement,
     InterviewNote,
     InterviewPreparationStep,
@@ -65,6 +66,7 @@ __all__ = [
     "SupportAttachment",
     "UserBan",
     "Interview",
+    "InterviewEmployerQuestion",
     "InterviewQuestion",
     "InterviewImprovement",
     "InterviewNote",

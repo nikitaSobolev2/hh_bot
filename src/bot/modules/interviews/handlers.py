@@ -6,6 +6,7 @@ AI analysis, single interview detail, improvement detail, and status management.
 
 from __future__ import annotations
 
+import html
 import httpx
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -20,6 +21,8 @@ from src.bot.modules.interviews.keyboards import (
     company_review_view_keyboard,
     confirm_keyboard,
     delete_confirm_keyboard,
+    employer_qa_cancel_keyboard,
+    employer_qa_list_keyboard,
     experience_level_keyboard,
     improvement_detail_keyboard,
     interview_detail_keyboard,
@@ -32,7 +35,7 @@ from src.bot.modules.interviews.keyboards import (
     skip_notes_keyboard,
     source_choice_keyboard,
 )
-from src.bot.modules.interviews.states import InterviewForm
+from src.bot.modules.interviews.states import EmployerQuestionFlow, InterviewForm
 from src.bot.utils.limits import get_max_message_length
 from src.core.i18n import I18nContext
 from src.models.interview import ImprovementStatus
@@ -666,6 +669,207 @@ async def handle_questions_to_ask_regenerate(
         user.language_code or "ru",
     )
     await callback.answer()
+
+
+# ── Employer questions (AI answer + history) ────────────────────────────────
+
+
+async def _show_employer_qa_list(
+    message_or_callback,
+    interview_id: int,
+    session: AsyncSession,
+    i18n: I18nContext,
+    user: User,
+    *,
+    page: int = 0,
+) -> None:
+    """Render employer Q&A list with optional pagination over long text."""
+    from src.repositories.interview import InterviewRepository
+    from src.services.telegram.text_utils import split_text_for_telegram
+
+    interview = await InterviewRepository(session).get_with_relations(interview_id)
+    if not interview or interview.is_deleted:
+        return
+    if interview.user_id != user.id:
+        return
+
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    rows = sorted(interview.employer_questions or [], key=lambda x: x.id, reverse=True)
+    blocks: list[str] = []
+    for idx, row in enumerate(rows, 1):
+        blocks.append(
+            f"<b>#{idx}</b>\n<b>{html.escape(i18n.get('iv-employer-qa-label-q'))}</b> "
+            f"{html.escape(row.question_text)}\n\n"
+            f"<b>{html.escape(i18n.get('iv-employer-qa-label-a'))}</b>\n{html.escape(row.answer_text)}"
+        )
+    body = "\n\n".join(blocks) if blocks else i18n.get("iv-employer-qa-empty")
+    title_block = f"{header}\n\n<b>{i18n.get('iv-employer-qa-title')}</b>\n\n"
+    full_text = title_block + body
+    max_len = get_max_message_length(user, "default")
+    chunks = split_text_for_telegram(full_text, max_len=max_len)
+    if not chunks:
+        chunks = [title_block + i18n.get("iv-employer-qa-empty")]
+    total_pages = len(chunks)
+    page_index = max(0, min(page, total_pages - 1)) if total_pages else 0
+    text = chunks[page_index] if chunks else title_block + i18n.get("iv-employer-qa-empty")
+    kb = employer_qa_list_keyboard(
+        interview_id,
+        i18n=i18n,
+        page=page_index,
+        total_pages=total_pages,
+    )
+    if not hasattr(message_or_callback, "edit_text"):
+        await message_or_callback.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+    else:
+        await message_or_callback.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa"))
+async def handle_employer_qa_list(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    if interview.user_id != user.id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    await _show_employer_qa_list(
+        callback.message,
+        callback_data.interview_id,
+        session,
+        i18n,
+        user,
+        page=callback_data.page,
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa_new"))
+async def handle_employer_qa_new(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
+    if not interview or interview.is_deleted:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    if interview.user_id != user.id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    await state.set_state(EmployerQuestionFlow.awaiting_question)
+    await state.update_data(employer_qa_interview_id=callback_data.interview_id)
+    await callback.message.edit_text(
+        i18n.get("iv-employer-qa-send-question"),
+        reply_markup=employer_qa_cancel_keyboard(
+            callback_data.interview_id,
+            i18n=i18n,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa_cancel"))
+async def handle_employer_qa_cancel(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.repositories.interview import InterviewRepository
+
+    interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await state.clear()
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    await state.clear()
+    await _show_employer_qa_list(
+        callback.message,
+        callback_data.interview_id,
+        session,
+        i18n,
+        user,
+        page=0,
+    )
+    await callback.answer()
+
+
+@router.message(EmployerQuestionFlow.awaiting_question, F.text)
+async def handle_employer_qa_question_text(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.repositories.interview import InterviewRepository
+    from src.worker.tasks.interviews import generate_employer_question_answer_task
+
+    data = await state.get_data()
+    interview_id = int(data.get("employer_qa_interview_id") or 0)
+    if not interview_id:
+        await state.clear()
+        return
+
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await state.clear()
+        await message.answer(i18n.get("iv-not-found"))
+        return
+
+    q = (message.text or "").strip()
+    if len(q) < 3:
+        await message.answer(i18n.get("iv-employer-qa-too-short"))
+        return
+    if len(q) > 4000:
+        q = q[:4000]
+
+    await state.clear()
+    locale = user.language_code or "ru"
+    wait_msg = await message.answer(i18n.get("iv-employer-qa-generating"))
+    await run_celery_task(
+        generate_employer_question_answer_task,
+        interview_id,
+        q,
+        message.chat.id,
+        wait_msg.message_id,
+        locale,
+    )
 
 
 # ── Notes ────────────────────────────────────────────────────────────────────

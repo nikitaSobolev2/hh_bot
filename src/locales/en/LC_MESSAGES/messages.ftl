@@ -1030,6 +1030,19 @@ iv-company-review-empty = No data yet. Click Regenerate to generate.
 iv-questions-to-ask-empty = No data yet. Click Regenerate to generate.
 btn-iv-regenerate = 🔄 Regenerate
 
+btn-iv-employer-questions = 💬 Employer questions
+btn-iv-employer-qa-new = ➕ Answer a new question
+iv-employer-qa-title = Employer questions and answers
+iv-employer-qa-empty = No saved questions yet. Tap «Answer a new question».
+iv-employer-qa-send-question = Send the employer’s question in one message (as in email or on hh.ru).
+iv-employer-qa-generating = ⏳ Drafting an answer from your experience and the vacancy…
+iv-employer-qa-result-header = Reply to employer question
+iv-employer-qa-label-q = Question:
+iv-employer-qa-label-a = Draft answer:
+iv-employer-qa-ai-empty = Could not get an answer text. Please try again later.
+iv-employer-qa-failed = Could not generate an answer. Please try later.
+iv-employer-qa-too-short = Message is too short. Send the full employer question.
+
 btn-iv-notes = 📝 Notes
 iv-notes-title = Notes
 iv-notes-empty = No notes yet.

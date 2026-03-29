@@ -18,6 +18,7 @@ from src.schemas.ai import QAPair
 from src.schemas.vacancy import VacancyApiContext
 from src.services.ai.prompts import (
     VacancyCompatInput,
+    WorkExperienceEntry,
     build_batch_compatibility_system_prompt,
     build_batch_compatibility_user_content,
     build_batch_keyword_extraction_system_prompt,
@@ -26,6 +27,8 @@ from src.services.ai.prompts import (
     build_batch_vacancy_analysis_user_content,
     build_compatibility_system_prompt,
     build_compatibility_user_content,
+    build_employer_question_answer_system_prompt,
+    build_employer_question_answer_user_content,
     build_improvement_flow_system_prompt,
     build_improvement_flow_user_content,
     build_interview_analysis_system_prompt,
@@ -654,6 +657,37 @@ class AIClient:
         except Exception as exc:
             logger.error("Improvement flow generation failed", error=str(exc))
             return ""
+
+    async def generate_employer_question_answer(
+        self,
+        *,
+        vacancy_title: str,
+        vacancy_description: str | None,
+        company_name: str | None,
+        experience_level: str | None,
+        hh_vacancy_url: str | None,
+        employer_question: str,
+        work_experiences: list[WorkExperienceEntry],
+        about_me: str | None = None,
+    ) -> str:
+        """Draft a candidate reply to an employer question using vacancy + experience context."""
+        user_content = build_employer_question_answer_user_content(
+            vacancy_title=vacancy_title,
+            vacancy_description=vacancy_description,
+            company_name=company_name,
+            experience_level=experience_level,
+            hh_vacancy_url=hh_vacancy_url,
+            employer_question=employer_question,
+            work_experiences=work_experiences,
+            about_me=about_me,
+        )
+        return await self.generate_text(
+            user_content,
+            system_prompt=build_employer_question_answer_system_prompt(),
+            timeout=180,
+            max_tokens=3500,
+            temperature=0.45,
+        )
 
     async def generate_text(
         self,

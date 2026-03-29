@@ -761,6 +761,57 @@ def build_questions_to_ask_prompt(
     return "".join(parts)
 
 
+def build_employer_question_answer_system_prompt() -> str:
+    """System prompt: draft an answer to an employer's question for this vacancy."""
+    return (
+        "Ты — карьерный консультант и эксперт по собеседованиям.\n\n"
+        "[ЗАДАЧА]\n"
+        "Составь ответ кандидата на конкретный вопрос работодателя по этой вакансии.\n\n"
+        "[ПРАВИЛА]\n"
+        "- Пиши от первого лица, как будто отвечает сам кандидат.\n"
+        "- Опирайся на факты из опыта работы кандидата; не выдумывай проекты, должности и метрики.\n"
+        "- Сфокусируйся на опыте, наиболее релевантном вакансии и формулировке вопроса; "
+        "если вопрос узкий — не распыляйся по всем местам работы подряд.\n"
+        "- Свяжи ответ с контекстом вакансии (роль, стек, задачи из описания), где уместно.\n"
+        "- Структура: 1 короткий абзац вступления при необходимости + основная часть с примером из опыта.\n"
+        "- Пиши на русском языке.\n\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_employer_question_answer_user_content(
+    *,
+    vacancy_title: str,
+    vacancy_description: str | None,
+    company_name: str | None,
+    experience_level: str | None,
+    hh_vacancy_url: str | None,
+    employer_question: str,
+    work_experiences: list[WorkExperienceEntry],
+    about_me: str | None = None,
+) -> str:
+    """User message: vacancy, optional about_me, experience block, employer question."""
+    parts: list[str] = [f"[ВАКАНСИЯ]\n{vacancy_title}\n\n"]
+    if company_name:
+        parts.append(f"[КОМПАНИЯ]\n{company_name}\n\n")
+    if experience_level:
+        parts.append(f"[УРОВЕНЬ ОЖИДАЕМОГО ОПЫТА]\n{experience_level}\n\n")
+    if hh_vacancy_url:
+        parts.append(f"[ССЫЛКА НА ВАКАНСИЮ]\n{hh_vacancy_url}\n\n")
+    if vacancy_description:
+        parts.append(f"[ОПИСАНИЕ ВАКАНСИИ]\n{vacancy_description[:8000]}\n\n")
+    if about_me and about_me.strip():
+        parts.append(f"[О СЕБЕ (КРАТКО)]\n{about_me.strip()[:2000]}\n\n")
+    if work_experiences:
+        exp_block = "\n".join(_format_experience_entry(i, e) for i, e in enumerate(work_experiences))
+        parts.append(f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n{exp_block}\n\n")
+    else:
+        parts.append("[ОПЫТ РАБОТЫ КАНДИДАТА]\n(не указан)\n\n")
+    parts.append(_wrap_user_input("вопрос_работодателя", employer_question))
+    parts.append("\n\nСоставь готовый ответ кандидата на этот вопрос.")
+    return "".join(parts)
+
+
 @dataclass(frozen=True)
 class AchievementExperienceEntry:
     company_name: str

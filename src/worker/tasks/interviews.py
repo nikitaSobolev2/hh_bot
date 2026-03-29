@@ -93,6 +93,30 @@ def generate_questions_to_ask_task(
 @celery_app.task(
     bind=True,
     base=HHBotTask,
+    name="interviews.generate_employer_question_answer",
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=120,
+    time_limit=180,
+)
+def generate_employer_question_answer_task(
+    self,
+    interview_id: int,
+    question_text: str,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+) -> dict:
+    return run_async(
+        lambda sf: _generate_employer_question_answer_async(
+            self, sf, interview_id, question_text, chat_id, message_id, locale
+        )
+    )
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
     name="interviews.generate_flow",
     max_retries=2,
     default_retry_delay=30,
@@ -613,6 +637,155 @@ async def _generate_questions_to_ask_async(
                 chat_id,
                 message_id,
                 get_text("iv-questions-to-ask-failed", locale),
+            )
+        raise task.retry(exc=exc) from exc
+
+    finally:
+        await bot.session.close()
+
+
+_EMPLOYER_QUESTION_MAX_LEN = 4000
+
+
+async def _generate_employer_question_answer_async(
+    task: HHBotTask,
+    session_factory: async_sessionmaker[AsyncSession],
+    interview_id: int,
+    question_text: str,
+    chat_id: int,
+    message_id: int,
+    locale: str,
+) -> dict:
+    import html
+
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.bot.modules.autoparse import services as ap_service
+    from src.core.constants import AppSettingKey
+    from src.core.i18n import get_text
+    from src.repositories.interview import (
+        InterviewEmployerQuestionRepository,
+        InterviewRepository,
+    )
+    from src.repositories.work_experience import WorkExperienceRepository
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import WorkExperienceEntry
+
+    q_trunc = (question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
+
+    enabled = await task.check_enabled(
+        AppSettingKey.TASK_EMPLOYER_QUESTION_ANSWER_ENABLED, session_factory
+    )
+    if not enabled:
+        return {"status": "disabled"}
+
+    cb = await task.load_circuit_breaker(
+        "employer_question_answer",
+        AppSettingKey.CB_EMPLOYER_QUESTION_ANSWER_FAILURE_THRESHOLD,
+        AppSettingKey.CB_EMPLOYER_QUESTION_ANSWER_RECOVERY_TIMEOUT,
+        session_factory,
+    )
+    if not cb.is_call_allowed():
+        return {"status": "circuit_open"}
+
+    bot = task.create_bot()
+
+    try:
+        async with session_factory() as session:
+            interview = await InterviewRepository(session).get_with_relations(interview_id)
+            if not interview or interview.is_deleted:
+                return {"status": "not_found"}
+            user_id = interview.user_id
+            we_rows = await WorkExperienceRepository(session).get_active_by_user(user_id)
+            settings = await ap_service.get_user_autoparse_settings(session, user_id)
+        about_me = (settings.get("about_me") or "").strip() or None
+
+        experiences = [
+            WorkExperienceEntry(
+                company_name=e.company_name,
+                stack=e.stack,
+                title=e.title,
+                period=e.period,
+                achievements=e.achievements,
+                duties=e.duties,
+            )
+            for e in we_rows
+        ]
+
+        ai = AIClient()
+        try:
+            answer = await ai.generate_employer_question_answer(
+                vacancy_title=interview.vacancy_title,
+                vacancy_description=interview.vacancy_description,
+                company_name=interview.company_name,
+                experience_level=interview.experience_level,
+                hh_vacancy_url=interview.hh_vacancy_url,
+                employer_question=q_trunc,
+                work_experiences=experiences,
+                about_me=about_me,
+            )
+        finally:
+            await ai.aclose()
+
+        if not (answer or "").strip():
+            cb.record_failure()
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("iv-employer-qa-ai-empty", locale),
+            )
+            return {"status": "empty_answer"}
+
+        async with session_factory() as session:
+            repo = InterviewEmployerQuestionRepository(session)
+            await repo.create_qa(
+                interview_id=interview_id,
+                question_text=q_trunc,
+                answer_text=answer.strip(),
+            )
+            await session.commit()
+
+        cb.record_success()
+
+        from src.bot.modules.interviews.keyboards import employer_qa_list_keyboard
+
+        title = get_text("iv-employer-qa-result-header", locale)
+        q_label = get_text("iv-employer-qa-label-q", locale)
+        a_label = get_text("iv-employer-qa-label-a", locale)
+        body = (
+            f"<b>{html.escape(title)}</b>\n\n"
+            f"<b>{html.escape(q_label)}</b>\n{html.escape(q_trunc)}\n\n"
+            f"<b>{html.escape(a_label)}</b>\n{html.escape(answer.strip())}"
+        )
+        await task.notify_user(
+            bot,
+            chat_id,
+            message_id,
+            body,
+            parse_mode="HTML",
+            reply_markup=employer_qa_list_keyboard(interview_id, locale=locale),
+        )
+        return {"status": "completed", "interview_id": interview_id}
+
+    except SoftTimeLimitExceeded:
+        await task.handle_soft_timeout(bot, chat_id, message_id, locale)
+        task.request.retries = task.max_retries
+        raise
+
+    except Exception as exc:
+        cb.record_failure()
+        logger.error(
+            "Employer question answer task failed",
+            interview_id=interview_id,
+            error=str(exc),
+        )
+        if task.request.retries >= task.max_retries:
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("iv-employer-qa-failed", locale),
             )
         raise task.retry(exc=exc) from exc
 

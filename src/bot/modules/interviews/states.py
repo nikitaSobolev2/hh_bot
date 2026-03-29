@@ -1,6 +1,12 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
+class EmployerQuestionFlow(StatesGroup):
+    """User sends employer question text for AI answer (per interview)."""
+
+    awaiting_question = State()
+
+
 class InterviewForm(StatesGroup):
     source_choice = State()
     hh_link = State()

@@ -66,6 +66,10 @@ class Interview(Base):
         cascade="all, delete-orphan",
         order_by="InterviewNote.sort_order",
     )
+    employer_questions: Mapped[list["InterviewEmployerQuestion"]] = relationship(
+        back_populates="interview",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Interview id={self.id} title={self.vacancy_title!r}>"
@@ -100,6 +104,23 @@ class InterviewQuestion(Base):
 
     def __repr__(self) -> str:
         return f"<InterviewQuestion id={self.id} interview_id={self.interview_id}>"
+
+
+class InterviewEmployerQuestion(Base):
+    """Employer-written question and AI-drafted answer for this interview (not prep Q&A)."""
+
+    __tablename__ = "interview_employer_questions"
+
+    interview_id: Mapped[int] = mapped_column(
+        ForeignKey("interviews.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    interview: Mapped[Interview] = relationship(back_populates="employer_questions")
+
+    def __repr__(self) -> str:
+        return f"<InterviewEmployerQuestion id={self.id} interview_id={self.interview_id}>"
 
 
 class InterviewImprovement(Base):
