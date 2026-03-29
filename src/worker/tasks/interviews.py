@@ -106,10 +106,18 @@ def generate_employer_question_answer_task(
     chat_id: int,
     message_id: int,
     locale: str,
+    employer_qa_row_id: int | None = None,
 ) -> dict:
     return run_async(
         lambda sf: _generate_employer_question_answer_async(
-            self, sf, interview_id, question_text, chat_id, message_id, locale
+            self,
+            sf,
+            interview_id,
+            question_text,
+            chat_id,
+            message_id,
+            locale,
+            employer_qa_row_id=employer_qa_row_id,
         )
     )
 
@@ -655,8 +663,10 @@ async def _generate_employer_question_answer_async(
     chat_id: int,
     message_id: int,
     locale: str,
+    employer_qa_row_id: int | None = None,
 ) -> dict:
     import html
+    import secrets
 
     from celery.exceptions import SoftTimeLimitExceeded
 
@@ -671,7 +681,7 @@ async def _generate_employer_question_answer_async(
     from src.services.ai.client import AIClient
     from src.services.ai.prompts import WorkExperienceEntry
 
-    q_trunc = (question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
+    regenerate = employer_qa_row_id is not None
 
     enabled = await task.check_enabled(
         AppSettingKey.TASK_EMPLOYER_QUESTION_ANSWER_ENABLED, session_factory
@@ -695,6 +705,14 @@ async def _generate_employer_question_answer_async(
             interview = await InterviewRepository(session).get_with_relations(interview_id)
             if not interview or interview.is_deleted:
                 return {"status": "not_found"}
+            eq_repo = InterviewEmployerQuestionRepository(session)
+            if regenerate:
+                row = await eq_repo.get_by_id_and_interview(employer_qa_row_id, interview_id)
+                if not row:
+                    return {"status": "not_found"}
+                q_trunc = (row.question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
+            else:
+                q_trunc = (question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
             user_id = interview.user_id
             we_rows = await WorkExperienceRepository(session).get_active_by_user(user_id)
             settings = await ap_service.get_user_autoparse_settings(session, user_id)
@@ -712,6 +730,7 @@ async def _generate_employer_question_answer_async(
             for e in we_rows
         ]
 
+        variation_nonce = secrets.token_hex(12)
         ai = AIClient()
         try:
             answer = await ai.generate_employer_question_answer(
@@ -723,6 +742,8 @@ async def _generate_employer_question_answer_async(
                 employer_question=q_trunc,
                 work_experiences=experiences,
                 about_me=about_me,
+                regenerate=regenerate,
+                variation_nonce=variation_nonce,
             )
         finally:
             await ai.aclose()
@@ -739,16 +760,24 @@ async def _generate_employer_question_answer_async(
 
         async with session_factory() as session:
             repo = InterviewEmployerQuestionRepository(session)
-            await repo.create_qa(
-                interview_id=interview_id,
-                question_text=q_trunc,
-                answer_text=answer.strip(),
-            )
+            if regenerate:
+                row = await repo.get_by_id_and_interview(employer_qa_row_id, interview_id)
+                if not row:
+                    return {"status": "not_found"}
+                await repo.update(row, answer_text=answer.strip())
+                result_row_id = row.id
+            else:
+                created = await repo.create_qa(
+                    interview_id=interview_id,
+                    question_text=q_trunc,
+                    answer_text=answer.strip(),
+                )
+                result_row_id = created.id
             await session.commit()
 
         cb.record_success()
 
-        from src.bot.modules.interviews.keyboards import employer_qa_list_keyboard
+        from src.bot.modules.interviews.keyboards import employer_qa_result_keyboard
 
         title = get_text("iv-employer-qa-result-header", locale)
         q_label = get_text("iv-employer-qa-label-q", locale)
@@ -764,7 +793,9 @@ async def _generate_employer_question_answer_async(
             message_id,
             body,
             parse_mode="HTML",
-            reply_markup=employer_qa_list_keyboard(interview_id, locale=locale),
+            reply_markup=employer_qa_result_keyboard(
+                interview_id, result_row_id, locale=locale
+            ),
         )
         return {"status": "completed", "interview_id": interview_id}
 

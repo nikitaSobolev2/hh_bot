@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from src.schemas.vacancy import VacancyApiContext
@@ -761,8 +762,16 @@ def build_questions_to_ask_prompt(
     return "".join(parts)
 
 
-def build_employer_question_answer_system_prompt() -> str:
+def build_employer_question_answer_system_prompt(*, regenerate: bool = False) -> str:
     """System prompt: draft an answer to an employer's question for this vacancy."""
+    regen = ""
+    if regenerate:
+        regen = (
+            "\n[ПЕРЕГЕНЕРАЦИЯ]\n"
+            "Это новый запрос на тот же вопрос. Сформируй другой ответ: иная структура абзацев, "
+            "другие формулировки, другой порядок примеров из опыта (факты те же, подача новая). "
+            "Не повторяй шаблон «как в типичном ответе с разделами и таблицей».\n"
+        )
     return (
         "Ты — карьерный консультант и эксперт по собеседованиям.\n\n"
         "[ЗАДАЧА]\n"
@@ -775,6 +784,12 @@ def build_employer_question_answer_system_prompt() -> str:
         "- Свяжи ответ с контекстом вакансии (роль, стек, задачи из описания), где уместно.\n"
         "- Структура: 1 короткий абзац вступления при необходимости + основная часть с примером из опыта.\n"
         "- Пиши на русском языке.\n\n"
+        "[ФОРМАТ — СТРОГО]\n"
+        "- Только обычный текст: абзацы; при необходимости строки со списком, начинающиеся с «- » или «• ».\n"
+        "- Запрещено: Markdown (**, __, #, ```), HTML, таблицы, строки с символом | как в таблицах, "
+        "заголовки в стиле «**Раздел:**».\n"
+        "- Не используй сравнительные таблицы «требование — степень»; опиши словами в абзацах.\n"
+        f"{regen}"
         f"{_ANTI_INJECTION}"
     )
 
@@ -789,6 +804,8 @@ def build_employer_question_answer_user_content(
     employer_question: str,
     work_experiences: list[WorkExperienceEntry],
     about_me: str | None = None,
+    regenerate: bool = False,
+    variation_nonce: str | None = None,
 ) -> str:
     """User message: vacancy, optional about_me, experience block, employer question."""
     parts: list[str] = [f"[ВАКАНСИЯ]\n{vacancy_title}\n\n"]
@@ -808,8 +825,33 @@ def build_employer_question_answer_user_content(
     else:
         parts.append("[ОПЫТ РАБОТЫ КАНДИДАТА]\n(не указан)\n\n")
     parts.append(_wrap_user_input("вопрос_работодателя", employer_question))
-    parts.append("\n\nСоставь готовый ответ кандидата на этот вопрос.")
+    if regenerate and variation_nonce:
+        parts.append(
+            f"\n\n[ИД_ВАРИАНТА]\n{variation_nonce}\n"
+            "Составь новый ответ на этот же вопрос (другая подача и структура, без повторения предыдущего текста)."
+        )
+    else:
+        parts.append("\n\nСоставь готовый ответ кандидата на этот вопрос.")
     return "".join(parts)
+
+
+def strip_employer_answer_plain_text(text: str) -> str:
+    """Remove markdown/table noise from model output; keep plain text for Telegram/HTML escaping."""
+    if not text:
+        return ""
+    lines_out: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("|") and s.count("|") >= 2:
+            continue
+        if re.match(r"^\|[\s\-:|]+\|$", s):
+            continue
+        lines_out.append(line)
+    out = "\n".join(lines_out)
+    out = re.sub(r"\*\*([^*]+)\*\*", r"\1", out)
+    out = re.sub(r"^#{1,6}\s*", "", out, flags=re.MULTILINE)
+    out = re.sub(r"```[\s\S]*?```", "", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
 @dataclass(frozen=True)

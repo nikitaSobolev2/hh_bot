@@ -3,6 +3,7 @@
 from src.services.ai.prompts import (
     WorkExperienceEntry,
     build_employer_question_answer_user_content,
+    strip_employer_answer_plain_text,
 )
 
 
@@ -33,3 +34,35 @@ def test_build_employer_question_answer_user_content_includes_blocks():
     assert "Django" in user_content
     assert "Backend focus" in user_content
     assert "вопрос_работодателя" in user_content
+
+
+def test_build_employer_question_answer_user_content_regenerate_adds_variant():
+    user_content = build_employer_question_answer_user_content(
+        vacancy_title="Python Dev",
+        vacancy_description=None,
+        company_name=None,
+        experience_level=None,
+        hh_vacancy_url=None,
+        employer_question="Why?",
+        work_experiences=[],
+        regenerate=True,
+        variation_nonce="abc123",
+    )
+    assert "abc123" in user_content
+    assert "ИД_ВАРИАНТА" in user_content
+
+
+def test_strip_employer_answer_plain_text_removes_markdown_and_tables():
+    raw = (
+        "**Ответ:**\n\n"
+        "Line one.\n"
+        "| A | B |\n"
+        "|---|---|\n"
+        "| x | y |\n"
+        "More **bold** text."
+    )
+    out = strip_employer_answer_plain_text(raw)
+    assert "|" not in out or "Line one" in out
+    assert "Ответ:" in out
+    assert "**" not in out
+    assert "bold" in out

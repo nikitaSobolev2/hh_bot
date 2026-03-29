@@ -1031,6 +1031,7 @@ iv-questions-to-ask-empty = No data yet. Click Regenerate to generate.
 btn-iv-regenerate = 🔄 Regenerate
 
 btn-iv-employer-questions = 💬 Employer questions
+btn-iv-employer-qa-regenerate = 🔄 Regenerate
 btn-iv-employer-qa-new = ➕ Answer a new question
 iv-employer-qa-title = Employer questions and answers
 iv-employer-qa-empty = No saved questions yet. Tap «Answer a new question».

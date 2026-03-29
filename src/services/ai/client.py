@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
@@ -29,6 +30,7 @@ from src.services.ai.prompts import (
     build_compatibility_user_content,
     build_employer_question_answer_system_prompt,
     build_employer_question_answer_user_content,
+    strip_employer_answer_plain_text,
     build_improvement_flow_system_prompt,
     build_improvement_flow_user_content,
     build_interview_analysis_system_prompt,
@@ -669,8 +671,13 @@ class AIClient:
         employer_question: str,
         work_experiences: list[WorkExperienceEntry],
         about_me: str | None = None,
+        regenerate: bool = False,
+        variation_nonce: str | None = None,
     ) -> str:
         """Draft a candidate reply to an employer question using vacancy + experience context."""
+        if regenerate:
+            variation_nonce = variation_nonce or secrets.token_hex(12)
+        temperature = 0.82 if regenerate else 0.45
         user_content = build_employer_question_answer_user_content(
             vacancy_title=vacancy_title,
             vacancy_description=vacancy_description,
@@ -680,14 +687,17 @@ class AIClient:
             employer_question=employer_question,
             work_experiences=work_experiences,
             about_me=about_me,
+            regenerate=regenerate,
+            variation_nonce=variation_nonce,
         )
-        return await self.generate_text(
+        raw = await self.generate_text(
             user_content,
-            system_prompt=build_employer_question_answer_system_prompt(),
+            system_prompt=build_employer_question_answer_system_prompt(regenerate=regenerate),
             timeout=180,
             max_tokens=3500,
-            temperature=0.45,
+            temperature=temperature,
         )
+        return strip_employer_answer_plain_text(raw)
 
     async def generate_text(
         self,

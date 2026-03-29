@@ -768,6 +768,53 @@ async def handle_employer_qa_list(
     await callback.answer()
 
 
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa_regenerate"))
+async def handle_employer_qa_regenerate(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.repositories.interview import (
+        InterviewEmployerQuestionRepository,
+        InterviewRepository,
+    )
+    from src.worker.tasks.interviews import generate_employer_question_answer_task
+
+    qa_id = callback_data.employer_qa_id
+    interview_id = callback_data.interview_id
+    if not qa_id or not interview_id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    row = await InterviewEmployerQuestionRepository(session).get_by_id_and_interview(
+        qa_id, interview_id
+    )
+    if not row:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+
+    locale = user.language_code or "ru"
+    await callback.message.edit_text(i18n.get("iv-employer-qa-generating"))
+    await run_celery_task(
+        generate_employer_question_answer_task,
+        interview_id,
+        "",
+        callback.message.chat.id,
+        callback.message.message_id,
+        locale,
+        employer_qa_row_id=qa_id,
+    )
+    await callback.answer()
+
+
 @router.callback_query(InterviewCallback.filter(F.action == "employer_qa_new"))
 async def handle_employer_qa_new(
     callback: CallbackQuery,

@@ -379,6 +379,52 @@ def employer_qa_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def employer_qa_result_keyboard(
+    interview_id: int,
+    employer_qa_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    """After a generated answer: regenerate this row, open list, or go back."""
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-employer-qa-regenerate", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="employer_qa_regenerate",
+                    interview_id=interview_id,
+                    employer_qa_id=employer_qa_id,
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-employer-qa-new", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="employer_qa_new", interview_id=interview_id
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-iv-employer-questions", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="employer_qa", interview_id=interview_id
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-back", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="detail", interview_id=interview_id
+                ).pack(),
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def employer_qa_cancel_keyboard(
     interview_id: int,
     i18n: I18nContext | None = None,
