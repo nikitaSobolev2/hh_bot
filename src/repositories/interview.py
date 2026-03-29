@@ -113,6 +113,7 @@ class InterviewRepository(BaseRepository[Interview]):
                 selectinload(Interview.improvements),
                 selectinload(Interview.preparation_steps),
                 selectinload(Interview.notes),
+                selectinload(Interview.employer_questions),
             )
         )
         result = await self._session.execute(stmt)
