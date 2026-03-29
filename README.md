@@ -48,6 +48,8 @@ When the official applicant API is unavailable, set `HH_UI_APPLY_ENABLED=true` a
 
 The anti‑CSRF token for that POST is taken from the same sources the browser uses: hidden `input` / `meta` on the page when present, otherwise often the **`_xsrf` cookie** on `.hh.ru` (visible to Playwright even when HttpOnly). The runner waits until a token is available from DOM, cookie, or embedded HTML before sending the request.
 
+**Small VPS (about 2 GB RAM / 1 vCPU):** keep the dedicated `hh_ui` worker at **`worker_concurrency=1`**, lower `HH_UI_APPLY_BATCH_SIZE` if the host swaps or Celery logs `missed heartbeat`, and widen `HH_UI_NAVIGATION_TIMEOUT_MS` only if pages are legitimately slow (not as a fix for CPU starvation). Celery Beat runs `hh_ui.periodic_resume_checkpoints` every five minutes so Redis checkpoints for apply batches can be re-enqueued after a worker stall or restart.
+
 ---
 
 ## Architecture

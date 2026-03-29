@@ -15,6 +15,8 @@ btn-back = ◀️ Назад
 btn-back-menu = ◀️ В меню
 btn-my-interviews = 🎤 Мои собеседования
 btn-autoparse = 🤖 Автопарсинг
+btn-task-group-run = ▶️ Запустить группу
+btn-task-group-settings = ⚙️ Задачи группы
 btn-work-experience = 💼 Опыт работы
 btn-achievements = 🏆 Достижения
 btn-interview-qa = 💬 Вопросы собеседования
@@ -31,6 +33,25 @@ btn-yes = ✅ Да
 btn-no = ❌ Нет
 btn-type-manually = ✏️ Ввести вручную
 btn-hh-accounts = 🧑‍💼 Аккаунты HeadHunter
+
+# ── Группа задач (главное меню) ─────────────────────────
+task-group-settings-empty = <b>Группа задач</b>\n\nПока пусто. Добавьте автопарсинг, автоответ или парсинг ключевых слов ниже.
+task-group-settings-list-title = <b>Группа задач</b> (по порядку):
+task-group-kind-autoparse = Автопарсинг
+task-group-kind-autorespond = Автоответ
+task-group-kind-parsing = Парсинг ключевых слов
+task-group-kind-unknown = Задача
+task-group-add-autoparse = + Автопарсинг
+task-group-add-autorespond = + Автоответ
+task-group-add-parsing = + Парсинг
+task-group-remove-step = Удалить шаг { $index }
+task-group-clear = Очистить
+task-group-run-empty = Сначала настройте шаги в «Задачи группы».
+task-group-run-done = Запущено задач: { $enqueued }. Пропущено: { $skipped } (нет компании или нет доступа).
+task-group-pick-company = Выберите компанию для: { $kind }
+task-group-no-companies = Нет компаний этого типа. Сначала создайте в соответствующем разделе.
+task-group-step-added = Добавлено.
+task-group-cleared = Список очищен.
 
 # ── HeadHunter OAuth ─────────────────────────────────────
 hh-accounts-title = <b>Аккаунты HeadHunter</b>

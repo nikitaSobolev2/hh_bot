@@ -60,11 +60,14 @@ async def resume_hh_ui_batches_from_checkpoints() -> int:
     Skips checkpoints whose ``resume`` is missing (legacy), empty, or cancelled
     when the batch is still running on a worker.
     """
+    from src.db.engine import async_session_factory
     from src.services.autorespond_progress import (
+        build_hh_ui_resume_envelope_fallback_async,
         clear_hh_ui_batch_active_sync,
         get_hh_ui_batch_active_sync,
         is_autorespond_cancelled_sync,
         load_hh_ui_batch_checkpoint_full_sync,
+        load_hh_ui_resume_envelope_sync,
     )
     from src.services.celery_active import celery_task_id_is_active
     from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
@@ -79,6 +82,12 @@ async def resume_hh_ui_batches_from_checkpoints() -> int:
         if not full:
             continue
         items, resume = full
+        if not resume:
+            resume = load_hh_ui_resume_envelope_sync(chat_id, task_key)
+        if not resume:
+            resume = await build_hh_ui_resume_envelope_fallback_async(
+                async_session_factory, chat_id, task_key
+            )
         if not items or not resume:
             continue
         if is_autorespond_cancelled_sync(chat_id, task_key):

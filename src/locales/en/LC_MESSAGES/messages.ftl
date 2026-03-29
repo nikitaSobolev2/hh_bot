@@ -15,6 +15,8 @@ btn-back = ◀️ Back
 btn-back-menu = ◀️ Back to Menu
 btn-my-interviews = 🎤 My Interviews
 btn-autoparse = 🤖 Auto Parse
+btn-task-group-run = ▶️ Run group
+btn-task-group-settings = ⚙️ Group tasks
 btn-work-experience = 💼 Work Experience
 btn-achievements = 🏆 Achievements
 btn-interview-qa = 💬 Interview Q&A
@@ -31,6 +33,25 @@ btn-yes = ✅ Yes
 btn-no = ❌ No
 btn-type-manually = ✏️ Type manually
 btn-hh-accounts = 🧑‍💼 HeadHunter accounts
+
+# Task group (main menu)
+task-group-settings-empty = <b>Group tasks</b>\n\nNo steps yet. Add autoparse, autorespond, or keyword parsing runs below.
+task-group-settings-list-title = <b>Group tasks</b> (run in order):
+task-group-kind-autoparse = Autoparse
+task-group-kind-autorespond = Autorespond
+task-group-kind-parsing = Keyword parsing
+task-group-kind-unknown = Task
+task-group-add-autoparse = + Autoparse
+task-group-add-autorespond = + Autorespond
+task-group-add-parsing = + Parsing
+task-group-remove-step = Remove step { $index }
+task-group-clear = Clear all
+task-group-run-empty = Add steps in Group tasks settings first.
+task-group-run-done = Started { $enqueued } task(s). Skipped { $skipped } (missing or invalid company).
+task-group-pick-company = Pick a company for: { $kind }
+task-group-no-companies = No companies of this type. Add one in the relevant section first.
+task-group-step-added = Added.
+task-group-cleared = List cleared.
 
 # ── HeadHunter OAuth (linked hh.ru accounts) ─────────────
 hh-accounts-title = <b>HeadHunter accounts</b>

@@ -1052,6 +1052,11 @@ def _is_target_closed_error(exc: BaseException) -> bool:
     return "has been closed" in msg or "target closed" in msg or "browser has been closed" in msg
 
 
+def _is_page_goto_timeout_error(exc: BaseException) -> bool:
+    """Navigation timeout (slow host or overloaded worker)."""
+    return isinstance(exc, PlaywrightTimeoutError)
+
+
 def _launch_batch_browser_session(
     playwright: Any,
     storage_state: dict[str, Any],
@@ -1145,6 +1150,30 @@ def apply_to_vacancies_ui_batch(
                             cover_letter=spec.cover_letter,
                         )
                     except Exception as exc:
+                        if _is_page_goto_timeout_error(exc):
+                            logger.warning(
+                                "hh_ui_batch_goto_timeout",
+                                log_user_id=log_user_id,
+                                vacancy_id=spec.autoparsed_vacancy_id,
+                                url=spec.vacancy_url[:120],
+                                attempt=attempt + 1,
+                                max_retries=max_retries,
+                                error=str(exc)[:300],
+                            )
+                            attempt += 1
+                            if attempt < max_retries:
+                                delay = apply_retry_delay_seconds(
+                                    attempt - 1,
+                                    retry_initial_seconds,
+                                    retry_delay_cap_seconds,
+                                )
+                                time.sleep(delay)
+                                continue
+                            last = ApplyResult(
+                                outcome=ApplyOutcome.ERROR,
+                                detail="page_goto_timeout",
+                            )
+                            break
                         if not _is_target_closed_error(exc):
                             raise
                         target_closed_recoveries += 1

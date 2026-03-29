@@ -166,6 +166,7 @@ async def _run_autorespond_async(
         clear_autorespond_parent_loop_active_sync,
         clear_autorespond_ui_tail_sync,
         clear_hh_ui_batch_checkpoint_sync,
+        clear_hh_ui_resume_envelope_sync,
         is_autorespond_cancelled_sync,
         save_autorespond_ui_tail_sync,
         set_autorespond_parent_loop_active_sync,
@@ -431,6 +432,7 @@ async def _run_autorespond_async(
                     if task_key and user.telegram_id:
                         clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
                         clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
+                        clear_hh_ui_resume_envelope_sync(user.telegram_id, task_key)
                     _autorespond_exit = "cancelled"
                     return {
                         "status": "cancelled",
@@ -496,6 +498,7 @@ async def _run_autorespond_async(
                         if task_key and user.telegram_id:
                             clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
                             clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
+                            clear_hh_ui_resume_envelope_sync(user.telegram_id, task_key)
                         _autorespond_exit = "rate_limited"
                         return {
                             "status": "rate_limited",

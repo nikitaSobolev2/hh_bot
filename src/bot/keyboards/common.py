@@ -32,6 +32,16 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         text=i18n.get("btn-autoparse"),
         callback_data=MenuCallback(action="autoparse").pack(),
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=i18n.get("btn-task-group-run"),
+            callback_data=MenuCallback(action="task_group_run").pack(),
+        ),
+        InlineKeyboardButton(
+            text=i18n.get("btn-task-group-settings"),
+            callback_data=MenuCallback(action="task_group_settings").pack(),
+        ),
+    )
 
     builder.button(
         text=i18n.get("btn-my-interviews"),
@@ -88,7 +98,7 @@ def main_menu_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
         callback_data=MenuCallback(action="support").pack(),
     )
 
-    builder.adjust(2, 1, 2, 2, 3, 2, 1, 2, 1)
+    builder.adjust(2, 1, 2, 2, 2, 3, 2, 1, 2, 1)
     return builder.as_markup()
 
 

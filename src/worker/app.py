@@ -75,5 +75,9 @@ celery_app.conf.update(
             "task": "autoparse.dispatch_all",
             "schedule": crontab(minute=0, hour="*/6"),
         },
+        "hh-ui-resume-checkpoints": {
+            "task": "hh_ui.periodic_resume_checkpoints",
+            "schedule": crontab(minute="*/5"),
+        },
     },
 )

@@ -16,15 +16,18 @@ from src.core.i18n import I18nContext
 from src.db.engine import async_session_factory
 from src.models.user import User
 from src.services.autorespond_progress import (
+    build_hh_ui_resume_envelope_fallback_async,
     clear_autorespond_done_counter,
     clear_autorespond_failed_counter,
     clear_autorespond_ui_tail_sync,
     clear_hh_ui_batch_active_sync,
     clear_hh_ui_batch_checkpoint_sync,
+    clear_hh_ui_resume_envelope_sync,
     get_hh_ui_batch_active_sync,
     is_autorespond_cancelled_sync,
     load_autorespond_ui_tail_sync,
     load_hh_ui_batch_checkpoint_full_sync,
+    load_hh_ui_resume_envelope_sync,
     set_autorespond_cancelled,
 )
 from src.services.celery_active import celery_task_id_is_active
@@ -253,6 +256,12 @@ async def _try_refresh_autorespond(
     if full:
         items, resume = full
     if not resume:
+        resume = load_hh_ui_resume_envelope_sync(chat_id, task_key)
+    if not resume:
+        resume = await build_hh_ui_resume_envelope_fallback_async(
+            async_session_factory, chat_id, task_key
+        )
+    if not resume:
         await callback.answer(
             i18n.get("progress-refresh-no-resume"),
             show_alert=True,
@@ -333,6 +342,7 @@ async def handle_progress_cancel(
                 await clear_autorespond_done_counter(chat_id, task_key)
                 await clear_autorespond_failed_counter(chat_id, task_key)
                 clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+                clear_hh_ui_resume_envelope_sync(chat_id, task_key)
                 clear_autorespond_ui_tail_sync(chat_id, task_key)
                 await svc.cancel_task(task_key)
                 await callback.answer(
@@ -350,6 +360,7 @@ async def handle_progress_cancel(
             await set_autorespond_cancelled(chat_id, task_key)
             await clear_autorespond_done_counter(chat_id, task_key)
             clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+            clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)
 
         await run_sync_in_thread(

@@ -7,6 +7,7 @@ from typing import Any
 
 import redis as sync_redis
 from redis.exceptions import RedisError, WatchError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
@@ -35,6 +36,126 @@ def autorespond_failed_redis_key(chat_id: int, task_key: str) -> str:
 def hh_ui_batch_checkpoint_key(chat_id: int, task_key: str) -> str:
     """Remaining ``items`` for ``hh_ui.apply_to_vacancies_batch`` resume after soft timeout."""
     return f"checkpoint:hh_ui_apply_batch:{chat_id}:{task_key}"
+
+
+def hh_ui_resume_envelope_key(chat_id: int, task_key: str) -> str:
+    """Durable kwargs for ``apply_to_vacancies_batch_ui_task`` (without ``items``), mirrored from checkpoint."""
+    return f"autorespond:hh_ui_resume_envelope:{chat_id}:{task_key}"
+
+
+def save_hh_ui_resume_envelope_sync(
+    chat_id: int, task_key: str, resume: dict[str, Any]
+) -> None:
+    """Persist resume kwargs so refresh works if the checkpoint JSON loses the ``resume`` key."""
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.set(
+            hh_ui_resume_envelope_key(chat_id, task_key),
+            json.dumps(resume),
+            ex=_DONE_TTL_S,
+        )
+    finally:
+        r.close()
+
+
+def load_hh_ui_resume_envelope_sync(
+    chat_id: int, task_key: str,
+) -> dict[str, Any] | None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        raw = r.get(hh_ui_resume_envelope_key(chat_id, task_key))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    finally:
+        r.close()
+
+
+def clear_hh_ui_resume_envelope_sync(chat_id: int, task_key: str) -> None:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        r.delete(hh_ui_resume_envelope_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+async def build_hh_ui_resume_envelope_fallback_async(
+    session_factory: async_sessionmaker[AsyncSession],
+    chat_id: int,
+    task_key: str,
+) -> dict[str, Any] | None:
+    """Rebuild ``hh_ui_batch_resume_payload`` from DB + progress Redis when envelope is missing."""
+    if not task_key.startswith("autorespond:"):
+        return None
+    parts = task_key.split(":", 2)
+    if len(parts) != 3:
+        return None
+    try:
+        company_id = int(parts[1])
+    except ValueError:
+        return None
+    parent_celery_id = parts[2]
+
+    from src.bot.modules.autoparse import services as ap_service
+    from src.core.constants import AppSettingKey
+    from src.repositories.app_settings import AppSettingRepository
+    from src.repositories.autoparse import AutoparseCompanyRepository
+    from src.repositories.user import UserRepository
+
+    async with session_factory() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_telegram_id(chat_id)
+        if not user:
+            return None
+        company_repo = AutoparseCompanyRepository(session)
+        company = await company_repo.get_by_id(company_id)
+        if not company or company.user_id != user.id or not company.autorespond_hh_linked_account_id:
+            return None
+        ap_settings = await ap_service.get_user_autoparse_settings(session, user.id)
+        cover_letter_style = ap_settings.get("cover_letter_style", "professional")
+        settings_repo = AppSettingRepository(session)
+        cover_task_enabled = bool(
+            await settings_repo.get_value(AppSettingKey.TASK_COVER_LETTER_ENABLED, default=True)
+        )
+
+    locale = user.language_code or "ru"
+    title = company.vacancy_title or ""
+    total = 1
+
+    redis = create_progress_redis()
+    try:
+        raw = await redis.get(f"progress:task:{chat_id}:{task_key}")
+        if raw:
+            state = json.loads(raw)
+            title = state.get("title") or title
+            bars = state.get("bars") or []
+            if bars and isinstance(bars[0], dict):
+                t = bars[0].get("total")
+                if isinstance(t, int) and t > 0:
+                    total = t
+    finally:
+        await redis.aclose()
+
+    autorespond_progress = {
+        "task_key": task_key,
+        "total": total,
+        "locale": locale,
+        "title": title,
+        "celery_task_id": parent_celery_id,
+    }
+    return hh_ui_batch_resume_payload(
+        user_id=user.id,
+        chat_id=chat_id,
+        message_id=0,
+        locale=locale,
+        hh_linked_account_id=int(company.autorespond_hh_linked_account_id),
+        feed_session_id=0,
+        cover_letter_style=str(cover_letter_style),
+        cover_task_enabled=cover_task_enabled,
+        silent_feed=True,
+        autorespond_progress=autorespond_progress,
+    )
 
 
 def autorespond_ui_tail_key(chat_id: int, task_key: str) -> str:
@@ -127,6 +248,7 @@ def save_hh_ui_batch_checkpoint_sync(
         payload: dict[str, Any] = {"items": remaining_items}
         if resume is not None:
             payload["resume"] = resume
+            save_hh_ui_resume_envelope_sync(chat_id, task_key, resume)
         r.set(key, json.dumps(payload), ex=_DONE_TTL_S)
     finally:
         r.close()
@@ -526,6 +648,7 @@ async def tick_autorespond_bar(
             # That deleted ``resume`` + empty ``items`` checkpoints and broke refresh merge;
             # clear only when every work unit has ticked (done >= total).
             clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+            clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)
             return True
         return False

@@ -174,12 +174,14 @@ async def _notify_negotiations_limit_exceeded(
         clear_autorespond_done_counter,
         clear_autorespond_failed_counter,
         clear_hh_ui_batch_checkpoint_sync,
+        clear_hh_ui_resume_envelope_sync,
         set_autorespond_cancelled,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
 
     await set_autorespond_cancelled(chat_id, task_key)
     clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+    clear_hh_ui_resume_envelope_sync(chat_id, task_key)
     await clear_autorespond_done_counter(chat_id, task_key)
     await clear_autorespond_failed_counter(chat_id, task_key)
     redis = create_progress_redis()
@@ -1246,3 +1248,13 @@ def apply_to_vacancy_ui_task(
             autorespond_progress=autorespond_progress,
         )
     )
+
+
+@celery_app.task(name="hh_ui.periodic_resume_checkpoints")
+def periodic_resume_hh_ui_checkpoints() -> int:
+    """Safety net: re-enqueue HH UI batches from Redis checkpoints (same as bot cold start)."""
+    import asyncio
+
+    from src.services.task_restart import resume_hh_ui_batches_from_checkpoints
+
+    return asyncio.run(resume_hh_ui_batches_from_checkpoints())
