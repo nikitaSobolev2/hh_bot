@@ -71,6 +71,23 @@ def test_compat_below_threshold_still_filtered_when_allow_missing() -> None:
     assert out == []
 
 
+def test_generic_title_without_positive_keyword_tokens_filtered_out() -> None:
+    """Vacancies whose titles match no OR-term (e.g. generic lead dev) must not autorespond."""
+    v = _vac(
+        title="Ведущий программист",
+        compat=70.0,
+        hh_id="99",
+    )
+    expr = "backend|python|django, !frontend"
+    out = ar.filter_vacancies_for_autorespond(
+        [v],
+        min_compat=60,
+        company_keyword_filter=expr,
+        keyword_mode=ar.AUTORESPOND_KEYWORD_TITLE_ONLY,
+    )
+    assert out == []
+
+
 def test_title_only_requires_tokens_in_title() -> None:
     ok = _vac(title="Senior Python Engineer", description="no django here")
     bad = _vac(

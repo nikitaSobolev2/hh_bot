@@ -296,9 +296,11 @@ async def _run_autorespond_async(
         )
 
         raw = await _load_candidates(session, company_id, vacancy_ids, task_started_at)
-        # Manual chain passes concrete unreacted feed IDs; do not re-apply company
-        # keyword_filter here (it targets search/query matching and can drop every row).
-        kw_filter = (company.keyword_filter or "") if trigger != "manual_unreacted" else ""
+        # Always apply the same keyword_filter as autorespond settings (title / title+desc).
+        # The old manual_unreacted exception skipped keywords and only gated on compatibility,
+        # which applied to vacancies that never matched the user's keyword rules (e.g. generic
+        # or frontend titles).
+        kw_filter = company.keyword_filter or ""
         allow_missing_compat = vacancy_ids is not None
         compat_rejected, keyword_rejected = _autorespond_filter_rejection_counts(
             raw,
@@ -327,7 +329,7 @@ async def _run_autorespond_async(
             min_compat=company.autorespond_min_compat,
             keyword_mode=company.autorespond_keyword_mode,
             keyword_filter_chars=len(kw_filter.strip()),
-            keyword_filter_skipped_for_trigger=trigger == "manual_unreacted",
+            keyword_filter_skipped_for_trigger=False,
             allow_missing_compatibility_score=allow_missing_compat,
             compat_rejected=compat_rejected,
             keyword_rejected=keyword_rejected,
