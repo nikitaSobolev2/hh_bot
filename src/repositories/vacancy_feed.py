@@ -80,18 +80,50 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
             disliked.update(ids)
         return disliked
 
-    async def clear_all_liked_ids_for_user(self, user_id: int) -> None:
+    async def get_liked_vacancy_ids_for_user_company(
+        self, user_id: int, company_id: int
+    ) -> set[int]:
+        stmt = select(VacancyFeedSession.liked_ids).where(
+            VacancyFeedSession.user_id == user_id,
+            VacancyFeedSession.autoparse_company_id == company_id,
+        )
+        result = await self._session.execute(stmt)
+        liked: set[int] = set()
+        for (ids,) in result:
+            liked.update(ids)
+        return liked
+
+    async def get_disliked_vacancy_ids_for_user_company(
+        self, user_id: int, company_id: int
+    ) -> set[int]:
+        stmt = select(VacancyFeedSession.disliked_ids).where(
+            VacancyFeedSession.user_id == user_id,
+            VacancyFeedSession.autoparse_company_id == company_id,
+        )
+        result = await self._session.execute(stmt)
+        disliked: set[int] = set()
+        for (ids,) in result:
+            disliked.update(ids)
+        return disliked
+
+    async def clear_liked_ids_for_user_company(self, user_id: int, company_id: int) -> None:
         stmt = (
             update(VacancyFeedSession)
-            .where(VacancyFeedSession.user_id == user_id)
+            .where(
+                VacancyFeedSession.user_id == user_id,
+                VacancyFeedSession.autoparse_company_id == company_id,
+            )
             .values(liked_ids=[])
         )
         await self._session.execute(stmt)
 
-    async def clear_all_disliked_ids_for_user(self, user_id: int) -> None:
+    async def clear_disliked_ids_for_user_company(self, user_id: int, company_id: int) -> None:
         stmt = (
             update(VacancyFeedSession)
-            .where(VacancyFeedSession.user_id == user_id)
+            .where(
+                VacancyFeedSession.user_id == user_id,
+                VacancyFeedSession.autoparse_company_id == company_id,
+            )
             .values(disliked_ids=[])
         )
         await self._session.execute(stmt)

@@ -161,18 +161,6 @@ def autoparse_list_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text=i18n.get("autoparse-btn-reset-likes"),
-                callback_data=AutoparseCallback(action="reset_likes_prompt", page=page).pack(),
-            ),
-            InlineKeyboardButton(
-                text=i18n.get("autoparse-btn-reset-dislikes"),
-                callback_data=AutoparseCallback(action="reset_disliked_prompt", page=page).pack(),
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
                 text=i18n.get("autoparse-btn-update-compat-unseen"),
                 callback_data=AutoparseCallback(action="update_compat_unseen").pack(),
             )
@@ -197,38 +185,42 @@ def autoparse_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def confirm_reset_likes_keyboard(page: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+def confirm_reset_likes_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-confirm"),
                     callback_data=AutoparseCallback(
-                        action="confirm_reset_likes", page=page
+                        action="confirm_reset_likes", company_id=company_id
                     ).pack(),
                 ),
                 InlineKeyboardButton(
                     text=i18n.get("btn-cancel"),
-                    callback_data=AutoparseCallback(action="list", page=page).pack(),
+                    callback_data=AutoparseCallback(
+                        action="detail", company_id=company_id
+                    ).pack(),
                 ),
             ]
         ]
     )
 
 
-def confirm_reset_disliked_keyboard(page: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+def confirm_reset_disliked_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=i18n.get("btn-confirm"),
                     callback_data=AutoparseCallback(
-                        action="confirm_reset_disliked", page=page
+                        action="confirm_reset_disliked", company_id=company_id
                     ).pack(),
                 ),
                 InlineKeyboardButton(
                     text=i18n.get("btn-cancel"),
-                    callback_data=AutoparseCallback(action="list", page=page).pack(),
+                    callback_data=AutoparseCallback(
+                        action="detail", company_id=company_id
+                    ).pack(),
                 ),
             ]
         ]
@@ -334,6 +326,20 @@ def autoparse_detail_keyboard(
                 text=i18n.get("autoparse-download-title"),
                 callback_data=AutoparseCallback(action="download", company_id=company.id).pack(),
             )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-reset-likes"),
+                callback_data=AutoparseCallback(
+                    action="reset_likes_prompt", company_id=company.id
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-reset-dislikes"),
+                callback_data=AutoparseCallback(
+                    action="reset_disliked_prompt", company_id=company.id
+                ).pack(),
+            ),
         ],
         [
             InlineKeyboardButton(

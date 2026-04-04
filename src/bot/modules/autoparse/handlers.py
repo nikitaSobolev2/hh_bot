@@ -142,6 +142,39 @@ async def _render_autoparse_list(
         )
 
 
+async def _render_company_detail_message(
+    message: Message,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    company: AutoparseCompany,
+) -> None:
+    count = await ap_service.get_vacancy_count(session, company.id)
+    show_run_now = await _should_show_run_now(session, company, user)
+    ar_task_on = await autorespond_globally_enabled(session)
+    show_sync = await _user_has_hh_browser_session(session, user.id)
+    text = ap_service.format_company_detail(
+        company,
+        count,
+        i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await message.edit_text(
+            text,
+            reply_markup=autoparse_detail_keyboard(
+                company,
+                i18n,
+                show_run_now=show_run_now,
+                show_show_now=(count > 0),
+                show_autorespond=True,
+                show_sync_negotiations=show_sync,
+            ),
+            parse_mode="HTML",
+        )
+
+
 # ── Hub ─────────────────────────────────────────────────────────────
 
 
@@ -358,16 +391,19 @@ async def reset_likes_prompt(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     feed_repo = VacancyFeedSessionRepository(session)
-    liked_ids = await feed_repo.get_all_liked_vacancy_ids_for_user(user.id)
+    liked_ids = await feed_repo.get_liked_vacancy_ids_for_user_company(user.id, company.id)
     if not liked_ids:
         await callback.answer(i18n.get("autoparse-reset-likes-empty"), show_alert=True)
         return
-    page = callback_data.page
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             i18n.get("autoparse-confirm-reset-likes"),
-            reply_markup=confirm_reset_likes_keyboard(page, i18n),
+            reply_markup=confirm_reset_likes_keyboard(company.id, i18n),
         )
     await callback.answer()
 
@@ -380,12 +416,14 @@ async def confirm_reset_likes(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     feed_repo = VacancyFeedSessionRepository(session)
-    await feed_repo.clear_all_liked_ids_for_user(user.id)
+    await feed_repo.clear_liked_ids_for_user_company(user.id, company.id)
     await session.commit()
-    await _render_autoparse_list(
-        callback.message, user, session, i18n, callback_data.page
-    )
+    await _render_company_detail_message(callback.message, user, session, i18n, company)
     await callback.answer(i18n.get("autoparse-reset-likes-done"))
 
 
@@ -397,16 +435,21 @@ async def reset_disliked_prompt(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     feed_repo = VacancyFeedSessionRepository(session)
-    disliked_ids = await feed_repo.get_all_disliked_vacancy_ids_for_user(user.id)
+    disliked_ids = await feed_repo.get_disliked_vacancy_ids_for_user_company(
+        user.id, company.id
+    )
     if not disliked_ids:
         await callback.answer(i18n.get("autoparse-reset-dislikes-empty"), show_alert=True)
         return
-    page = callback_data.page
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             i18n.get("autoparse-confirm-reset-dislikes"),
-            reply_markup=confirm_reset_disliked_keyboard(page, i18n),
+            reply_markup=confirm_reset_disliked_keyboard(company.id, i18n),
         )
     await callback.answer()
 
@@ -419,12 +462,14 @@ async def confirm_reset_disliked(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     feed_repo = VacancyFeedSessionRepository(session)
-    await feed_repo.clear_all_disliked_ids_for_user(user.id)
+    await feed_repo.clear_disliked_ids_for_user_company(user.id, company.id)
     await session.commit()
-    await _render_autoparse_list(
-        callback.message, user, session, i18n, callback_data.page
-    )
+    await _render_company_detail_message(callback.message, user, session, i18n, company)
     await callback.answer(i18n.get("autoparse-reset-dislikes-done"))
 
 
@@ -684,29 +729,7 @@ async def company_detail(
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    count = await ap_service.get_vacancy_count(session, company.id)
-    show_run_now = await _should_show_run_now(session, company, user)
-    ar_task_on = await autorespond_globally_enabled(session)
-    show_sync = await _user_has_hh_browser_session(session, user.id)
-    text = ap_service.format_company_detail(
-        company,
-        count,
-        i18n,
-        autorespond_global=True,
-        autorespond_task_enabled=ar_task_on,
-    )
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(
-            text,
-            reply_markup=autoparse_detail_keyboard(
-                company,
-                i18n,
-                show_run_now=show_run_now,
-                show_show_now=(count > 0),
-                show_autorespond=True,
-                show_sync_negotiations=show_sync,
-            ),
-        )
+    await _render_company_detail_message(callback.message, user, session, i18n, company)
     await callback.answer()
 
 
