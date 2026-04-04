@@ -161,6 +161,18 @@ def autoparse_list_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-reset-likes"),
+                callback_data=AutoparseCallback(action="reset_likes_prompt", page=page).pack(),
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-reset-dislikes"),
+                callback_data=AutoparseCallback(action="reset_disliked_prompt", page=page).pack(),
+            ),
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text=i18n.get("autoparse-btn-update-compat-unseen"),
                 callback_data=AutoparseCallback(action="update_compat_unseen").pack(),
             )
@@ -183,6 +195,44 @@ def autoparse_list_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def confirm_reset_likes_keyboard(page: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-confirm"),
+                    callback_data=AutoparseCallback(
+                        action="confirm_reset_likes", page=page
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=AutoparseCallback(action="list", page=page).pack(),
+                ),
+            ]
+        ]
+    )
+
+
+def confirm_reset_disliked_keyboard(page: int, i18n: I18nContext) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-confirm"),
+                    callback_data=AutoparseCallback(
+                        action="confirm_reset_disliked", page=page
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=AutoparseCallback(action="list", page=page).pack(),
+                ),
+            ]
+        ]
+    )
 
 
 def liked_disliked_list_keyboard(

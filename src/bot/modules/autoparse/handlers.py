@@ -29,6 +29,8 @@ from src.bot.modules.autoparse.keyboards import (
     autoparse_settings_keyboard,
     cancel_keyboard,
     confirm_delete_keyboard,
+    confirm_reset_disliked_keyboard,
+    confirm_reset_likes_keyboard,
     cover_letter_style_keyboard,
     download_format_keyboard,
     include_reacted_keyboard,
@@ -112,6 +114,32 @@ async def _should_show_run_now(
         return True
     elapsed = datetime.now(UTC).replace(tzinfo=None) - company.last_parsed_at
     return elapsed > timedelta(hours=interval_hours)
+
+
+async def _render_autoparse_list(
+    message: Message,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    page: int,
+) -> None:
+    companies, total = await ap_service.get_user_autoparse_companies(
+        session, user.id, page, _PER_PAGE
+    )
+    if not companies and page == 0:
+        with contextlib.suppress(TelegramBadRequest):
+            await message.edit_text(
+                i18n.get("autoparse-empty-list"),
+                reply_markup=autoparse_hub_keyboard(i18n),
+            )
+        return
+
+    has_more = (page + 1) * _PER_PAGE < total
+    with contextlib.suppress(TelegramBadRequest):
+        await message.edit_text(
+            i18n.get("autoparse-list-title"),
+            reply_markup=autoparse_list_keyboard(companies, page, has_more, i18n),
+        )
 
 
 # ── Hub ─────────────────────────────────────────────────────────────
@@ -318,26 +346,86 @@ async def list_companies(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    page = callback_data.page
-    companies, total = await ap_service.get_user_autoparse_companies(
-        session, user.id, page, _PER_PAGE
-    )
-    if not companies and page == 0:
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                i18n.get("autoparse-empty-list"),
-                reply_markup=autoparse_hub_keyboard(i18n),
-            )
-        await callback.answer()
-        return
+    await _render_autoparse_list(callback.message, user, session, i18n, callback_data.page)
+    await callback.answer()
 
-    has_more = (page + 1) * _PER_PAGE < total
+
+@router.callback_query(AutoparseCallback.filter(F.action == "reset_likes_prompt"))
+async def reset_likes_prompt(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    feed_repo = VacancyFeedSessionRepository(session)
+    liked_ids = await feed_repo.get_all_liked_vacancy_ids_for_user(user.id)
+    if not liked_ids:
+        await callback.answer(i18n.get("autoparse-reset-likes-empty"), show_alert=True)
+        return
+    page = callback_data.page
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
-            i18n.get("autoparse-list-title"),
-            reply_markup=autoparse_list_keyboard(companies, page, has_more, i18n),
+            i18n.get("autoparse-confirm-reset-likes"),
+            reply_markup=confirm_reset_likes_keyboard(page, i18n),
         )
     await callback.answer()
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "confirm_reset_likes"))
+async def confirm_reset_likes(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    feed_repo = VacancyFeedSessionRepository(session)
+    await feed_repo.clear_all_liked_ids_for_user(user.id)
+    await session.commit()
+    await _render_autoparse_list(
+        callback.message, user, session, i18n, callback_data.page
+    )
+    await callback.answer(i18n.get("autoparse-reset-likes-done"))
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "reset_disliked_prompt"))
+async def reset_disliked_prompt(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    feed_repo = VacancyFeedSessionRepository(session)
+    disliked_ids = await feed_repo.get_all_disliked_vacancy_ids_for_user(user.id)
+    if not disliked_ids:
+        await callback.answer(i18n.get("autoparse-reset-dislikes-empty"), show_alert=True)
+        return
+    page = callback_data.page
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-confirm-reset-dislikes"),
+            reply_markup=confirm_reset_disliked_keyboard(page, i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "confirm_reset_disliked"))
+async def confirm_reset_disliked(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    feed_repo = VacancyFeedSessionRepository(session)
+    await feed_repo.clear_all_disliked_ids_for_user(user.id)
+    await session.commit()
+    await _render_autoparse_list(
+        callback.message, user, session, i18n, callback_data.page
+    )
+    await callback.answer(i18n.get("autoparse-reset-dislikes-done"))
 
 
 @router.callback_query(AutoparseCallback.filter(F.action == "show_liked"))

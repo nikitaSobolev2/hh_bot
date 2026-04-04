@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.vacancy_feed import VacancyFeedSession
@@ -79,3 +79,19 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
         for (ids,) in result:
             disliked.update(ids)
         return disliked
+
+    async def clear_all_liked_ids_for_user(self, user_id: int) -> None:
+        stmt = (
+            update(VacancyFeedSession)
+            .where(VacancyFeedSession.user_id == user_id)
+            .values(liked_ids=[])
+        )
+        await self._session.execute(stmt)
+
+    async def clear_all_disliked_ids_for_user(self, user_id: int) -> None:
+        stmt = (
+            update(VacancyFeedSession)
+            .where(VacancyFeedSession.user_id == user_id)
+            .values(disliked_ids=[])
+        )
+        await self._session.execute(stmt)

@@ -129,6 +129,35 @@ async def test_get_all_disliked_vacancy_ids_for_user_returns_unique_across_compa
     assert disliked == {5, 15, 25}
 
 
+# ── VacancyFeedSessionRepository bulk clear ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_clear_all_liked_ids_for_user_executes_update():
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock()
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    await repo.clear_all_liked_ids_for_user(42)
+
+    mock_session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_clear_all_disliked_ids_for_user_executes_update():
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock()
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    await repo.clear_all_disliked_ids_for_user(99)
+
+    mock_session.execute.assert_awaited_once()
+
+
 # ── AutoparsedVacancyRepository.get_by_ids ──────────────────────────
 
 
