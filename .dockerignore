@@ -39,3 +39,7 @@ docker-compose*.yml
 # Docs
 README.md
 docs
+
+# Local runtime / debug (large; never needed in images)
+data
+**/playwright_debug

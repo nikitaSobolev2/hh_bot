@@ -280,13 +280,23 @@ def sync_negotiations_from_hh_task(
             tk = f"sync_negotiations:{autoparse_company_id}:{tid}"
             svc = ProgressService(bot, chat_id, redis, locale)
             title = get_text("negotiations-progress-title", locale)
-            await svc.start_task(
-                tk,
-                title,
-                [get_text("progress-generic-working", locale)],
-                celery_task_id=tid,
-                initial_totals=[1],
-            )
+            used_progress = False
+            try:
+                await svc.start_task(
+                    tk,
+                    title,
+                    [get_text("progress-generic-working", locale)],
+                    celery_task_id=tid,
+                    initial_totals=[1],
+                )
+                used_progress = True
+            except Exception as exc:
+                # Telegram may reject send_message (blocked bot, invalid chat, etc.)
+                logger.warning(
+                    "negotiations_progress_unavailable",
+                    chat_id=chat_id,
+                    error=str(exc)[:400],
+                )
             try:
                 try:
                     res = await _sync_negotiations_async(
@@ -299,15 +309,17 @@ def sync_negotiations_from_hh_task(
                         locale,
                     )
                 except Exception:
-                    with contextlib.suppress(Exception):
-                        await svc.cancel_task(tk)
+                    if used_progress:
+                        with contextlib.suppress(Exception):
+                            await svc.cancel_task(tk)
                     raise
-                if res.get("status") == "ok":
-                    await svc.update_bar(tk, 0, 1, 1)
-                    await svc.finish_task(tk)
-                else:
-                    with contextlib.suppress(Exception):
-                        await svc.cancel_task(tk)
+                if used_progress:
+                    if res.get("status") == "ok":
+                        await svc.update_bar(tk, 0, 1, 1)
+                        await svc.finish_task(tk)
+                    else:
+                        with contextlib.suppress(Exception):
+                            await svc.cancel_task(tk)
                 return res
             finally:
                 with contextlib.suppress(Exception):

@@ -193,7 +193,11 @@ class ProgressService:
             json.dumps(state),
             ex=_PROGRESS_TTL,
         )
-        await self._refresh_message(force=True)
+        try:
+            await self._refresh_message(force=True)
+        except Exception:
+            await self._redis.delete(self._task_key(task_key))
+            raise
 
     async def set_steps(
         self,
