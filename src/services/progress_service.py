@@ -106,8 +106,32 @@ async def _scan_progress_task_chat_ids(redis) -> set[int]:
     return chat_ids
 
 
+async def _scan_progress_pin_chat_ids(redis) -> set[int]:
+    """Collect distinct chat IDs from ``progress:pin:{chat_id}`` keys (SCAN, not KEYS)."""
+    chat_ids: set[int] = set()
+    cursor = 0
+    while True:
+        cursor, keys = await redis.scan(cursor, match="progress:pin:*", count=256)
+        for raw in keys:
+            key = raw.decode() if isinstance(raw, bytes) else raw
+            parts = key.split(":", 2)
+            if len(parts) >= 3 and parts[0] == "progress" and parts[1] == "pin":
+                with contextlib.suppress(ValueError):
+                    chat_ids.add(int(parts[2]))
+        if cursor == 0:
+            break
+    return chat_ids
+
+
+async def scan_progress_namespace_chat_ids(redis) -> set[int]:
+    """Distinct chat IDs referenced by ``progress:task:*`` or ``progress:pin:*`` Redis keys."""
+    task_ids = await _scan_progress_task_chat_ids(redis)
+    pin_ids = await _scan_progress_pin_chat_ids(redis)
+    return task_ids | pin_ids
+
+
 async def refresh_progress_pins_for_active_chats(bot, *, default_locale: str = "ru") -> int:
-    """After bot restart: re-post or refresh pinned progress for every chat with task state in Redis.
+    """After bot restart: re-post or refresh pinned progress for chats with task state in Redis.
 
     Ensures users see the combined progress message again if Telegram messages were lost
     or if edits had failed silently before the restart.
@@ -274,7 +298,9 @@ class ProgressService:
         )
         await self._refresh_message(force=False)
 
-    async def update_child_celery_task_id(self, task_key: str, child_celery_task_id: str | None) -> None:
+    async def update_child_celery_task_id(
+        self, task_key: str, child_celery_task_id: str | None
+    ) -> None:
         """Store a spawned child Celery task id (orchestrator dispatches sub-tasks)."""
         raw = await self._redis.get(self._task_key(task_key))
         if not raw:
@@ -595,7 +621,7 @@ class ProgressService:
     # ------------------------------------------------------------------
 
     def _build_cancel_keyboard(self, tasks: dict[str, dict]):
-        """Build inline keyboard: task title (noop) | try refresh | cancel per non-completed task."""
+        """Inline keyboard: title (noop), try refresh, cancel per running task."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
