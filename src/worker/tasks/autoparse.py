@@ -249,17 +249,17 @@ async def _resolve_cached_vacancy(
     vac: dict,
     vacancy_repo,
     parsed_vacancy_repo,
-) -> tuple[dict, object | None]:
-    """Return (enriched_vac, existing_autoparsed) for a cached vacancy.
+) -> tuple[dict, object | None, object | None]:
+    """Return (enriched_vac, existing_autoparsed, existing_parsed) for a cached vacancy.
 
     Tries AutoparsedVacancy first (full data). Falls back to ParsedVacancy
     to merge description and raw_skills onto the card-level dict so that
     AI compatibility scoring can still run even when the vacancy was only
     previously seen via the manual parsing feature.
     """
-    existing = await vacancy_repo.get_by_hh_id_with_employer(hh_id)
-    if existing is not None:
-        return vac, existing
+    existing_ap = await vacancy_repo.get_by_hh_id_with_employer(hh_id)
+    if existing_ap is not None:
+        return vac, existing_ap, None
 
     existing_parsed = await parsed_vacancy_repo.get_by_hh_id_with_employer(hh_id)
     if existing_parsed is not None:
@@ -271,7 +271,8 @@ async def _resolve_cached_vacancy(
             "raw_skills": existing_parsed.raw_skills or [],
             "vacancy_api_context": build_vacancy_api_context_from_orm(existing_parsed),
         }
-    return vac, None
+        return vac, None, existing_parsed
+    return vac, None, None
 
 
 async def _run_autoparse_company_async(
@@ -396,11 +397,14 @@ async def _run_autoparse_company_async(
         scraper = parser._scraper
         from src.services.parser.hh_parser_service import partition_collected_urls
 
+        # Only company-known IDs are "free" toward target_count. Globally known vacancies
+        # still count as new for this company so we surface them in output; partition
+        # below uses global_ids to avoid redundant GET /vacancies/{id} when data exists.
         collected_urls = await scraper.collect_vacancy_urls(
             company.search_url,
             company.keyword_filter,
             target_count,
-            known_ids_to_include=global_ids,
+            known_ids_to_include=known_ids,
         )
         cached_results, to_fetch = partition_collected_urls(collected_urls, target_count, global_ids)
 
@@ -481,6 +485,72 @@ async def _run_autoparse_company_async(
                 "_area_id": orm.area_id if hasattr(orm, "area_id") else None,
             }
 
+        def _vac_dict_from_parsed_orm(parsed_orm, card: dict) -> dict:
+            """Build the same vac dict shape as _orm_to_vac_dict for ParsedVacancy + search card."""
+            from src.schemas.vacancy import build_vacancy_api_context_from_orm
+
+            of = {}
+            if hasattr(parsed_orm, "snippet_requirement"):
+                of = {
+                    "snippet_requirement": parsed_orm.snippet_requirement,
+                    "snippet_responsibility": parsed_orm.snippet_responsibility,
+                    "experience_id": parsed_orm.experience_id,
+                    "experience_name": parsed_orm.experience_name,
+                    "schedule_id": parsed_orm.schedule_id,
+                    "schedule_name": parsed_orm.schedule_name,
+                    "employment_id": parsed_orm.employment_id,
+                    "employment_name": parsed_orm.employment_name,
+                    "employment_form_id": parsed_orm.employment_form_id,
+                    "employment_form_name": parsed_orm.employment_form_name,
+                    "salary_from": parsed_orm.salary_from,
+                    "salary_to": parsed_orm.salary_to,
+                    "salary_currency": parsed_orm.salary_currency,
+                    "salary_gross": parsed_orm.salary_gross,
+                    "address_raw": parsed_orm.address_raw,
+                    "address_city": parsed_orm.address_city,
+                    "address_street": parsed_orm.address_street,
+                    "address_building": parsed_orm.address_building,
+                    "address_lat": parsed_orm.address_lat,
+                    "address_lng": parsed_orm.address_lng,
+                    "metro_stations": parsed_orm.metro_stations,
+                    "vacancy_type_id": parsed_orm.vacancy_type_id,
+                    "published_at": parsed_orm.published_at,
+                    "work_format": parsed_orm.work_format,
+                    "professional_roles": parsed_orm.professional_roles,
+                }
+            return {
+                "hh_vacancy_id": parsed_orm.hh_vacancy_id,
+                "url": card.get("url") or parsed_orm.url,
+                "title": card.get("title") or parsed_orm.title,
+                "description": parsed_orm.description or "",
+                "raw_skills": parsed_orm.raw_skills or [],
+                "vacancy_api_context": build_vacancy_api_context_from_orm(parsed_orm),
+                "company_name": card.get("company_name"),
+                "company_url": card.get("company_url"),
+                "salary": card.get("salary"),
+                "compensation_frequency": None,
+                "work_experience": parsed_orm.experience_name,
+                "employment_type": parsed_orm.employment_name,
+                "work_schedule": parsed_orm.schedule_name,
+                "working_hours": None,
+                "work_formats": None,
+                "tags": card.get("tags"),
+                "employer_data": {},
+                "area_data": {},
+                "orm_fields": of,
+                "_employer_id": parsed_orm.employer_id,
+                "_area_id": parsed_orm.area_id,
+            }
+
+        def _compat_input_from_vac_dict(vac_dict: dict) -> VacancyCompatInput:
+            return VacancyCompatInput(
+                hh_vacancy_id=vac_dict["hh_vacancy_id"],
+                title=vac_dict.get("title") or "",
+                skills=list(vac_dict.get("raw_skills") or []),
+                description=vac_dict.get("description") or "",
+                vacancy_api_context=vac_dict.get("vacancy_api_context"),
+            )
+
         cached_pairs: list[tuple[dict, VacancyCompatInput]] = []
         async with session_factory() as session:
             vacancy_repo = AutoparsedVacancyRepository(session)
@@ -493,19 +563,15 @@ async def _run_autoparse_company_async(
                     continue
 
                 if vac.get("cached"):
-                    vac, existing = await _resolve_cached_vacancy(
+                    vac, existing_ap, existing_parsed = await _resolve_cached_vacancy(
                         hh_id, vac, vacancy_repo, parsed_repo
                     )
-                    if existing is not None:
-                        vac_dict = _orm_to_vac_dict(existing)
-                        compat_input = VacancyCompatInput(
-                            hh_vacancy_id=existing.hh_vacancy_id,
-                            title=existing.title or "",
-                            skills=existing.raw_skills or [],
-                            description=existing.description or "",
-                            vacancy_api_context=vac_dict.get("vacancy_api_context"),
-                        )
-                        cached_pairs.append((vac_dict, compat_input))
+                    if existing_ap is not None:
+                        vac_dict = _orm_to_vac_dict(existing_ap)
+                        cached_pairs.append((vac_dict, _compat_input_from_vac_dict(vac_dict)))
+                    elif existing_parsed is not None:
+                        vac_dict = _vac_dict_from_parsed_orm(existing_parsed, vac)
+                        cached_pairs.append((vac_dict, _compat_input_from_vac_dict(vac_dict)))
 
         cursor = analyzed_offset
         pending: list[tuple[dict, VacancyCompatInput]] = []

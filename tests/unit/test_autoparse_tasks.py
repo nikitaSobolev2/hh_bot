@@ -92,11 +92,12 @@ class TestResolveCachedVacancy:
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
 
         vac = {"hh_vacancy_id": "123", "url": "http://hh.ru/vacancy/123", "cached": True}
-        returned_vac, returned_existing = await _resolve_cached_vacancy(
+        returned_vac, returned_ap, returned_parsed = await _resolve_cached_vacancy(
             "123", vac, vacancy_repo, parsed_vacancy_repo
         )
 
-        assert returned_existing is existing
+        assert returned_ap is existing
+        assert returned_parsed is None
         assert returned_vac is vac
         parsed_vacancy_repo.get_by_hh_id_with_employer.assert_not_called()
 
@@ -117,11 +118,12 @@ class TestResolveCachedVacancy:
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=parsed_record)
 
         vac = {"hh_vacancy_id": "456", "url": "http://hh.ru/vacancy/456", "cached": True}
-        returned_vac, returned_existing = await _resolve_cached_vacancy(
+        returned_vac, returned_ap, returned_parsed = await _resolve_cached_vacancy(
             "456", vac, vacancy_repo, parsed_vacancy_repo
         )
 
-        assert returned_existing is None
+        assert returned_ap is None
+        assert returned_parsed is parsed_record
         assert returned_vac["description"] == "full description"
         assert returned_vac["raw_skills"] == ["Python", "FastAPI"]
         assert returned_vac["url"] == "http://hh.ru/vacancy/456"
@@ -134,11 +136,12 @@ class TestResolveCachedVacancy:
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
 
         vac = {"hh_vacancy_id": "789", "url": "http://hh.ru/vacancy/789", "cached": True}
-        returned_vac, returned_existing = await _resolve_cached_vacancy(
+        returned_vac, returned_ap, returned_parsed = await _resolve_cached_vacancy(
             "789", vac, vacancy_repo, parsed_vacancy_repo
         )
 
-        assert returned_existing is None
+        assert returned_ap is None
+        assert returned_parsed is None
         assert returned_vac is vac
 
     @pytest.mark.asyncio
@@ -158,7 +161,7 @@ class TestResolveCachedVacancy:
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=parsed_record)
 
         vac = {"hh_vacancy_id": "999", "cached": True}
-        returned_vac, _ = await _resolve_cached_vacancy(
+        returned_vac, _, _ = await _resolve_cached_vacancy(
             "999", vac, vacancy_repo, parsed_vacancy_repo
         )
 
