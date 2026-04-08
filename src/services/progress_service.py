@@ -322,6 +322,81 @@ class ProgressService:
         )
         await self._refresh_message(force=False)
 
+    async def set_nested_steps(
+        self,
+        task_key: str,
+        steps: list[dict[str, str]],
+        *,
+        active_index: int | None = None,
+    ) -> None:
+        """Sub-steps for the current macro step (e.g. autorespond inside a task group)."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["nested_steps"] = list(steps)
+        if active_index is not None:
+            state["nested_active_step_index"] = active_index
+        else:
+            state.pop("nested_active_step_index", None)
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=True)
+
+    async def set_nested_step_state(self, task_key: str, step_id: str, new_state: str) -> None:
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        nested = state.get("nested_steps") or []
+        for s in nested:
+            if s.get("id") == step_id:
+                s["state"] = new_state
+                break
+        state["nested_steps"] = nested
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
+    async def set_nested_active_step_index(self, task_key: str, index: int) -> None:
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["nested_active_step_index"] = index
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
+    async def clear_nested_steps(self, task_key: str) -> None:
+        """Remove nested sub-steps and reset the detail bar (index 1) if present."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state.pop("nested_steps", None)
+        state.pop("nested_active_step_index", None)
+        bars = state.get("bars") or []
+        if len(bars) > 1:
+            bars[1]["current"] = 0
+            bars[1]["total"] = 0
+        state["bars"] = bars
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
     async def update_child_celery_task_id(
         self, task_key: str, child_celery_task_id: str | None
     ) -> None:
@@ -746,6 +821,12 @@ class ProgressService:
                 )
             )
         lines.extend(self._render_steps_lines(state, is_done))
+        if state.get("nested_steps"):
+            lines.append("")
+            lines.append(
+                f"<i>{get_text('progress-taskgroup-nested-header', self._locale)}</i>"
+            )
+            lines.extend(self._render_nested_steps_lines(state, is_done))
         if state.get("footer_lines"):
             lines.extend(state["footer_lines"])
         if is_done and state.get("note"):
@@ -767,6 +848,38 @@ class ProgressService:
         out: list[str] = []
         n = len(steps)
         active_i = state.get("active_step_index")
+        if active_i is None and not is_done:
+            for i, s in enumerate(steps):
+                if s.get("state") == "running":
+                    active_i = i
+                    break
+            if active_i is None:
+                for i, s in enumerate(steps):
+                    if s.get("state") == "pending":
+                        active_i = i
+                        break
+        for i, s in enumerate(steps):
+            st = s.get("state") or "pending"
+            label = s.get("label") or s.get("id") or "?"
+            if st == "done" or (is_done and st != "skipped"):
+                mark = "✓"
+            elif st == "skipped":
+                mark = "·"
+            elif st == "running" or (active_i is not None and i == active_i):
+                mark = "→"
+            else:
+                mark = "○"
+            out.append(f"{mark} <i>{i + 1}/{n}</i> {label}")
+        return out
+
+    def _render_nested_steps_lines(self, state: dict, is_done: bool) -> list[str]:
+        """Sub-steps for the current macro step (task group + nested autorespond pipeline)."""
+        steps = state.get("nested_steps")
+        if not steps:
+            return []
+        out: list[str] = []
+        n = len(steps)
+        active_i = state.get("nested_active_step_index")
         if active_i is None and not is_done:
             for i, s in enumerate(steps):
                 if s.get("state") == "running":

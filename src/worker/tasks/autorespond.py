@@ -267,7 +267,10 @@ async def _run_autorespond_async(
         task_key: str | None = None
         progress_bar_index = 0
         use_pipeline = pipeline_context is not None
-        if suppress_progress:
+        is_task_group_pipeline = bool(
+            pipeline_context and pipeline_context.get("task_group")
+        )
+        if suppress_progress and not use_pipeline:
             pre_progress = False
         elif use_pipeline:
             progress = pipeline_context["svc"]
@@ -303,6 +306,25 @@ async def _run_autorespond_async(
                 ],
                 active_step_index=0,
             )
+
+        if is_task_group_pipeline and progress and task_key:
+            await progress.set_nested_steps(
+                task_key,
+                [
+                    {
+                        "id": "negotiations",
+                        "label": get_text("progress-step-negotiations-sync", locale),
+                        "state": "running",
+                    },
+                    {
+                        "id": "applications",
+                        "label": get_text("progress-step-autorespond-applications", locale),
+                        "state": "pending",
+                    },
+                ],
+                active_index=0,
+            )
+            await progress.update_bar(task_key, progress_bar_index, 0, 1)
 
         sync_task = celery_task if isinstance(celery_task, HHBotTask) else None
         sync_res = await _sync_negotiations_async(
@@ -341,6 +363,9 @@ async def _run_autorespond_async(
             total_parsed=sync_res.get("total_parsed"),
             vacancies_imported=sync_res.get("vacancies_imported"),
         )
+
+        if is_task_group_pipeline and progress and task_key:
+            await progress.set_nested_step_state(task_key, "negotiations", "done")
 
         ap_settings = await ap_service.get_user_autoparse_settings(session, user.id)
         cover_letter_style = ap_settings.get("cover_letter_style", "professional")
@@ -424,23 +449,37 @@ async def _run_autorespond_async(
 
         show_progress = bool(pre_progress and work_units > 0)
         if pre_progress and progress and task_key:
-            await progress.set_step_state(task_key, "negotiations", "done")
-            if work_units <= 0:
-                await progress.set_step_state(task_key, "applications", "skipped")
-                await progress.finish_task(task_key, complete_bars=False)
-                task_key = None
-                progress = None
+            if is_task_group_pipeline:
+                if work_units <= 0:
+                    await progress.set_nested_step_state(task_key, "applications", "skipped")
+                    await progress.clear_nested_steps(task_key)
+                else:
+                    await progress.update_bar(task_key, progress_bar_index, 0, work_units)
+                    await progress.set_nested_step_state(task_key, "applications", "running")
+                    await progress.set_nested_active_step_index(task_key, 1)
+                    await progress.update_footer(
+                        task_key,
+                        [get_text("autorespond-progress-failed", locale, count=failed)],
+                    )
+                    await clear_autorespond_failed_counter(user.telegram_id, task_key)
             else:
-                await progress.update_bar(task_key, progress_bar_index, 0, work_units)
-                await progress.set_step_state(task_key, "applications", "running")
-                await progress.set_active_step_index(
-                    task_key, 2 if use_pipeline else 1
-                )
-                await progress.update_footer(
-                    task_key,
-                    [get_text("autorespond-progress-failed", locale, count=failed)],
-                )
-                await clear_autorespond_failed_counter(user.telegram_id, task_key)
+                await progress.set_step_state(task_key, "negotiations", "done")
+                if work_units <= 0:
+                    await progress.set_step_state(task_key, "applications", "skipped")
+                    await progress.finish_task(task_key, complete_bars=False)
+                    task_key = None
+                    progress = None
+                else:
+                    await progress.update_bar(task_key, progress_bar_index, 0, work_units)
+                    await progress.set_step_state(task_key, "applications", "running")
+                    await progress.set_active_step_index(
+                        task_key, 2 if use_pipeline else 1
+                    )
+                    await progress.update_footer(
+                        task_key,
+                        [get_text("autorespond-progress-failed", locale, count=failed)],
+                    )
+                    await clear_autorespond_failed_counter(user.telegram_id, task_key)
 
         ar_prog = (
             {
@@ -591,15 +630,26 @@ async def _run_autorespond_async(
                             await clear_autorespond_done_counter(user.telegram_id, task_key)
                             await clear_autorespond_failed_counter(user.telegram_id, task_key)
                         if progress and task_key:
-                            await progress.finish_task(
-                                task_key,
-                                shortage_note=get_text(
-                                    "autorespond-progress-rate-limited",
-                                    locale,
-                                ),
-                                complete_bars=False,
-                            )
-                            progress = None
+                            if is_task_group_pipeline:
+                                await progress.update_footer(
+                                    task_key,
+                                    [
+                                        get_text(
+                                            "autorespond-progress-rate-limited",
+                                            locale,
+                                        ),
+                                    ],
+                                )
+                            else:
+                                await progress.finish_task(
+                                    task_key,
+                                    shortage_note=get_text(
+                                        "autorespond-progress-rate-limited",
+                                        locale,
+                                    ),
+                                    complete_bars=False,
+                                )
+                                progress = None
                         if task_key and user.telegram_id:
                             clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
                             clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
@@ -777,7 +827,8 @@ async def _run_autorespond_async(
                 with contextlib.suppress(Exception):
                     await clear_autorespond_failed_counter(user.telegram_id, task_key)
                 with contextlib.suppress(Exception):
-                    await progress.finish_task(task_key, complete_bars=False)
+                    if not is_task_group_pipeline:
+                        await progress.finish_task(task_key, complete_bars=False)
             raise
         finally:
             # If Celery soft-timeout or another error stops the loop mid-way, the last

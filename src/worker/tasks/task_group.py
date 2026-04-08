@@ -61,9 +61,12 @@ async def _run_task_group_sequence_async(
         await svc.start_task(
             pk,
             get_text("progress-taskgroup-title", locale),
-            [get_text("progress-generic-working", locale)],
+            [
+                get_text("progress-taskgroup-macro-bar", locale),
+                get_text("progress-taskgroup-detail-bar", locale),
+            ],
             celery_task_id=celery_id,
-            initial_totals=[n],
+            initial_totals=[n, 0],
             steps=[
                 {
                     "id": f"tg{i}",
@@ -90,7 +93,7 @@ async def _run_task_group_sequence_async(
                 total=n,
                 label=_kind_short_label(str(kind), locale),
             )
-            await svc.update_bar(pk, 0, i, n)
+            await svc.update_bar(pk, 0, i + 1, n)
             await svc.set_step_state(pk, f"tg{i}", "running")
             await svc.set_active_step_index(pk, i)
 
@@ -110,7 +113,13 @@ async def _run_task_group_sequence_async(
                     None,
                     "task_group",
                     None,
-                    suppress_progress=True,
+                    pipeline_context={
+                        "svc": svc,
+                        "bot": bot,
+                        "task_key": pk,
+                        "bar_index": 1,
+                        "task_group": True,
+                    },
                 )
             else:
                 r = await _run_parsing_company_async(
@@ -123,9 +132,8 @@ async def _run_task_group_sequence_async(
                     suppress_progress=True,
                 )
             results.append(r)
-            await svc.set_step_state(pk, f"tg{i}", "done")
-            st = r.get("status")
-            if st in (
+            step_status = r.get("status")
+            if step_status in (
                 "error",
                 "negotiations_sync_failed",
                 "locked",
@@ -135,10 +143,14 @@ async def _run_task_group_sequence_async(
                 "disabled_global",
                 "company_not_found",
                 "not_configured",
-            ) or (isinstance(st, str) and st.startswith("circuit")):
+            ) or (isinstance(step_status, str) and step_status.startswith("circuit")):
                 with contextlib.suppress(Exception):
                     await svc.cancel_task(pk)
                 return {"status": "step_failed", "step": i, "result": r, "results": results}
+            if kind == "autorespond":
+                with contextlib.suppress(Exception):
+                    await svc.clear_nested_steps(pk)
+            await svc.set_step_state(pk, f"tg{i}", "done")
 
         await svc.update_bar(pk, 0, n, n)
         await svc.finish_task(pk)
