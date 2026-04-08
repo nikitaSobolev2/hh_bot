@@ -276,7 +276,13 @@ async def _resolve_cached_vacancy(
 
 
 async def _run_autoparse_company_async(
-    session_factory, task, company_id: int, notify_user_id: int | None = None
+    session_factory,
+    task,
+    company_id: int,
+    notify_user_id: int | None = None,
+    *,
+    pipeline_progress: tuple[object, str, object] | None = None,
+    suppress_progress: bool = False,
 ) -> dict:
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
@@ -301,8 +307,13 @@ async def _run_autoparse_company_async(
 
     _progress_bot = None
     progress = None
-    task_key = f"autoparse:{company_id}"
-    checkpoint_key = task_key
+    checkpoint_key = f"autoparse:{company_id}"
+    if suppress_progress:
+        progress_task_key = checkpoint_key
+    elif pipeline_progress is not None:
+        progress, progress_task_key, _progress_bot = pipeline_progress
+    else:
+        progress_task_key = checkpoint_key
     cb = CircuitBreaker("autoparse")
     checkpoint = TaskCheckpointService(create_checkpoint_redis())
     hb_task: asyncio.Task[None] | None = None
@@ -331,7 +342,11 @@ async def _run_autoparse_company_async(
 
         hb_task = asyncio.create_task(_run_lock_heartbeat())
 
-        if notify_user_id is not None:
+        if (
+            not suppress_progress
+            and pipeline_progress is None
+            and notify_user_id is not None
+        ):
             from aiogram import Bot
             from aiogram.client.default import DefaultBotProperties
             from aiogram.enums import ParseMode
@@ -372,7 +387,12 @@ async def _run_autoparse_company_async(
             we_repo = WorkExperienceRepository(session)
             work_experiences = await we_repo.get_active_by_user(company.user_id)
 
-        if _progress_bot and user:
+        if (
+            not suppress_progress
+            and _progress_bot
+            and user
+            and pipeline_progress is None
+        ):
             locale = user.language_code or "ru"
             from src.services.progress_service import ProgressService, create_progress_redis
 
@@ -380,7 +400,7 @@ async def _run_autoparse_company_async(
                 _progress_bot, user.telegram_id, create_progress_redis(), locale
             )
             await progress.start_task(
-                task_key=task_key,
+                task_key=progress_task_key,
                 title=company.vacancy_title,
                 bar_labels=[
                     get_text("progress-bar-scraping", locale),
@@ -391,7 +411,7 @@ async def _run_autoparse_company_async(
 
         async def _on_vacancy_scraped(current: int, total: int) -> None:
             if progress:
-                await progress.update_bar(task_key, 0, current, total)
+                await progress.update_bar(progress_task_key, 0, current, total)
 
         parser = HHParserService()
         scraper = parser._scraper
@@ -418,14 +438,14 @@ async def _run_autoparse_company_async(
         )
 
         if progress and total_to_analyze > 0:
-            await progress.update_bar(task_key, 0, total_to_analyze, total_to_analyze)
+            await progress.update_bar(progress_task_key, 0, total_to_analyze, total_to_analyze)
 
         restored = await checkpoint.load(checkpoint_key, task_id)
         analyzed_offset, original_total = restored if restored else (0, total_to_analyze)
         analyzed_count = analyzed_offset
 
         if progress and analyzed_count > 0:
-            await progress.update_bar(task_key, 1, analyzed_count, original_total)
+            await progress.update_bar(progress_task_key, 1, analyzed_count, original_total)
 
         from src.services.ai.prompts import VacancyCompatInput
 
@@ -643,7 +663,7 @@ async def _run_autoparse_company_async(
                     total=original_total,
                 )
                 if progress:
-                    await progress.update_bar(task_key, 1, analyzed_count, original_total)
+                    await progress.update_bar(progress_task_key, 1, analyzed_count, original_total)
 
         async def flush_pending(force: bool = False) -> None:
             nonlocal pending
@@ -724,7 +744,8 @@ async def _run_autoparse_company_async(
             deliver_autoparse_results.delay(company_id, user.id)
 
         if (
-            notify_user_id is None
+            pipeline_progress is None
+            and notify_user_id is None
             and new_count > 0
             and user
         ):
@@ -752,7 +773,7 @@ async def _run_autoparse_company_async(
                                 trigger="scheduled",
                             )
 
-        if notify_user_id is not None and user:
+        if pipeline_progress is None and notify_user_id is not None and user:
             await _send_run_completed_notification(
                 bot_token=settings.bot_token,
                 chat_id=user.telegram_id,
@@ -767,20 +788,21 @@ async def _run_autoparse_company_async(
         )
         if progress:
             with contextlib.suppress(Exception):
-                await progress.finish_task(task_key)
+                if pipeline_progress is None:
+                    await progress.finish_task(progress_task_key)
         return {"status": "completed", "new_count": new_count, "company_id": company_id}
 
     except HHCaptchaRequiredError:
         if progress:
             with contextlib.suppress(Exception):
-                await progress.mark_retrying(task_key)
+                await progress.mark_retrying(progress_task_key)
         raise
     except Exception as exc:
         cb.record_failure()
         logger.error("Autoparse task failed", company_id=company_id, error=str(exc))
         if progress:
             with contextlib.suppress(Exception):
-                await progress.cancel_task(task_key)
+                await progress.cancel_task(progress_task_key)
         raise
     finally:
         if hb_task is not None:

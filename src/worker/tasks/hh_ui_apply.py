@@ -270,6 +270,7 @@ async def _finalize_batch_item_async(
                     footer_failed_line=None,
                     title=autorespond_progress.get("title"),
                     celery_task_id=autorespond_progress.get("celery_task_id"),
+                    bar_index=int(autorespond_progress.get("bar_index", 0)),
                 )
         remaining = [
             x
@@ -1227,6 +1228,7 @@ async def _apply_ui_async(
                     footer_failed_line=None,
                     title=autorespond_progress.get("title"),
                     celery_task_id=autorespond_progress.get("celery_task_id"),
+                    bar_index=int(autorespond_progress.get("bar_index", 0)),
                 )
         with contextlib.suppress(Exception):
             await bot.session.close()

@@ -31,6 +31,7 @@ from src.services.autorespond_progress import (
     set_autorespond_cancelled,
 )
 from src.services.celery_active import celery_task_id_is_active
+from src.services.progress_cancel import set_user_cancelled_sync
 from src.services.progress_service import ProgressService, create_progress_redis
 from src.worker.app import celery_app
 
@@ -335,6 +336,7 @@ async def handle_progress_cancel(
 
         state = json.loads(raw)
         celery_task_id = normalize_celery_task_id(state.get("celery_task_id"))
+        child_celery_task_id = normalize_celery_task_id(state.get("child_celery_task_id"))
 
         if not celery_task_id:
             if task_key.startswith("autorespond:"):
@@ -344,14 +346,17 @@ async def handle_progress_cancel(
                 clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
                 clear_hh_ui_resume_envelope_sync(chat_id, task_key)
                 clear_autorespond_ui_tail_sync(chat_id, task_key)
+                set_user_cancelled_sync(chat_id, task_key)
                 await svc.cancel_task(task_key)
                 await callback.answer(
                     i18n.get("progress-task-cancelled"),
                     show_alert=True,
                 )
                 return
+            set_user_cancelled_sync(chat_id, task_key)
+            await svc.cancel_task(task_key)
             await callback.answer(
-                i18n.get("progress-task-already-finished"),
+                i18n.get("progress-task-cancelled"),
                 show_alert=True,
             )
             return
@@ -363,11 +368,18 @@ async def handle_progress_cancel(
             clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)
 
+        if child_celery_task_id:
+            await run_sync_in_thread(
+                celery_app.control.revoke,
+                child_celery_task_id,
+                terminate=True,
+            )
         await run_sync_in_thread(
             celery_app.control.revoke,
             celery_task_id,
             terminate=True,
         )
+        set_user_cancelled_sync(chat_id, task_key)
         await svc.cancel_task(task_key)
 
         await callback.answer(

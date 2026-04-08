@@ -550,16 +550,10 @@ async def ar_run(
     if not acc or not normalize_hh_resume_cache_items(acc.resume_list_cache):
         await callback.answer(i18n.get("autorespond-configure-first"), show_alert=True)
         return
-    from celery import chain
-
     from src.core.celery_async import run_sync_in_thread
-    from src.worker.tasks.autoparse import run_autoparse_company
-    from src.worker.tasks.autorespond import run_autorespond_after_manual_parse
+    from src.worker.tasks.autorespond import run_manual_autoparse_autorespond_pipeline
 
     await run_sync_in_thread(
-        lambda: chain(
-            run_autoparse_company.s(company.id, user.id),
-            run_autorespond_after_manual_parse.s(company.id, user.id),
-        ).delay()
+        lambda: run_manual_autoparse_autorespond_pipeline.delay(company.id, user.id)
     )
     await callback.answer(i18n.get("autorespond-manual-pipeline-queued"), show_alert=True)

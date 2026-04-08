@@ -34,6 +34,7 @@ import json
 from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
+from src.services.progress_cancel import clear_user_cancelled_sync
 
 logger = get_logger(__name__)
 
@@ -160,6 +161,10 @@ class ProgressService:
         bar_labels: list[str],
         celery_task_id: str | None = None,
         initial_totals: list[int] | None = None,
+        *,
+        steps: list[dict[str, str]] | None = None,
+        active_step_index: int | None = None,
+        group: dict[str, str | int] | None = None,
     ) -> None:
         """Register a new task and show or update the pinned progress message."""
         bars = []
@@ -171,10 +176,114 @@ class ProgressService:
             "status": "running",
             "bars": bars,
         }
+        if steps is not None:
+            state["steps"] = list(steps)
+        if active_step_index is not None:
+            state["active_step_index"] = active_step_index
+        if group is not None:
+            state["group"] = dict(group)
+        with contextlib.suppress(Exception):
+            clear_user_cancelled_sync(self._chat_id, task_key)
         if celery_task_id is not None:
             nid = normalize_celery_task_id(celery_task_id)
             if nid:
                 state["celery_task_id"] = nid
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=True)
+
+    async def set_steps(
+        self,
+        task_key: str,
+        steps: list[dict[str, str]],
+        *,
+        active_index: int | None = None,
+    ) -> None:
+        """Set ordered pipeline steps: each item ``{id, label, state}`` where state is
+        ``pending``, ``running``, ``done``, or ``skipped``."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["steps"] = list(steps)
+        if active_index is not None:
+            state["active_step_index"] = active_index
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=True)
+
+    async def set_active_step_index(self, task_key: str, index: int) -> None:
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["active_step_index"] = index
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
+    async def set_step_state(self, task_key: str, step_id: str, new_state: str) -> None:
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        steps = state.get("steps") or []
+        for s in steps:
+            if s.get("id") == step_id:
+                s["state"] = new_state
+                break
+        state["steps"] = steps
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
+    async def set_group(
+        self,
+        task_key: str,
+        *,
+        current: int,
+        total: int,
+        label: str = "",
+    ) -> None:
+        """Outer counter for task-group runs: e.g. step 2 of 5 in a batch."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["group"] = {"current": current, "total": total, "label": label}
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
+    async def update_child_celery_task_id(self, task_key: str, child_celery_task_id: str | None) -> None:
+        """Store a spawned child Celery task id (orchestrator dispatches sub-tasks)."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        if child_celery_task_id is not None:
+            nid = normalize_celery_task_id(child_celery_task_id)
+            if nid:
+                state["child_celery_task_id"] = nid
+            else:
+                state.pop("child_celery_task_id", None)
+        else:
+            state.pop("child_celery_task_id", None)
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -280,6 +389,9 @@ class ProgressService:
                 for bar in state["bars"]:
                     if bar["total"] > 0:
                         bar["current"] = bar["total"]
+            for s in state.get("steps") or []:
+                if s.get("state") != "skipped":
+                    s["state"] = "done"
             if shortage_note:
                 state["note"] = shortage_note
             await self._redis.set(
@@ -525,7 +637,7 @@ class ProgressService:
         return header + "\n\n" + "\n\n———\n\n".join(sections)
 
     def _render_task_section(self, state: dict, task_number: int = 1) -> str:
-        """Render a single task block: number and title, then each progress bar."""
+        """Render a single task block: number and title, optional group/steps, then bars."""
         title = state["title"]
         status = state.get("status", "running")
         is_done = status == "completed"
@@ -534,6 +646,22 @@ class ProgressService:
         lines = [f"<b>📋</b> {task_number}. {title}{done_mark}"]
         if is_retrying:
             lines.append(get_text("progress-retrying", self._locale))
+        grp = state.get("group")
+        if isinstance(grp, dict) and grp.get("total", 0) > 0:
+            gc = int(grp.get("current") or 0)
+            gt = int(grp.get("total") or 0)
+            glabel = (grp.get("label") or "").strip()
+            part2 = f" — {glabel}" if glabel else ""
+            lines.append(
+                get_text(
+                    "progress-group-line",
+                    self._locale,
+                    current=gc,
+                    total=gt,
+                    part2=part2,
+                )
+            )
+        lines.extend(self._render_steps_lines(state, is_done))
         if state.get("footer_lines"):
             lines.extend(state["footer_lines"])
         if is_done and state.get("note"):
@@ -546,6 +674,38 @@ class ProgressService:
             bar_line = render_bar(bar["current"], total)
             lines.append(f"{bar_line} ✅" if is_done else bar_line)
         return "\n".join(lines)
+
+    def _render_steps_lines(self, state: dict, is_done: bool) -> list[str]:
+        """Render pipeline step indicators (compact list + active hint)."""
+        steps = state.get("steps")
+        if not steps:
+            return []
+        out: list[str] = []
+        n = len(steps)
+        active_i = state.get("active_step_index")
+        if active_i is None and not is_done:
+            for i, s in enumerate(steps):
+                if s.get("state") == "running":
+                    active_i = i
+                    break
+            if active_i is None:
+                for i, s in enumerate(steps):
+                    if s.get("state") == "pending":
+                        active_i = i
+                        break
+        for i, s in enumerate(steps):
+            st = s.get("state") or "pending"
+            label = s.get("label") or s.get("id") or "?"
+            if st == "done" or (is_done and st != "skipped"):
+                mark = "✓"
+            elif st == "skipped":
+                mark = "·"
+            elif st == "running" or (active_i is not None and i == active_i):
+                mark = "→"
+            else:
+                mark = "○"
+            out.append(f"{mark} <i>{i + 1}/{n}</i> {label}")
+        return out
 
     def _render_summary(self, tasks: dict[str, dict]) -> str:
         """Render the all-done summary message sent after the pinned message is removed."""

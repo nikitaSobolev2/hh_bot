@@ -177,12 +177,13 @@ async def handle_task_group_run(
         )
         return
 
-    enqueued = 0
-    skipped = 0
-    from src.worker.tasks.autoparse import run_autoparse_company
-    from src.worker.tasks.autorespond import run_autorespond_company
-    from src.worker.tasks.parsing import run_parsing_company
+    import json
 
+    from src.core.celery_async import run_sync_in_thread
+    from src.worker.tasks.task_group import run_task_group_sequence
+
+    validated: list[dict] = []
+    skipped = 0
     for step in steps:
         kind = step.get("kind")
         cid = step.get("company_id")
@@ -194,29 +195,32 @@ async def handle_task_group_run(
             repo = AutoparseCompanyRepository(session)
             co = await repo.get_by_id(int(cid))
             if co and co.user_id == user.id and not co.is_deleted:
-                run_autoparse_company.delay(int(cid), notify_user_id=user.id)
+                validated.append({"kind": kind, "company_id": int(cid)})
                 ok = True
         elif kind == "autorespond":
             repo = AutoparseCompanyRepository(session)
             co = await repo.get_by_id(int(cid))
             if co and co.user_id == user.id and not co.is_deleted:
-                run_autorespond_company.delay(int(cid))
+                validated.append({"kind": kind, "company_id": int(cid)})
                 ok = True
         elif kind == "parsing":
             repo = ParsingCompanyRepository(session)
             co = await repo.get_by_id_for_user(int(cid), user.id)
             if co:
-                run_parsing_company.delay(
-                    int(cid),
-                    user.id,
-                    include_blacklisted=False,
-                    telegram_chat_id=user.telegram_id,
-                )
+                validated.append({"kind": kind, "company_id": int(cid)})
                 ok = True
-        if ok:
-            enqueued += 1
-        else:
+        if not ok:
             skipped += 1
+
+    enqueued = len(validated)
+    if validated:
+        await run_sync_in_thread(
+            lambda: run_task_group_sequence.delay(
+                user.id,
+                user.telegram_id,
+                json.dumps(validated),
+            )
+        )
 
     await callback.answer(
         i18n.get(

@@ -681,6 +681,32 @@ class TestRenderProgressText:
         text = svc._render_progress_text(tasks)
         assert "Только 111 из 200 вакансий найдено." in text
 
+    def test_group_line_renders_when_group_set(self):
+        svc, _, _ = _make_service(locale="en")
+        state = _task_state(title="Batch run")
+        state["group"] = {"current": 2, "total": 5, "label": "Autoparse"}
+        tasks = {"tg:1": state}
+        text = svc._render_progress_text(tasks)
+        assert "Step 2 of 5" in text
+        assert "Autoparse" in text
+
+    def test_steps_render_with_marks(self):
+        svc, _, _ = _make_service(locale="en")
+        state = _task_state(title="Pipeline", bars=[])
+        state["steps"] = [
+            {"id": "a", "label": "First", "state": "done"},
+            {"id": "b", "label": "Second", "state": "running"},
+            {"id": "c", "label": "Third", "state": "pending"},
+        ]
+        state["active_step_index"] = 1
+        state["bars"] = [{"label": "Bar", "current": 1, "total": 10}]
+        tasks = {"pl:1": state}
+        text = svc._render_progress_text(tasks)
+        assert "✓" in text
+        assert "→" in text
+        assert "○" in text
+        assert "Second" in text
+
 
 # ---------------------------------------------------------------------------
 # _render_summary

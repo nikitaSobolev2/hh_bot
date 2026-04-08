@@ -24,6 +24,7 @@ celery_app = Celery(
         "src.worker.tasks.hh_login_assist",
         "src.worker.tasks.autorespond",
         "src.worker.tasks.negotiations_sync",
+        "src.worker.tasks.task_group",
     ],
 )
 

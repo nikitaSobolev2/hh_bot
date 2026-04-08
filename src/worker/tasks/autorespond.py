@@ -155,6 +155,9 @@ async def _run_autorespond_async(
     vacancy_ids: list[int] | None,
     trigger: str,
     task_started_at: datetime | None,
+    *,
+    pipeline_context: dict | None = None,
+    suppress_progress: bool = False,
 ) -> dict:
     from src.bot.modules.autoparse import services as ap_service
     from src.core.constants import AppSettingKey
@@ -257,6 +260,50 @@ async def _run_autorespond_async(
             return {"status": "not_configured"}
 
         locale = user.language_code or "ru"
+        cid = getattr(celery_task, "request", None)
+        celery_id = str(getattr(cid, "id", None) or "local") if celery_task else "local"
+        progress = None
+        progress_bot = None
+        task_key: str | None = None
+        progress_bar_index = 0
+        use_pipeline = pipeline_context is not None
+        if suppress_progress:
+            pre_progress = False
+        elif use_pipeline:
+            progress = pipeline_context["svc"]
+            task_key = str(pipeline_context["task_key"])
+            progress_bot = pipeline_context["bot"]
+            progress_bar_index = int(pipeline_context.get("bar_index", 0))
+            pre_progress = True
+        else:
+            pre_progress = bool(
+                celery_task and user.telegram_id and user.telegram_id > 0
+            )
+        if pre_progress and not use_pipeline and not suppress_progress:
+            task_key = f"autorespond:{company_id}:{celery_id}"
+            progress_bot = celery_task.create_bot()  # type: ignore[union-attr]
+            progress = ProgressService(progress_bot, user.telegram_id, create_progress_redis(), locale)
+            await progress.start_task(
+                task_key=task_key,
+                title=company.vacancy_title,
+                bar_labels=[get_text("progress-bar-autorespond", locale)],
+                celery_task_id=celery_id,
+                initial_totals=[0],
+                steps=[
+                    {
+                        "id": "negotiations",
+                        "label": get_text("progress-step-negotiations-sync", locale),
+                        "state": "running",
+                    },
+                    {
+                        "id": "applications",
+                        "label": get_text("progress-step-autorespond-applications", locale),
+                        "state": "pending",
+                    },
+                ],
+                active_step_index=0,
+            )
+
         sync_task = celery_task if isinstance(celery_task, HHBotTask) else None
         sync_res = await _sync_negotiations_async(
             session_factory,
@@ -277,6 +324,12 @@ async def _run_autorespond_async(
                 reason="negotiations_sync_failed",
                 sync_reason=reason,
             )
+            if progress and task_key:
+                with contextlib.suppress(Exception):
+                    await progress.cancel_task(task_key)
+            if progress_bot and pipeline_context is None:
+                with contextlib.suppress(Exception):
+                    await progress_bot.session.close()
             return {"status": "negotiations_sync_failed", "reason": reason}
         logger.info(
             "autorespond_preflight_negotiations_sync",
@@ -369,34 +422,25 @@ async def _run_autorespond_async(
         ui_batch_buffer: list[tuple[AutoparsedVacancy, str]] = []
         queue_ui_items: list[dict] = []
 
-        progress: object | None = None
-        task_key: str | None = None
-        progress_bot = None
-        cid = getattr(celery_task, "request", None)
-        celery_id = str(getattr(cid, "id", None) or "local") if celery_task else "local"
-        show_progress = bool(
-            celery_task
-            and user.telegram_id
-            and capped
-            and work_units > 0
-            and user.telegram_id > 0
-        )
-        if show_progress:
-            task_key = f"autorespond:{company_id}:{celery_id}"
-            progress_bot = celery_task.create_bot()  # type: ignore[union-attr]
-            progress = ProgressService(progress_bot, user.telegram_id, create_progress_redis(), locale)
-            await progress.start_task(
-                task_key=task_key,
-                title=company.vacancy_title,
-                bar_labels=[get_text("progress-bar-autorespond", locale)],
-                celery_task_id=celery_id,
-                initial_totals=[work_units],
-            )
-            await progress.update_footer(
-                task_key,
-                [get_text("autorespond-progress-failed", locale, count=failed)],
-            )
-            await clear_autorespond_failed_counter(user.telegram_id, task_key)
+        show_progress = bool(pre_progress and work_units > 0)
+        if pre_progress and progress and task_key:
+            await progress.set_step_state(task_key, "negotiations", "done")
+            if work_units <= 0:
+                await progress.set_step_state(task_key, "applications", "skipped")
+                await progress.finish_task(task_key, complete_bars=False)
+                task_key = None
+                progress = None
+            else:
+                await progress.update_bar(task_key, progress_bar_index, 0, work_units)
+                await progress.set_step_state(task_key, "applications", "running")
+                await progress.set_active_step_index(
+                    task_key, 2 if use_pipeline else 1
+                )
+                await progress.update_footer(
+                    task_key,
+                    [get_text("autorespond-progress-failed", locale, count=failed)],
+                )
+                await clear_autorespond_failed_counter(user.telegram_id, task_key)
 
         ar_prog = (
             {
@@ -405,8 +449,9 @@ async def _run_autorespond_async(
                 "locale": locale,
                 "title": company.vacancy_title,
                 "celery_task_id": celery_id,
+                "bar_index": progress_bar_index,
             }
-            if (task_key and progress and progress_bot)
+            if (task_key and progress and progress_bot and show_progress)
             else None
         )
 
@@ -503,6 +548,7 @@ async def _run_autorespond_async(
                             ),
                             title=ar_prog.get("title"),
                             celery_task_id=ar_prog.get("celery_task_id"),
+                            bar_index=int(ar_prog.get("bar_index", 0)),
                         )
                     continue
                 if preflight.requires_employer_test:
@@ -525,6 +571,7 @@ async def _run_autorespond_async(
                             ),
                             title=ar_prog.get("title"),
                             celery_task_id=ar_prog.get("celery_task_id"),
+                            bar_index=int(ar_prog.get("bar_index", 0)),
                         )
                     continue
 
@@ -587,6 +634,7 @@ async def _run_autorespond_async(
                                 ),
                                 title=ar_prog.get("title"),
                                 celery_task_id=ar_prog.get("celery_task_id"),
+                                bar_index=int(ar_prog.get("bar_index", 0)),
                             )
                         continue
                     item_d = {
@@ -624,6 +672,7 @@ async def _run_autorespond_async(
                                 ),
                                 title=ar_prog.get("title"),
                                 celery_task_id=ar_prog.get("celery_task_id"),
+                                bar_index=int(ar_prog.get("bar_index", 0)),
                             )
                         continue
                     letter_for_api: str | None = None
@@ -712,6 +761,7 @@ async def _run_autorespond_async(
                             ),
                             title=ar_prog.get("title"),
                             celery_task_id=ar_prog.get("celery_task_id"),
+                            bar_index=int(ar_prog.get("bar_index", 0)),
                         )
 
             await flush_ui_batch()
@@ -755,7 +805,7 @@ async def _run_autorespond_async(
             if cover_ai_client is not None:
                 with contextlib.suppress(Exception):
                     await cover_ai_client.aclose()
-            if progress_bot:
+            if progress_bot and pipeline_context is None:
                 with contextlib.suppress(Exception):
                     await progress_bot.session.close()
 
@@ -774,6 +824,124 @@ async def _run_autorespond_async(
             "failed": failed,
             "trigger": trigger,
         }
+
+
+async def _run_manual_autoparse_autorespond_pipeline_async(
+    session_factory: async_sessionmaker[AsyncSession],
+    task: HHBotTask,
+    company_id: int,
+    user_id: int,
+) -> dict:
+    """Single Celery task: autoparse then autorespond with one pinned progress entry."""
+    from src.repositories.autoparse import AutoparseCompanyRepository
+    from src.repositories.user import UserRepository
+    from src.core.i18n import get_text
+    from src.services.progress_service import ProgressService, create_progress_redis
+    from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+    bot = task.create_bot()
+    celery_id = str(task.request.id or "")
+    try:
+        async with session_factory() as session:
+            company_repo = AutoparseCompanyRepository(session)
+            company = await company_repo.get_by_id(company_id)
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_id(user_id)
+            if not company or not user or company.user_id != user_id or company.is_deleted:
+                return {"status": "error", "reason": "invalid_company"}
+            if not company.is_enabled:
+                return {"status": "skipped", "company_id": company_id}
+            locale = user.language_code or "ru"
+            telegram_id = user.telegram_id or 0
+        if telegram_id <= 0:
+            return {"status": "error", "reason": "no_telegram"}
+
+        pk = f"pipeline:{company_id}:{celery_id}"
+        redis = create_progress_redis()
+        svc = ProgressService(bot, telegram_id, redis, locale)
+        await svc.start_task(
+            pk,
+            get_text("progress-pipeline-manual-title", locale),
+            [
+                get_text("progress-bar-scraping", locale),
+                get_text("progress-bar-ai", locale),
+                get_text("progress-bar-autorespond", locale),
+            ],
+            celery_task_id=celery_id,
+            initial_totals=[0, 0, 0],
+            steps=[
+                {
+                    "id": "autoparse",
+                    "label": get_text("progress-step-autoparse-pipeline", locale),
+                    "state": "running",
+                },
+                {
+                    "id": "negotiations",
+                    "label": get_text("progress-step-negotiations-sync", locale),
+                    "state": "pending",
+                },
+                {
+                    "id": "applications",
+                    "label": get_text("progress-step-autorespond-applications", locale),
+                    "state": "pending",
+                },
+            ],
+            active_step_index=0,
+        )
+
+        ap_res = await _run_autoparse_company_async(
+            session_factory,
+            task,
+            company_id,
+            None,
+            pipeline_progress=(svc, pk, bot),
+        )
+        if ap_res.get("status") != "completed":
+            with contextlib.suppress(Exception):
+                await svc.cancel_task(pk)
+            return ap_res
+
+        await svc.set_step_state(pk, "autoparse", "done")
+        await svc.set_step_state(pk, "negotiations", "running")
+        await svc.set_active_step_index(pk, 1)
+
+        return await _run_autorespond_async(
+            session_factory,
+            task,
+            company_id,
+            None,
+            "manual_pipeline",
+            None,
+            pipeline_context={
+                "svc": svc,
+                "task_key": pk,
+                "bot": bot,
+                "bar_index": 2,
+                "locale": locale,
+            },
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await bot.session.close()
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="autoparse.manual_pipeline_autorespond",
+    soft_time_limit=settings.autoparse_run_company_soft_time_limit_seconds
+    + settings.autoparse_run_company_soft_time_limit_seconds,
+    time_limit=settings.autoparse_run_company_time_limit_seconds
+    + settings.autoparse_run_company_time_limit_seconds,
+)
+def run_manual_autoparse_autorespond_pipeline(
+    self: HHBotTask,
+    company_id: int,
+    user_id: int,
+) -> dict:
+    return run_async(
+        lambda sf: _run_manual_autoparse_autorespond_pipeline_async(sf, self, company_id, user_id)
+    )
 
 
 @celery_app.task(

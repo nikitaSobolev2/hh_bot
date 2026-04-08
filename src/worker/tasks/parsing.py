@@ -23,6 +23,10 @@ class ParsingStalenessError(Exception):
     """Raised when no parsing progress has occurred within the staleness window."""
 
 
+class ParsingCancelledError(Exception):
+    """Raised when the user cancelled via the pinned progress UI."""
+
+
 
 def _is_transient_failure(exc: Exception) -> bool:
     """Return True if the failure is transient and should not open the circuit breaker."""
@@ -93,6 +97,8 @@ async def _run_parsing_company_async(
     user_id: int,
     include_blacklisted: bool = False,
     telegram_chat_id: int = 0,
+    *,
+    suppress_progress: bool = False,
 ) -> dict:
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.blacklist import BlacklistRepository
@@ -176,9 +182,11 @@ async def _run_parsing_company_async(
         staleness_redis = create_staleness_redis()
         await record_staleness_progress(staleness_redis, task_key)
 
-        progress = await _start_progress(
-            bot, telegram_chat_id, company, locale, celery_task_id=task.request.id
-        )
+        progress = None
+        if not suppress_progress:
+            progress = await _start_progress(
+                bot, telegram_chat_id, company, locale, celery_task_id=task.request.id
+            )
 
         compat_params = None
         if company.use_compatibility_check and company.compatibility_threshold is not None:
@@ -217,6 +225,15 @@ async def _run_parsing_company_async(
             resume_from = (vacancies, 0) if vacancies else None
 
         async def _on_page_scraped(current: int, total: int) -> None:
+            if (
+                not suppress_progress
+                and telegram_chat_id
+                and task_key
+            ):
+                from src.services.progress_cancel import is_user_cancelled_sync
+
+                if is_user_cancelled_sync(telegram_chat_id, task_key):
+                    raise ParsingCancelledError()
             await record_staleness_progress(staleness_redis, task_key)
             if progress:
                 display_total = company.target_count if use_compat else total
@@ -237,6 +254,15 @@ async def _run_parsing_company_async(
         async def _on_vacancy_processed(
             current: int, total: int, vacancy_data: "VacancyData | None" = None  # noqa: F821
         ) -> None:
+            if (
+                not suppress_progress
+                and telegram_chat_id
+                and task_key
+            ):
+                from src.services.progress_cancel import is_user_cancelled_sync
+
+                if is_user_cancelled_sync(telegram_chat_id, task_key):
+                    raise ParsingCancelledError()
             await record_staleness_progress(staleness_redis, task_key)
             await _report_progress(session_factory, parsing_company_id, current, total)
             if progress:
@@ -339,6 +365,20 @@ async def _run_parsing_company_async(
             "skills_count": skills_count,
         }
 
+    except ParsingCancelledError:
+        logger.info("Parsing cancelled by user", company_id=parsing_company_id)
+        if progress:
+            with contextlib.suppress(Exception):
+                await progress.cancel_task(task_key)
+        async with session_factory() as session:
+            from src.repositories.parsing import ParsingCompanyRepository
+
+            company_repo = ParsingCompanyRepository(session)
+            company = await company_repo.get_by_id(parsing_company_id)
+            if company:
+                await company_repo.update(company, status="idle")
+                await session.commit()
+        return {"status": "cancelled"}
     except HHCaptchaRequiredError:
         # Propagate to sync run_parsing_company for Celery retry (no _mark_parsing_failed).
         raise

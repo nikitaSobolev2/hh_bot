@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -268,9 +269,51 @@ def sync_negotiations_from_hh_task(
     chat_id: int,
     locale: str,
 ) -> dict:
-    return run_async(
-        lambda sf: _sync_negotiations_async(
-            sf,
+    async def _with_progress(session_factory):
+        from src.core.i18n import get_text
+        from src.services.progress_service import ProgressService, create_progress_redis
+
+        if chat_id and chat_id > 0:
+            bot = self.create_bot()
+            redis = create_progress_redis()
+            tid = str(self.request.id or "local")
+            tk = f"sync_negotiations:{autoparse_company_id}:{tid}"
+            svc = ProgressService(bot, chat_id, redis, locale)
+            title = get_text("negotiations-progress-title", locale)
+            await svc.start_task(
+                tk,
+                title,
+                [get_text("progress-generic-working", locale)],
+                celery_task_id=tid,
+                initial_totals=[1],
+            )
+            try:
+                try:
+                    res = await _sync_negotiations_async(
+                        session_factory,
+                        self,
+                        user_id,
+                        hh_linked_account_id,
+                        autoparse_company_id,
+                        chat_id,
+                        locale,
+                    )
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        await svc.cancel_task(tk)
+                    raise
+                if res.get("status") == "ok":
+                    await svc.update_bar(tk, 0, 1, 1)
+                    await svc.finish_task(tk)
+                else:
+                    with contextlib.suppress(Exception):
+                        await svc.cancel_task(tk)
+                return res
+            finally:
+                with contextlib.suppress(Exception):
+                    await bot.session.close()
+        return await _sync_negotiations_async(
+            session_factory,
             self,
             user_id,
             hh_linked_account_id,
@@ -278,4 +321,5 @@ def sync_negotiations_from_hh_task(
             chat_id,
             locale,
         )
-    )
+
+    return run_async(_with_progress)

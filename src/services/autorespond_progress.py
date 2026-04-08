@@ -480,6 +480,7 @@ async def _rehydrate_autorespond_progress_task_if_missing(
     locale: str,
     title: str | None,
     celery_task_id: str | None,
+    bar_index: int = 0,
 ) -> bool:
     """If ProgressService task JSON is missing, run ``start_task``. Returns True if rehydrated."""
     state_key = f"progress:task:{chat_id}:{task_key}"
@@ -493,13 +494,57 @@ async def _rehydrate_autorespond_progress_task_if_missing(
     )
     nid = normalize_celery_task_id(celery_task_id) if celery_task_id else None
     bar_lbl = get_text("progress-bar-autorespond", locale)
-    await svc.start_task(
-        task_key=task_key,
-        title=title or bar_lbl,
-        bar_labels=[bar_lbl],
-        celery_task_id=nid,
-        initial_totals=[total],
-    )
+    if bar_index == 2:
+        await svc.start_task(
+            task_key=task_key,
+            title=title or bar_lbl,
+            bar_labels=[
+                get_text("progress-bar-scraping", locale),
+                get_text("progress-bar-ai", locale),
+                bar_lbl,
+            ],
+            celery_task_id=nid,
+            initial_totals=[0, 0, total],
+            steps=[
+                {
+                    "id": "autoparse",
+                    "label": get_text("progress-step-autoparse-pipeline", locale),
+                    "state": "done",
+                },
+                {
+                    "id": "negotiations",
+                    "label": get_text("progress-step-negotiations-sync", locale),
+                    "state": "done",
+                },
+                {
+                    "id": "applications",
+                    "label": get_text("progress-step-autorespond-applications", locale),
+                    "state": "running",
+                },
+            ],
+            active_step_index=2,
+        )
+    else:
+        await svc.start_task(
+            task_key=task_key,
+            title=title or bar_lbl,
+            bar_labels=[bar_lbl],
+            celery_task_id=nid,
+            initial_totals=[total],
+            steps=[
+                {
+                    "id": "negotiations",
+                    "label": get_text("progress-step-negotiations-sync", locale),
+                    "state": "done",
+                },
+                {
+                    "id": "applications",
+                    "label": get_text("progress-step-autorespond-applications", locale),
+                    "state": "running",
+                },
+            ],
+            active_step_index=1,
+        )
     return True
 
 
@@ -523,6 +568,7 @@ async def ensure_autorespond_progress_task_state_if_missing(
     title = autorespond_progress.get("title")
     celery_task_id = autorespond_progress.get("celery_task_id")
     loc = str(autorespond_progress.get("locale") or locale)
+    bar_ix = int(autorespond_progress.get("bar_index", 0))
 
     redis = create_progress_redis()
     try:
@@ -536,6 +582,7 @@ async def ensure_autorespond_progress_task_state_if_missing(
             locale=loc,
             title=title if isinstance(title, str) else None,
             celery_task_id=celery_task_id if isinstance(celery_task_id, str) else None,
+            bar_index=bar_ix,
         )
         if not rehydrated:
             return
@@ -545,7 +592,7 @@ async def ensure_autorespond_progress_task_state_if_missing(
         failed_n = int(await redis.get(autorespond_failed_redis_key(chat_id, task_key)) or 0)
         footer_lines = [get_text("autorespond-progress-failed", loc, count=failed_n)]
         try:
-            await svc.update_bar(task_key, 0, display_done, total)
+            await svc.update_bar(task_key, bar_ix, display_done, total)
             await svc.update_footer(task_key, footer_lines)
         except Exception as exc:
             logger.warning(
@@ -568,6 +615,7 @@ async def tick_autorespond_bar(
     footer_failed_line: str | None = None,
     title: str | None = None,
     celery_task_id: str | None = None,
+    bar_index: int = 0,
 ) -> bool:
     """Increment done counter, refresh bar, finish pinned progress when done >= total.
 
@@ -588,6 +636,7 @@ async def tick_autorespond_bar(
             locale=locale,
             title=title,
             celery_task_id=celery_task_id,
+            bar_index=bar_index,
         )
 
         key = autorespond_done_redis_key(chat_id, task_key)
@@ -604,7 +653,7 @@ async def tick_autorespond_bar(
             )
             footer_lines = [get_text("autorespond-progress-failed", locale, count=failed_n)]
         try:
-            await svc.update_bar(task_key, 0, display_done, total)
+            await svc.update_bar(task_key, bar_index, display_done, total)
             await svc.update_footer(task_key, footer_lines)
         except Exception as exc:
             # Telegram / aiohttp timeouts or SSL stalls must not abort autorespond (SoftTimeLimitExceeded).
