@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from aiogram import F, Router
+from aiogram.filters import or_f
 from aiogram.types import CallbackQuery
 
 from src.core.celery_async import (
@@ -32,14 +33,20 @@ from src.services.autorespond_progress import (
 )
 from src.services.celery_active import celery_task_id_is_active
 from src.services.progress_cancel import set_user_cancelled_sync
-from src.services.progress_service import ProgressService, create_progress_redis
+from src.services.progress_service import (
+    PROGRESS_CANCEL_PREFIX,
+    PROGRESS_CANCEL_SHORT_PREFIX,
+    PROGRESS_REFRESH_PREFIX,
+    PROGRESS_REFRESH_SHORT_PREFIX,
+    PROGRESS_TITLE_PREFIX,
+    PROGRESS_TITLE_SHORT_PREFIX,
+    ProgressService,
+    create_progress_redis,
+    short_callback_storage_key,
+)
 from src.worker.app import celery_app
 
 router = Router(name="progress")
-
-_PROGRESS_CANCEL_PREFIX = "prog:cancel:"
-_PROGRESS_TITLE_PREFIX = "prog:t:"
-_PROGRESS_REFRESH_PREFIX = "prog:r:"
 
 
 def _parse_task_key_from_prefix(data: str, prefix: str) -> str | None:
@@ -49,7 +56,26 @@ def _parse_task_key_from_prefix(data: str, prefix: str) -> str | None:
     return encoded.replace("_", ":") if encoded else None
 
 
-@router.callback_query(F.data.startswith(_PROGRESS_TITLE_PREFIX))
+async def _parse_task_key_for_progress_callback(
+    redis,
+    chat_id: int,
+    data: str,
+    *,
+    long_prefix: str,
+    short_prefix: str,
+) -> str | None:
+    """Resolve full ``task_key`` from long-form or short-token callback_data."""
+    if data.startswith(short_prefix):
+        token = data[len(short_prefix) :]
+        if len(token) != 16:
+            return None
+        return await redis.get(short_callback_storage_key(chat_id, token))
+    return _parse_task_key_from_prefix(data, long_prefix)
+
+
+@router.callback_query(
+    or_f(F.data.startswith(PROGRESS_TITLE_PREFIX), F.data.startswith(PROGRESS_TITLE_SHORT_PREFIX))
+)
 async def handle_progress_title(
     callback: CallbackQuery,
     user: User,
@@ -66,7 +92,12 @@ async def handle_progress_title(
     )
 
 
-@router.callback_query(F.data.startswith(_PROGRESS_REFRESH_PREFIX))
+@router.callback_query(
+    or_f(
+        F.data.startswith(PROGRESS_REFRESH_PREFIX),
+        F.data.startswith(PROGRESS_REFRESH_SHORT_PREFIX),
+    )
+)
 async def handle_progress_refresh(
     callback: CallbackQuery,
     user: User,
@@ -78,13 +109,19 @@ async def handle_progress_refresh(
         await callback.answer()
         return
 
-    task_key = _parse_task_key_from_prefix(callback.data or "", _PROGRESS_REFRESH_PREFIX)
-    if not task_key:
-        await callback.answer()
-        return
-
     redis = create_progress_redis()
     try:
+        task_key = await _parse_task_key_for_progress_callback(
+            redis,
+            chat_id,
+            callback.data or "",
+            long_prefix=PROGRESS_REFRESH_PREFIX,
+            short_prefix=PROGRESS_REFRESH_SHORT_PREFIX,
+        )
+        if not task_key:
+            await callback.answer()
+            return
+
         svc = ProgressService(
             callback.bot,
             chat_id,
@@ -300,7 +337,12 @@ async def _try_refresh_autorespond(
     )
 
 
-@router.callback_query(F.data.startswith(_PROGRESS_CANCEL_PREFIX))
+@router.callback_query(
+    or_f(
+        F.data.startswith(PROGRESS_CANCEL_PREFIX),
+        F.data.startswith(PROGRESS_CANCEL_SHORT_PREFIX),
+    )
+)
 async def handle_progress_cancel(
     callback: CallbackQuery,
     user: User,
@@ -312,13 +354,19 @@ async def handle_progress_cancel(
         await callback.answer()
         return
 
-    task_key = _parse_task_key_from_prefix(callback.data or "", _PROGRESS_CANCEL_PREFIX)
-    if not task_key:
-        await callback.answer()
-        return
-
     redis = create_progress_redis()
     try:
+        task_key = await _parse_task_key_for_progress_callback(
+            redis,
+            chat_id,
+            callback.data or "",
+            long_prefix=PROGRESS_CANCEL_PREFIX,
+            short_prefix=PROGRESS_CANCEL_SHORT_PREFIX,
+        )
+        if not task_key:
+            await callback.answer()
+            return
+
         svc = ProgressService(
             callback.bot,
             chat_id,

@@ -345,6 +345,23 @@ class TestBuildCancelKeyboard:
         assert "…" in btn_text
         assert len(btn_text) < len(long_title) + 20
 
+    def test_uses_short_callback_prefixes_when_tokens_provided(self):
+        svc, _, _ = _make_service()
+        tasks = {"parse:1": _task_state(status="running", title="X")}
+        short_tokens = {"parse:1": "abcd1234ef567890"}
+        result = svc._build_cancel_keyboard(tasks, short_tokens)
+        row = result.inline_keyboard[0]
+        assert row[0].callback_data == "prog:t!abcd1234ef567890"
+        assert row[1].callback_data == "prog:r!abcd1234ef567890"
+        assert row[2].callback_data == "prog:x!abcd1234ef567890"
+
+
+def test_task_key_fits_callback_data_false_for_very_long_key():
+    from src.services.progress_service import task_key_fits_callback_data
+
+    long_key = "autorespond:" + "x" * 80
+    assert not task_key_fits_callback_data(long_key)
+
 
 # ---------------------------------------------------------------------------
 # mark_retrying

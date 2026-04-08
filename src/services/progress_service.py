@@ -23,12 +23,15 @@ Redis keys (all with 4-hour TTL)
     progress:pin:{chat_id}             — pinned message ID
     progress:msglock:{chat_id}         — short lock for create/delete ops (10 s)
     progress:throttle:{chat_id}        — 500 ms throttle gate
+    progress:shortcb:{chat_id}:{token} — maps 16-char hex token to full task_key when
+                                         callback_data would exceed 64 bytes (same TTL)
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 
 from src.core.celery_async import normalize_celery_task_id
@@ -39,13 +42,34 @@ from src.services.progress_cancel import clear_user_cancelled_sync
 logger = get_logger(__name__)
 
 _BAR_WIDTH = 20
-_PROGRESS_CANCEL_PREFIX = "prog:cancel:"
-_PROGRESS_TITLE_PREFIX = "prog:t:"
-_PROGRESS_REFRESH_PREFIX = "prog:r:"
+# Inline keyboard callback_data (Telegram max 64 bytes per button).
+PROGRESS_CANCEL_PREFIX = "prog:cancel:"
+PROGRESS_TITLE_PREFIX = "prog:t:"
+PROGRESS_REFRESH_PREFIX = "prog:r:"
+PROGRESS_TITLE_SHORT_PREFIX = "prog:t!"
+PROGRESS_REFRESH_SHORT_PREFIX = "prog:r!"
+PROGRESS_CANCEL_SHORT_PREFIX = "prog:x!"
+_TELEGRAM_CALLBACK_DATA_MAX_BYTES = 64
 _MAX_TITLE_IN_BUTTON = 40
 _THROTTLE_MS = 500
 _PROGRESS_TTL = 4 * 3600  # seconds
 _MSGLOCK_TTL = 10  # seconds
+
+
+def short_callback_storage_key(chat_id: int, token: str) -> str:
+    """Redis key for resolving short inline callback tokens to full ``task_key``."""
+    return f"progress:shortcb:{chat_id}:{token}"
+
+
+def task_key_fits_callback_data(task_key: str) -> bool:
+    """True if ``task_key`` fits Telegram's 64-byte limit for all progress inline buttons."""
+    enc = task_key.replace(":", "_")
+    lim = _TELEGRAM_CALLBACK_DATA_MAX_BYTES
+    return (
+        len((PROGRESS_TITLE_PREFIX + enc).encode("utf-8")) <= lim
+        and len((PROGRESS_REFRESH_PREFIX + enc).encode("utf-8")) <= lim
+        and len((PROGRESS_CANCEL_PREFIX + enc).encode("utf-8")) <= lim
+    )
 
 
 def render_bar(current: int, total: int) -> str:
@@ -476,6 +500,23 @@ class ProgressService:
                 result[suffix] = json.loads(raw)
         return result
 
+    async def _ensure_short_callback_tokens(self, tasks: dict[str, dict]) -> dict[str, str]:
+        """Map ``task_key`` -> 16-char hex token when full callback_data would exceed 64 bytes."""
+        out: dict[str, str] = {}
+        for task_key, state in tasks.items():
+            if state.get("status") == "completed":
+                continue
+            if task_key_fits_callback_data(task_key):
+                continue
+            token = hashlib.sha256(f"{self._chat_id}:{task_key}".encode()).hexdigest()[:16]
+            await self._redis.set(
+                short_callback_storage_key(self._chat_id, token),
+                task_key,
+                ex=_PROGRESS_TTL,
+            )
+            out[task_key] = token
+        return out
+
     async def _refresh_message(self, *, force: bool) -> None:
         """Edit the pinned message (or create it if absent), throttled unless forced."""
         from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -490,7 +531,8 @@ class ProgressService:
             return
 
         text = self._render_progress_text(tasks)
-        reply_markup = self._build_cancel_keyboard(tasks)
+        short_tokens = await self._ensure_short_callback_tokens(tasks)
+        reply_markup = self._build_cancel_keyboard(tasks, short_tokens)
         pin_msg_id = await self._get_or_create_pin_message(text, reply_markup)
         if pin_msg_id is None:
             return
@@ -620,10 +662,13 @@ class ProgressService:
     # Text renderers
     # ------------------------------------------------------------------
 
-    def _build_cancel_keyboard(self, tasks: dict[str, dict]):
+    def _build_cancel_keyboard(
+        self, tasks: dict[str, dict], short_tokens: dict[str, str] | None = None
+    ):
         """Inline keyboard: title (noop), try refresh, cancel per running task."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+        short_tokens = short_tokens or {}
         buttons = []
         sorted_items = sorted(tasks.items())
         for idx, (task_key, state) in enumerate(sorted_items, start=1):
@@ -635,20 +680,29 @@ class ProgressService:
             btn_title = title
             if len(btn_title) > _MAX_TITLE_IN_BUTTON:
                 btn_title = btn_title[: _MAX_TITLE_IN_BUTTON - 1] + "…"
-            encoded_key = task_key.replace(":", "_")
+            if task_key in short_tokens:
+                tok = short_tokens[task_key]
+                cd_title = f"{PROGRESS_TITLE_SHORT_PREFIX}{tok}"
+                cd_refresh = f"{PROGRESS_REFRESH_SHORT_PREFIX}{tok}"
+                cd_cancel = f"{PROGRESS_CANCEL_SHORT_PREFIX}{tok}"
+            else:
+                encoded_key = task_key.replace(":", "_")
+                cd_title = f"{PROGRESS_TITLE_PREFIX}{encoded_key}"
+                cd_refresh = f"{PROGRESS_REFRESH_PREFIX}{encoded_key}"
+                cd_cancel = f"{PROGRESS_CANCEL_PREFIX}{encoded_key}"
             buttons.append(
                 [
                     InlineKeyboardButton(
                         text=f"{idx}. {btn_title}",
-                        callback_data=f"{_PROGRESS_TITLE_PREFIX}{encoded_key}",
+                        callback_data=cd_title,
                     ),
                     InlineKeyboardButton(
                         text=get_text("progress-btn-try-refresh", self._locale),
-                        callback_data=f"{_PROGRESS_REFRESH_PREFIX}{encoded_key}",
+                        callback_data=cd_refresh,
                     ),
                     InlineKeyboardButton(
                         text=get_text("progress-btn-cancel-inline", self._locale),
-                        callback_data=f"{_PROGRESS_CANCEL_PREFIX}{encoded_key}",
+                        callback_data=cd_cancel,
                     ),
                 ]
             )
