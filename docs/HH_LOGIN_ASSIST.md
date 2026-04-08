@@ -16,7 +16,7 @@ The repo defines **`celery_worker_login_assist`** in [`docker-compose.yml`](../d
 - **Image**: Dockerfile target `login_assist` (Xvfb, x11vnc, `novnc` static UI, `websockify`).
 - **Entrypoint**: [`docker/entrypoint-login-assist.sh`](../docker/entrypoint-login-assist.sh) starts `DISPLAY :99`, VNC on `localhost:5900`, websockify on port **6080** (configurable via `WEBSOCKIFY_PORT`).
 - **Celery**: `worker -Q login_assist --concurrency=1` — tasks `hh.login_assist` are **not** consumed by the default `celery_worker` (`-Q celery` only).
-- **Port**: host `${LOGIN_ASSIST_NOVNC_PORT:-6080}` maps to container 6080.
+- **Port**: host `${LOGIN_ASSIST_NOVNC_PORT:-6080}` maps to container 6080 (all interfaces on the host unless you override the compose mapping). **Anyone who can reach that port** can interact with the live browser session unless you add TLS, reverse-proxy authentication, a VPN boundary, and/or a VNC password.
 
 ### Operator checklist
 
@@ -29,8 +29,9 @@ The repo defines **`celery_worker_login_assist`** in [`docker-compose.yml`](../d
    - **LAN / test**: `http://YOUR_SERVER_IP:6080/vnc.html` (match `LOGIN_ASSIST_NOVNC_PORT` if you change the mapping).
    - **Production**: HTTPS URL via reverse proxy (TLS), do not expose unauthenticated VNC to the internet.
 3. Optional: **`LOGIN_ASSIST_VNC_PASSWORD`** — passed to `x11vnc -passwd` (password may appear in process list; prefer proxy auth + TLS for production).
-4. Run: `docker compose up -d` (includes `celery_worker_login_assist`).
-5. In Telegram: **Settings → HeadHunter accounts → Вход на сервере** (or “Server login”), open the viewer URL in a normal browser, complete hh.ru login and 2FA within the configured wait time.
+4. Production guard: set **`LOGIN_ASSIST_REQUIRE_VNC_PASSWORD=true`** (or `=1`) in `.env` to **fail startup** if `LOGIN_ASSIST_VNC_PASSWORD` is unset — avoids accidentally running `-nopw` while the port is reachable from an untrusted network. Omit this for local dev (default allows `-nopw` when no password is set).
+5. Run: `docker compose up -d` (includes `celery_worker_login_assist`).
+6. In Telegram: **Settings → HeadHunter accounts → Вход на сервере** (or “Server login”), open the viewer URL in a normal browser, complete hh.ru login and 2FA within the configured wait time.
 
 ## Celery routing
 
@@ -40,7 +41,8 @@ Task `hh.login_assist` uses queue **`login_assist`**. If no `celery_worker_login
 
 - Do not log `storage_state`, cookies, or screenshots containing credentials.
 - Use TLS and access control in front of websockify; restrict by IP/VPN if possible.
-- `-nopw` is used when `LOGIN_ASSIST_VNC_PASSWORD` is unset (convenient for dev only).
+- Mitigations for exposed noVNC: reverse proxy with auth, `LOGIN_ASSIST_VNC_PASSWORD`, **`LOGIN_ASSIST_REQUIRE_VNC_PASSWORD=true`** on servers where `-nopw` must never run, and never publish the raw port on a public interface.
+- `-nopw` is used when `LOGIN_ASSIST_VNC_PASSWORD` is unset and the require-password guard is off (convenient for dev only).
 - Review hh.ru terms of use for automated access; datacenter IPs may be challenged ([uncertain] anti-bot).
 
 ## Fallback

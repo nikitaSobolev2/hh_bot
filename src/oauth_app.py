@@ -7,6 +7,7 @@ Put the same URL in HH app settings as HH_OAUTH_REDIRECT_URI and reverse-proxy w
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from starlette.applications import Starlette
@@ -22,6 +23,8 @@ from src.services.hh.client import HhApiClient
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh.oauth_state import pop_telegram_user_id
 from src.services.hh.oauth_tokens import exchange_code_for_tokens
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_naive_now() -> datetime:
@@ -50,6 +53,7 @@ async def hh_oauth_callback(request: Request) -> HTMLResponse | PlainTextRespons
     try:
         token_payload = await exchange_code_for_tokens(code=code)
     except Exception:
+        logger.exception("HH OAuth token exchange failed")
         return PlainTextResponse("Token exchange failed", status_code=502)
 
     access_token = token_payload["access_token"]
@@ -61,6 +65,7 @@ async def hh_oauth_callback(request: Request) -> HTMLResponse | PlainTextRespons
     try:
         me = await api.get_me()
     except Exception:
+        logger.exception("HH OAuth get_me failed after token exchange")
         return PlainTextResponse("Failed to load HH profile", status_code=502)
 
     hh_uid = str(me.get("id", ""))

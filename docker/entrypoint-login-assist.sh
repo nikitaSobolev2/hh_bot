@@ -4,6 +4,15 @@
 
 set -e
 
+case "${LOGIN_ASSIST_REQUIRE_VNC_PASSWORD:-}" in
+  true|1)
+    if [ -z "${LOGIN_ASSIST_VNC_PASSWORD:-}" ]; then
+      echo "LOGIN_ASSIST_REQUIRE_VNC_PASSWORD is enabled but LOGIN_ASSIST_VNC_PASSWORD is empty — refusing to start without VNC password." >&2
+      exit 1
+    fi
+    ;;
+esac
+
 export DISPLAY="${DISPLAY:-:99}"
 
 Xvfb "${DISPLAY}" -screen 0 1280x1024x24 &

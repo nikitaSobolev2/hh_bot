@@ -1,4 +1,11 @@
-"""Patch runner.py: extract _apply_vacancy_flow_on_page + add batch apply."""
+"""One-off migration tool: rewrite ``runner.py`` via string edits.
+
+Do **not** run from CI or normal development workflows. Upstream changes to
+``src/services/hh_ui/runner.py`` (line order, content) can make this script
+corrupt the file. Use version control and review the diff manually after running.
+
+Original purpose: extract ``_apply_vacancy_flow_on_page`` and add batch apply.
+"""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

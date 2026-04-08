@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Defaults are for local dev only — set strong POSTGRES_* in .env on shared or production hosts.
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hh_bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hh_bot_secret}
@@ -77,8 +78,8 @@ services:
     # General tasks only — Playwright runs on ``celery_worker_hh_ui`` (queue ``hh_ui``) so small VMs
     # do not run multiple Chromium instances at once.
     command: celery -A src.worker.app worker --loglevel=info --concurrency=2 -Q celery
-    deploy:
-      replicas: 2
+    # ``deploy:`` is ignored by ``docker compose up`` (Swarm / ``docker stack deploy`` only).
+    # Extra general-queue capacity: ``docker compose up -d --scale celery_worker=2`` (or raise ``--concurrency``).
     logging:
       driver: json-file
       options:

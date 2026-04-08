@@ -19,7 +19,7 @@ from src.bot.modules.hh_accounts.keyboards import hh_account_row_keyboard, hh_ac
 from src.bot.modules.hh_accounts.states import HhAccountRenameForm, HhBrowserImportForm
 from src.bot.modules.user_settings.callbacks import SettingsCallback
 from src.config import settings
-from src.core.celery_async import normalize_celery_task_id
+from src.core.celery_async import normalize_celery_task_id, run_celery_task, run_sync_in_thread
 from src.core.i18n import I18nContext
 from src.models.user import User
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
@@ -27,8 +27,11 @@ from src.services.hh.crypto import HhTokenCipher
 from src.services.hh.linked_account_browser_storage import persist_browser_storage_state_for_user
 from src.services.hh.oauth_state import generate_state, store_state
 from src.services.hh.oauth_tokens import build_authorize_url
+from src.services.hh_ui.applicant_negotiations_http import check_negotiations_browser_session_available
 from src.services.hh_ui.browser_link import validate_playwright_storage_state
+from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.storage import decrypt_browser_storage
+from src.worker.tasks.hh_login_assist import hh_login_assist_task
 
 router = Router(name="hh_accounts")
 
@@ -166,6 +169,110 @@ async def hh_add_account(
     await callback.answer(i18n.get("hh-link-not-available"), show_alert=True)
 
 
+@router.callback_query(HhAccountCallback.filter(F.action == "check_session"))
+async def hh_check_session(
+    callback: CallbackQuery,
+    callback_data: HhAccountCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    if not _browser_import_configured():
+        await callback.answer(i18n.get("hh-link-not-available"), show_alert=True)
+        return
+    repo = HhLinkedAccountRepository(session)
+    acc = await repo.get_by_id(callback_data.account_id)
+    if not acc or acc.user_id != user.id:
+        await callback.answer(i18n.get("hh-account-not-found"), show_alert=True)
+        return
+    if not acc.browser_storage_enc:
+        await callback.answer(i18n.get("hh-accounts-download-storage-none"), show_alert=True)
+        return
+    cipher = HhTokenCipher(settings.hh_token_encryption_key)
+    try:
+        storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+    except ValueError:
+        await callback.answer(i18n.get("hh-accounts-download-storage-failed"), show_alert=True)
+        return
+    if not storage:
+        await callback.answer(i18n.get("hh-accounts-download-storage-none"), show_alert=True)
+        return
+    cfg = HhUiApplyConfig.from_settings()
+    status, detail = await run_sync_in_thread(
+        check_negotiations_browser_session_available, storage, cfg
+    )
+    label = (acc.label or acc.hh_user_id)[:200]
+    if status == "ok":
+        await callback.answer(i18n.get("hh-accounts-session-check-ok"), show_alert=True)
+        return
+    if status == "login":
+        body = i18n.get("hh-accounts-session-check-fail-login", label=label)
+    elif status == "unexpected_url":
+        body = i18n.get("hh-accounts-session-check-fail-unexpected", label=label)
+    else:
+        d = (detail or "error")[:200]
+        body = i18n.get("hh-accounts-session-check-fail-error", label=label, detail=d)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("hh-accounts-remove"),
+                    callback_data=HhAccountCallback(action="remove", account_id=acc.id).pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("hh-accounts-replace-session"),
+                    callback_data=HhAccountCallback(action="replace_session", account_id=acc.id).pack(),
+                ),
+            ],
+        ]
+    )
+    await callback.message.answer(body, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(HhAccountCallback.filter(F.action == "replace_session"))
+async def hh_replace_session(
+    callback: CallbackQuery,
+    callback_data: HhAccountCallback,
+    session: AsyncSession,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    if not _login_assist_available():
+        await callback.answer(i18n.get("hh-login-assist-disabled"), show_alert=True)
+        return
+    repo = HhLinkedAccountRepository(session)
+    acc = await repo.get_by_id(callback_data.account_id)
+    if not acc or acc.user_id != user.id:
+        await callback.answer(i18n.get("hh-account-not-found"), show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=HhAccountCallback(action="cancel_login_assist").pack(),
+                )
+            ],
+        ]
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("hh-login-assist-starting"),
+            reply_markup=kb,
+        )
+    await callback.answer()
+    await run_celery_task(
+        hh_login_assist_task,
+        user.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+        hh_linked_account_id=acc.id,
+    )
+
+
 @router.callback_query(HhAccountCallback.filter(F.action == "remote_login"))
 async def hh_remote_login(
     callback: CallbackQuery,
@@ -176,8 +283,6 @@ async def hh_remote_login(
     if not _login_assist_available():
         await callback.answer(i18n.get("hh-login-assist-disabled"), show_alert=True)
         return
-    from src.core.celery_async import run_celery_task
-    from src.worker.tasks.hh_login_assist import hh_login_assist_task
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[

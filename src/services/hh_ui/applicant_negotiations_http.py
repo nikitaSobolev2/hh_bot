@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -19,6 +19,8 @@ from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.selectors import APPLICANT_NEGOTIATIONS_PATH
 
 logger = get_logger(__name__)
+
+NegotiationsSessionAvailability = Literal["ok", "login", "unexpected_url", "error"]
 
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)")
 # Embedded JSON in Magritte / state blobs (6+ digits — HH vacancy ids are long).
@@ -74,6 +76,40 @@ def fetch_applicant_negotiations_html(
         return r.text, None, str(r.url)
     except httpx.HTTPError as exc:
         return None, str(exc)[:200], None
+
+
+def classify_negotiations_session_fetch(
+    html: str | None,
+    err: str | None,
+    final_url: str | None,
+) -> tuple[NegotiationsSessionAvailability, str | None]:
+    """Classify first-page GET /applicant/negotiations result (same rules as negotiations sync).
+
+    *err* is set when HTTP status was not 200 or the client raised (see
+    :func:`fetch_applicant_negotiations_html`).
+    """
+    if err:
+        return "error", err
+    if not html:
+        return "error", "empty_response"
+    if final_url and url_suggests_login_page(final_url):
+        return "login", None
+    try:
+        path = urlparse(final_url or "").path.lower()
+        if APPLICANT_NEGOTIATIONS_PATH.rstrip("/") not in path:
+            return "unexpected_url", None
+    except Exception:
+        return "unexpected_url", "url_parse"
+    return "ok", None
+
+
+def check_negotiations_browser_session_available(
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+) -> tuple[NegotiationsSessionAvailability, str | None]:
+    """GET negotiations page once and classify session liveness for UI checks."""
+    html, err, final_url = fetch_applicant_negotiations_html(storage_state, config, page=1)
+    return classify_negotiations_session_fetch(html, err, final_url)
 
 
 def parse_negotiation_vacancy_ids_from_html(html: str) -> set[str]:

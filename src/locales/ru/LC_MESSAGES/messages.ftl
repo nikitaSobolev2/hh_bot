@@ -65,6 +65,15 @@ hh-accounts-download-storage = 📥 JSON
 hh-accounts-download-storage-caption = Playwright storage_state (куки сессии — не передавайте чужим).
 hh-accounts-download-storage-none = Для этого аккаунта нет сохранённой браузерной сессии.
 hh-accounts-download-storage-failed = Не удалось расшифровать экспорт. Проверьте HH_TOKEN_ENCRYPTION_KEY на сервере.
+hh-accounts-check-session = Проверить сессию
+hh-accounts-session-check-ok = Страница откликов открывается — вы в аккаунте.
+hh-accounts-session-check-fail-login =
+    <b>{ $label }</b>: сессия истекла или вы не вошли (hh.ru запросил вход).
+hh-accounts-session-check-fail-unexpected =
+    <b>{ $label }</b>: неожиданный переход при открытии откликов.
+hh-accounts-session-check-fail-error =
+    <b>{ $label }</b>: не удалось открыть отклики — { $detail }
+hh-accounts-replace-session = Заменить сессию
 hh-oauth-not-configured = OAuth HeadHunter не настроен на сервере.
 hh-link-not-available = Аккаунт hh.ru не подключён: OAuth не настроен на сервере или отключён импорт браузерной сессии (нужны HH_UI_APPLY_ENABLED=true и HH_TOKEN_ENCRYPTION_KEY).
 hh-accounts-browser-import-hint =

@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.config import settings
 from src.core.i18n import get_text
 from src.services.hh.crypto import HhTokenCipher
-from src.services.hh.linked_account_browser_storage import persist_browser_storage_state_for_user
+from src.services.hh.linked_account_browser_storage import (
+    persist_browser_storage_for_linked_account,
+    persist_browser_storage_state_for_user,
+)
 from src.services.hh_ui.login_assist_rate_limit import try_acquire_login_assist_slot_sync
 from src.services.hh_ui.login_assist_runner import (
     HhLoginAssistRunnerConfig,
@@ -66,6 +69,7 @@ async def _login_assist_async(
     chat_id: int,
     message_id: int,
     locale: str,
+    hh_linked_account_id: int | None = None,
 ) -> dict:
     log = self.get_logger().bind(user_id=user_id, celery_id=self.request.id or "?")
     bot = self.create_bot()
@@ -140,9 +144,18 @@ async def _login_assist_async(
                 )
             cipher = HhTokenCipher(settings.hh_token_encryption_key)
             async with session_factory() as session:
-                await persist_browser_storage_state_for_user(
-                    session, user_id, state_dict, cipher=cipher
-                )
+                if hh_linked_account_id is not None:
+                    await persist_browser_storage_for_linked_account(
+                        session,
+                        user_id,
+                        hh_linked_account_id,
+                        state_dict,
+                        cipher=cipher,
+                    )
+                else:
+                    await persist_browser_storage_state_for_user(
+                        session, user_id, state_dict, cipher=cipher
+                    )
                 await session.commit()
             log.info("hh_login_assist persisted", outcome="success")
             with contextlib.suppress(Exception):
@@ -199,7 +212,16 @@ def hh_login_assist_task(
     chat_id: int,
     message_id: int,
     locale: str,
+    hh_linked_account_id: int | None = None,
 ) -> dict:
     return run_async(
-        lambda sf: _login_assist_async(self, sf, user_id, chat_id, message_id, locale)
+        lambda sf: _login_assist_async(
+            self,
+            sf,
+            user_id,
+            chat_id,
+            message_id,
+            locale,
+            hh_linked_account_id=hh_linked_account_id,
+        )
     )

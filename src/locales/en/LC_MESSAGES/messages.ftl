@@ -65,6 +65,15 @@ hh-accounts-download-storage = 📥 JSON
 hh-accounts-download-storage-caption = Playwright storage_state (session cookies — keep private).
 hh-accounts-download-storage-none = No saved browser session for this account.
 hh-accounts-download-storage-failed = Could not decrypt the export. Check HH_TOKEN_ENCRYPTION_KEY on the server.
+hh-accounts-check-session = Check session
+hh-accounts-session-check-ok = Negotiations page OK — you are logged in.
+hh-accounts-session-check-fail-login =
+    <b>{ $label }</b>: session expired or not logged in (hh.ru asked for login).
+hh-accounts-session-check-fail-unexpected =
+    <b>{ $label }</b>: unexpected redirect when opening negotiations.
+hh-accounts-session-check-fail-error =
+    <b>{ $label }</b>: could not open negotiations — { $detail }
+hh-accounts-replace-session = Replace session
 hh-oauth-not-configured = HeadHunter OAuth is not configured on the server.
 hh-link-not-available = HeadHunter is not linked: OAuth is not configured on the server, or browser import is disabled (set HH_UI_APPLY_ENABLED=true and HH_TOKEN_ENCRYPTION_KEY).
 hh-accounts-browser-import-hint =
