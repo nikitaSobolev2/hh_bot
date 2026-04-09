@@ -46,6 +46,8 @@ async def test_browser_import_reactivates_revoked_row(monkeypatch: pytest.Monkey
 
     state = MagicMock()
     state.clear = AsyncMock()
+    state.get_data = AsyncMock(return_value={})
+    state.set_state = AsyncMock()
 
     i18n = MagicMock()
     i18n.get.return_value = "ok"
@@ -78,3 +80,67 @@ async def test_browser_import_reactivates_revoked_row(monkeypatch: pytest.Monkey
     assert kwargs.get("browser_storage_enc") is not None
     assert kwargs.get("browser_storage_updated_at") is not None
     assert kwargs.get("last_used_at") is not None
+
+
+@pytest.mark.asyncio
+async def test_browser_import_preserves_autoparse_continue_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.bot.modules.hh_accounts.handlers import hh_browser_import_document
+
+    key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setattr(
+        "src.bot.modules.hh_accounts.handlers.settings.hh_token_encryption_key",
+        key,
+    )
+    monkeypatch.setattr(
+        "src.bot.modules.hh_accounts.handlers.settings.hh_ui_apply_enabled",
+        True,
+    )
+
+    payload = {
+        "cookies": [{"domain": ".hh.ru", "name": "uid", "value": "42"}],
+        "origins": [],
+    }
+
+    def fake_download(_doc, destination: BytesIO) -> None:
+        destination.write(json.dumps(payload).encode("utf-8"))
+        destination.seek(0)
+
+    message = MagicMock()
+    message.document = MagicMock()
+    message.document.file_name = "hh_browser_storage_state.json"
+    message.bot.download = AsyncMock(side_effect=fake_download)
+    message.answer = AsyncMock()
+
+    user = MagicMock()
+    user.id = 7
+
+    session = MagicMock()
+    session.commit = AsyncMock()
+
+    state = MagicMock()
+    state.clear = AsyncMock()
+    state.set_state = AsyncMock()
+    state.get_data = AsyncMock(
+        return_value={
+            "parse_pending_flow": "create",
+            "parse_pending_company_id": 11,
+        }
+    )
+
+    i18n = MagicMock()
+    i18n.get.return_value = "ok"
+
+    with (
+        patch(
+            "src.bot.modules.hh_accounts.handlers._hub_message",
+            new_callable=AsyncMock,
+            return_value=("hub", MagicMock()),
+        ),
+    ):
+        await hh_browser_import_document(message, session, user, state, i18n)
+
+    state.clear.assert_not_awaited()
+    state.set_state.assert_awaited()
+    assert message.answer.await_count >= 3

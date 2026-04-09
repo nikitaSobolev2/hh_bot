@@ -45,6 +45,8 @@ async def create_autoparse_company(
     skills: str,
     *,
     include_reacted_in_feed: bool = False,
+    parse_mode: str = "api",
+    parse_hh_linked_account_id: int | None = None,
 ) -> AutoparseCompany:
     repo = AutoparseCompanyRepository(session)
     company = await repo.create(
@@ -54,6 +56,8 @@ async def create_autoparse_company(
         keyword_filter=keywords,
         skills=skills,
         include_reacted_in_feed=include_reacted_in_feed,
+        parse_mode=parse_mode,
+        parse_hh_linked_account_id=parse_hh_linked_account_id,
     )
     await session.commit()
     return company

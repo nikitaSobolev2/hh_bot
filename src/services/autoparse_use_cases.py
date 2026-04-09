@@ -46,6 +46,8 @@ def format_company_detail(
         f"<b>{company.vacancy_title}</b>",
         f"{i18n.get('autoparse-detail-status')}: {status}",
         f"{url_label}: <a href='{company.search_url}'>{url_label}</a>",
+        f"{i18n.get('autoparse-detail-parse-mode')}: "
+        f"{i18n.get('autoparse-parse-mode-web-label' if company.parse_mode == 'web' else 'autoparse-parse-mode-api-label')}",
         f"{i18n.get('autoparse-detail-keywords')}: {company.keyword_filter or '—'}",
         f"{i18n.get('autoparse-detail-skills')}: {company.skills or '—'}",
         "",

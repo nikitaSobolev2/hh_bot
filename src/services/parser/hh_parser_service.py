@@ -7,6 +7,7 @@ import httpx
 
 from src.config import settings
 from src.core.logging import get_logger
+from src.services.hh_ui.applicant_http import httpx_cookies_from_storage_state
 from src.schemas.vacancy import build_vacancy_api_context
 from src.services.parser.scraper import HHCaptchaRequiredError, HHScraper
 
@@ -36,6 +37,9 @@ class HHParserService:
         self,
         scraper: HHScraper | None = None,
         vacancy_fetch_concurrency: int | None = None,
+        *,
+        parse_mode: str = "api",
+        storage_state: dict | None = None,
     ) -> None:
         self._scraper = scraper or HHScraper()
         self._vacancy_fetch_concurrency = (
@@ -43,6 +47,15 @@ class HHParserService:
             if vacancy_fetch_concurrency is not None
             else settings.hh_vacancy_detail_concurrency
         )
+        self._parse_mode = parse_mode
+        self._storage_state = storage_state
+
+    def build_client(self) -> httpx.AsyncClient:
+        kwargs: dict = {}
+        if self._parse_mode == "web" and self._storage_state:
+            kwargs["cookies"] = httpx_cookies_from_storage_state(self._storage_state)
+            kwargs["follow_redirects"] = True
+        return httpx.AsyncClient(**kwargs)
 
     def merge_detail_into_card(self, vac: dict, page_data: dict) -> dict:
         """Merge HH API detail JSON (page_data) into search card ``vac``."""
@@ -61,7 +74,11 @@ class HHParserService:
 
     async def fetch_detail_for_card(self, client: httpx.AsyncClient, vac: dict) -> dict | None:
         """GET /vacancies/{id} and merge into card; returns None on failed fetch."""
-        page_data = await self._scraper.parse_vacancy_page(client, vac["url"])
+        page_data = await self._scraper.parse_vacancy_page(
+            client,
+            vac["url"],
+            parse_mode=self._parse_mode,
+        )
         if not page_data:
             return None
         return self.merge_detail_into_card(vac, page_data)
@@ -102,6 +119,8 @@ class HHParserService:
             keyword_filter,
             target_count,
             known_ids_to_include=known,
+            parse_mode=self._parse_mode,
+            storage_state=self._storage_state,
         )
 
         cached_results, to_fetch = partition_collected_urls(collected_urls, target_count, known)
@@ -109,7 +128,7 @@ class HHParserService:
 
         sem = asyncio.Semaphore(self._vacancy_fetch_concurrency)
         new_count = 0
-        async with httpx.AsyncClient() as client:
+        async with self.build_client() as client:
             for batch_start in range(0, len(to_fetch), self._vacancy_fetch_concurrency):
                 batch = to_fetch[batch_start : batch_start + self._vacancy_fetch_concurrency]
                 batch_results = await self.fetch_details_batch_slice(client, batch, sem)
@@ -134,5 +153,6 @@ class HHParserService:
             total=len(results),
             new=new_count,
             cached=len(results) - new_count,
+            parse_mode=self._parse_mode,
         )
         return results

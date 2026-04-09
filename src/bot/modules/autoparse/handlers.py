@@ -1,6 +1,7 @@
 """Handlers for the Autoparse feature."""
 
 import contextlib
+from urllib.parse import parse_qs, urlparse
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -35,11 +36,15 @@ from src.bot.modules.autoparse.keyboards import (
     download_format_keyboard,
     include_reacted_keyboard,
     liked_disliked_list_keyboard,
+    parse_hh_account_keyboard,
+    parse_login_required_keyboard,
+    parse_mode_keyboard,
     target_count_select_keyboard,
     template_list_keyboard,
 )
 from src.bot.modules.autoparse.states import AutoparseEditForm, AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
+from src.config import settings
 from src.bot.utils.limits import get_min_compat_range
 from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
@@ -68,6 +73,32 @@ def _truncate_for_edit_prompt(text: str, max_len: int = _EDIT_PROMPT_MAX_LEN) ->
     return f"{t[:max_len]}…"
 
 
+def _search_url_resume_id(url: str) -> str | None:
+    try:
+        values = parse_qs(urlparse(url).query).get("resume") or []
+    except ValueError:
+        return None
+    for value in values:
+        resume_id = value.strip()
+        if resume_id:
+            return resume_id
+    return None
+
+
+def _login_assist_available() -> bool:
+    return bool(
+        settings.hh_login_assist_enabled
+        and settings.hh_ui_apply_enabled
+        and settings.hh_token_encryption_key
+    )
+
+
+def _parse_mode_label(i18n: I18nContext, mode: str) -> str:
+    return i18n.get(
+        "autoparse-parse-mode-web-label" if mode == "web" else "autoparse-parse-mode-api-label"
+    )
+
+
 async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
     """Return True if the user already has a tech stack (manual or from work experience)."""
     settings = await ap_service.get_user_autoparse_settings(session, user_id)
@@ -93,6 +124,270 @@ async def _resolve_hh_linked_account_for_negotiations_sync(
         if a.browser_storage_enc:
             return a.id
     return None
+
+
+async def _prompt_parse_mode_step(
+    target: CallbackQuery | Message,
+    state: FSMContext,
+    i18n: I18nContext,
+    *,
+    company_id: int = 0,
+    flow: str = "create",
+) -> None:
+    await state.update_data(
+        parse_pending_flow=flow,
+        parse_pending_company_id=company_id,
+        parse_pending_parse_mode=None,
+        parse_pending_hh_linked_account_id=None,
+        parse_pending_selected_hh_account_id=None,
+    )
+    await state.set_state(
+        AutoparseForm.parse_mode if flow == "create" else AutoparseEditForm.edit_parse_mode
+    )
+    if isinstance(target, CallbackQuery):
+        with contextlib.suppress(TelegramBadRequest):
+            await target.message.edit_text(
+                i18n.get("autoparse-parse-mode-prompt"),
+                reply_markup=parse_mode_keyboard(
+                    i18n,
+                    company_id=company_id,
+                    back_action="hub" if flow == "create" else "detail",
+                ),
+            )
+        await target.answer()
+        return
+    await target.answer(
+        i18n.get("autoparse-parse-mode-prompt"),
+        reply_markup=parse_mode_keyboard(
+            i18n,
+            company_id=company_id,
+            back_action="hub" if flow == "create" else "detail",
+        ),
+    )
+
+
+async def _prompt_include_reacted_step(
+    target: CallbackQuery | Message,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.set_state(AutoparseForm.include_reacted)
+    if isinstance(target, CallbackQuery):
+        with contextlib.suppress(TelegramBadRequest):
+            await target.message.edit_text(
+                i18n.get("autoparse-include-reacted-prompt"),
+                reply_markup=include_reacted_keyboard(i18n),
+            )
+        await target.answer()
+        return
+    await target.answer(
+        i18n.get("autoparse-include-reacted-prompt"),
+        reply_markup=include_reacted_keyboard(i18n),
+    )
+
+
+async def _finalize_pending_parse_setup(
+    target: CallbackQuery | Message,
+    *,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    flow = data.get("parse_pending_flow") or "create"
+    parse_mode = data.get("parse_pending_parse_mode") or data.get("parse_mode") or "api"
+    parse_hh_linked_account_id = data.get("parse_pending_hh_linked_account_id")
+
+    if flow == "create":
+        await state.update_data(
+            parse_mode=parse_mode,
+            parse_hh_linked_account_id=parse_hh_linked_account_id,
+            parse_pending_selected_hh_account_id=None,
+        )
+        await _prompt_include_reacted_step(target, state, i18n)
+        return
+
+    company_id = int(data.get("parse_pending_company_id") or 0)
+    detail_message_id = int(data.get("parse_pending_detail_message_id") or 0)
+    if not company_id:
+        await state.clear()
+        if isinstance(target, CallbackQuery):
+            await target.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        else:
+            await target.answer(i18n.get("autoparse-not-found"))
+        return
+
+    from src.repositories.autoparse import AutoparseCompanyRepository
+
+    repo = AutoparseCompanyRepository(session)
+    company = await repo.get_by_id_for_user(company_id, user.id)
+    if not company:
+        await state.clear()
+        if isinstance(target, CallbackQuery):
+            await target.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        else:
+            await target.answer(i18n.get("autoparse-not-found"))
+        return
+
+    updates: dict = {}
+    if flow == "edit_parse_mode":
+        updates["parse_mode"] = parse_mode
+        updates["parse_hh_linked_account_id"] = parse_hh_linked_account_id
+    elif flow == "edit_search_url":
+        updates["search_url"] = data.get("parse_pending_search_url") or company.search_url
+        if company.parse_mode == "web":
+            updates["parse_hh_linked_account_id"] = parse_hh_linked_account_id
+
+    await repo.update(company, **updates)
+    await session.commit()
+    await state.clear()
+
+    with contextlib.suppress(TelegramBadRequest):
+        target_bot = target.message.bot if isinstance(target, CallbackQuery) else target.bot
+        target_chat_id = target.message.chat.id if isinstance(target, CallbackQuery) else target.chat.id
+        if detail_message_id:
+            await _edit_company_detail_message_by_id(
+                bot=target_bot,
+                chat_id=target_chat_id,
+                message_id=detail_message_id,
+                user=user,
+                session=session,
+                i18n=i18n,
+                company=company,
+            )
+
+    saved_key = (
+        "autoparse-edit-parse-mode-saved"
+        if flow == "edit_parse_mode"
+        else "autoparse-edit-search-url-saved"
+    )
+    if isinstance(target, CallbackQuery):
+        await target.answer(i18n.get(saved_key), show_alert=True)
+    else:
+        await target.answer(i18n.get(saved_key))
+
+
+async def _continue_web_parse_setup(
+    target: CallbackQuery | Message,
+    *,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    flow = data.get("parse_pending_flow") or "create"
+    company_id = int(data.get("parse_pending_company_id") or 0)
+    url = (
+        data.get("parse_pending_search_url")
+        or data.get("search_url")
+        or ""
+    )
+    if not _search_url_resume_id(str(url)):
+        await state.update_data(parse_pending_hh_linked_account_id=None)
+        await _finalize_pending_parse_setup(
+            target,
+            state=state,
+            user=user,
+            session=session,
+            i18n=i18n,
+        )
+        return
+
+    hh_repo = HhLinkedAccountRepository(session)
+    accounts = await hh_repo.list_active_for_user(user.id)
+    ready_accounts = [acc for acc in accounts if acc.browser_storage_enc]
+    preferred_account_id = data.get("parse_pending_hh_linked_account_id")
+
+    if preferred_account_id:
+        for acc in ready_accounts:
+            if acc.id == preferred_account_id:
+                await state.update_data(
+                    parse_pending_hh_linked_account_id=acc.id,
+                    parse_pending_selected_hh_account_id=acc.id,
+                )
+                await _finalize_pending_parse_setup(
+                    target,
+                    state=state,
+                    user=user,
+                    session=session,
+                    i18n=i18n,
+                )
+                return
+
+    if len(ready_accounts) == 1:
+        await state.update_data(parse_pending_hh_linked_account_id=ready_accounts[0].id)
+        await _finalize_pending_parse_setup(
+            target,
+            state=state,
+            user=user,
+            session=session,
+            i18n=i18n,
+        )
+        return
+
+    prompt_back_action = "hub" if flow == "create" else "detail"
+    prompt_state = AutoparseForm.parse_hh_account if flow == "create" else AutoparseEditForm.edit_parse_mode
+    await state.set_state(prompt_state)
+
+    if len(accounts) > 1 or len(ready_accounts) > 1:
+        if isinstance(target, CallbackQuery):
+            with contextlib.suppress(TelegramBadRequest):
+                await target.message.edit_text(
+                    i18n.get("autoparse-parse-account-pick"),
+                    reply_markup=parse_hh_account_keyboard(
+                        accounts,
+                        i18n,
+                        company_id=company_id,
+                        back_action=prompt_back_action,
+                    ),
+                    parse_mode="HTML",
+                )
+            await target.answer()
+            return
+        await target.answer(
+            i18n.get("autoparse-parse-account-pick"),
+            reply_markup=parse_hh_account_keyboard(
+                accounts,
+                i18n,
+                company_id=company_id,
+                back_action=prompt_back_action,
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    selected_account_id = accounts[0].id if accounts else None
+    await state.update_data(parse_pending_selected_hh_account_id=selected_account_id)
+    if accounts:
+        label = accounts[0].label or accounts[0].hh_user_id
+        text = i18n.get("autoparse-parse-login-for-account", label=label[:80])
+    else:
+        text = i18n.get("autoparse-parse-login-required")
+
+    if isinstance(target, CallbackQuery):
+        with contextlib.suppress(TelegramBadRequest):
+            await target.message.edit_text(
+                text,
+                reply_markup=parse_login_required_keyboard(
+                    i18n,
+                    company_id=company_id,
+                    back_action=prompt_back_action,
+                ),
+                parse_mode="HTML",
+            )
+        await target.answer()
+        return
+    await target.answer(
+        text,
+        reply_markup=parse_login_required_keyboard(
+            i18n,
+            company_id=company_id,
+            back_action=prompt_back_action,
+        ),
+        parse_mode="HTML",
+    )
 
 
 async def _render_autoparse_list(
@@ -257,16 +552,12 @@ async def template_selected(
         search_url=company.search_url,
         keyword_filter=company.keyword_filter,
         skills="",
+        parse_mode="api",
+        parse_hh_linked_account_id=None,
     )
 
     if await _has_tech_stack(session, user.id):
-        await state.set_state(AutoparseForm.include_reacted)
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                i18n.get("autoparse-include-reacted-prompt"),
-                reply_markup=include_reacted_keyboard(i18n),
-            )
-        await callback.answer()
+        await _prompt_parse_mode_step(callback, state, i18n)
         return
 
     await state.set_state(AutoparseForm.skills)
@@ -317,14 +608,15 @@ async def receive_url(message: Message, state: FSMContext, i18n: I18nContext) ->
 async def receive_keywords(
     message: Message, state: FSMContext, user: User, session: AsyncSession, i18n: I18nContext
 ) -> None:
-    await state.update_data(keyword_filter=message.text.strip(), skills="")
+    await state.update_data(
+        keyword_filter=message.text.strip(),
+        skills="",
+        parse_mode="api",
+        parse_hh_linked_account_id=None,
+    )
 
     if await _has_tech_stack(session, user.id):
-        await state.set_state(AutoparseForm.include_reacted)
-        await message.answer(
-            i18n.get("autoparse-include-reacted-prompt"),
-            reply_markup=include_reacted_keyboard(i18n),
-        )
+        await _prompt_parse_mode_step(message, state, i18n)
         return
 
     await state.set_state(AutoparseForm.skills)
@@ -340,11 +632,165 @@ async def receive_skills(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
-    await state.update_data(skills=message.text.strip())
-    await state.set_state(AutoparseForm.include_reacted)
-    await message.answer(
-        i18n.get("autoparse-include-reacted-prompt"),
-        reply_markup=include_reacted_keyboard(i18n),
+    await state.update_data(
+        skills=message.text.strip(),
+        parse_mode="api",
+        parse_hh_linked_account_id=None,
+    )
+    await _prompt_parse_mode_step(message, state, i18n)
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "parse_mode_api"))
+async def parse_mode_api_selected(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    flow = data.get("parse_pending_flow") or "create"
+    await state.update_data(
+        parse_pending_parse_mode="api",
+        parse_pending_hh_linked_account_id=None,
+        parse_pending_selected_hh_account_id=None,
+        parse_mode="api" if flow == "create" else data.get("parse_mode"),
+        parse_hh_linked_account_id=None if flow == "create" else data.get("parse_hh_linked_account_id"),
+    )
+    await _finalize_pending_parse_setup(
+        callback,
+        state=state,
+        user=user,
+        session=session,
+        i18n=i18n,
+    )
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "parse_mode_web"))
+async def parse_mode_web_selected(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await state.update_data(
+        parse_pending_parse_mode="web",
+        parse_mode="web",
+    )
+    await _continue_web_parse_setup(
+        callback,
+        state=state,
+        user=user,
+        session=session,
+        i18n=i18n,
+    )
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "parse_pick_hh_account"))
+async def parse_pick_hh_account(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    hh_repo = HhLinkedAccountRepository(session)
+    acc = await hh_repo.get_by_id(callback_data.aux_id)
+    if not acc or acc.user_id != user.id:
+        await callback.answer(i18n.get("autorespond-no-hh-account"), show_alert=True)
+        return
+
+    if acc.browser_storage_enc:
+        await state.update_data(
+            parse_pending_hh_linked_account_id=acc.id,
+            parse_pending_selected_hh_account_id=acc.id,
+        )
+        await _finalize_pending_parse_setup(
+            callback,
+            state=state,
+            user=user,
+            session=session,
+            i18n=i18n,
+        )
+        return
+
+    flow = (await state.get_data()).get("parse_pending_flow") or "create"
+    await state.update_data(parse_pending_selected_hh_account_id=acc.id)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-parse-login-for-account", label=(acc.label or acc.hh_user_id)[:80]),
+            reply_markup=parse_login_required_keyboard(
+                i18n,
+                company_id=int((await state.get_data()).get("parse_pending_company_id") or 0),
+                back_action="hub" if flow == "create" else "detail",
+            ),
+            parse_mode="HTML",
+        )
+    await callback.answer()
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "parse_login_now"))
+async def parse_login_now(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    if not _login_assist_available():
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-parse-no-login-assist"),
+                reply_markup=parse_login_required_keyboard(i18n),
+            )
+        await callback.answer()
+        return
+
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.hh_login_assist import hh_login_assist_task
+
+    data = await state.get_data()
+    selected_account_id = data.get("parse_pending_selected_hh_account_id")
+    flow = data.get("parse_pending_flow") or "create"
+    company_id = int(data.get("parse_pending_company_id") or 0)
+
+    await callback.message.answer(
+        i18n.get("autoparse-parse-login-followup"),
+        reply_markup=parse_login_required_keyboard(
+            i18n,
+            company_id=company_id,
+            back_action="hub" if flow == "create" else "detail",
+        ),
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(i18n.get("autoparse-parse-login-started"))
+    await callback.answer()
+    await run_celery_task(
+        hh_login_assist_task,
+        user.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+        hh_linked_account_id=selected_account_id,
+    )
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "parse_continue_after_login"))
+async def parse_continue_after_login(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await _continue_web_parse_setup(
+        callback,
+        state=state,
+        user=user,
+        session=session,
+        i18n=i18n,
     )
 
 
@@ -370,6 +816,8 @@ async def include_reacted_selected(
         data.get("keyword_filter", ""),
         data.get("skills", ""),
         include_reacted_in_feed=include_reacted,
+        parse_mode=data.get("parse_mode", "api"),
+        parse_hh_linked_account_id=data.get("parse_hh_linked_account_id"),
     )
     await state.clear()
     with contextlib.suppress(TelegramBadRequest):
@@ -844,6 +1292,39 @@ async def edit_keywords_receive(
 # ── Edit search URL ─────────────────────────────────────────────────
 
 
+@router.callback_query(AutoparseCallback.filter(F.action == "edit_parse_mode"))
+async def edit_parse_mode_start(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    await state.update_data(
+        parse_pending_flow="edit_parse_mode",
+        parse_pending_company_id=company.id,
+        parse_pending_detail_message_id=callback.message.message_id,
+        parse_pending_search_url=company.search_url,
+        parse_pending_parse_mode=company.parse_mode or "api",
+        parse_pending_hh_linked_account_id=company.parse_hh_linked_account_id,
+        parse_mode=company.parse_mode or "api",
+        parse_hh_linked_account_id=company.parse_hh_linked_account_id,
+    )
+    await _prompt_parse_mode_step(
+        callback,
+        state,
+        i18n,
+        company_id=company.id,
+        flow="edit_parse_mode",
+    )
+
+
 @router.callback_query(AutoparseCallback.filter(F.action == "edit_search_url"))
 async def edit_search_url_start(
     callback: CallbackQuery,
@@ -902,7 +1383,27 @@ async def edit_search_url_receive(
         await message.answer(i18n.get("autoparse-not-found"))
         return
 
-    await repo.update(company, search_url=url)
+    if company.parse_mode == "web":
+        await state.update_data(
+            parse_pending_flow="edit_search_url",
+            parse_pending_company_id=company.id,
+            parse_pending_detail_message_id=detail_message_id,
+            parse_pending_search_url=url,
+            parse_pending_parse_mode=company.parse_mode,
+            parse_pending_hh_linked_account_id=company.parse_hh_linked_account_id,
+            parse_mode=company.parse_mode,
+            parse_hh_linked_account_id=company.parse_hh_linked_account_id,
+        )
+        await _continue_web_parse_setup(
+            message,
+            state=state,
+            user=user,
+            session=session,
+            i18n=i18n,
+        )
+        return
+
+    await repo.update(company, search_url=url, parse_hh_linked_account_id=None)
     await session.commit()
     await state.clear()
 

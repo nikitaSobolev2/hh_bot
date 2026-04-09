@@ -11,6 +11,7 @@ from src.db.base import Base
 
 if TYPE_CHECKING:
     from src.models.hh import HHArea, HHEmployer
+    from src.models.hh_linked_account import HhLinkedAccount
     from src.models.user import User
 
 
@@ -29,6 +30,10 @@ class AutoparseCompany(Base):
     total_runs: Mapped[int] = mapped_column(Integer, default=0)
     total_vacancies_found: Mapped[int] = mapped_column(Integer, default=0)
     include_reacted_in_feed: Mapped[bool] = mapped_column(Boolean, default=False)
+    parse_mode: Mapped[str] = mapped_column(String(16), default="api")
+    parse_hh_linked_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hh_linked_accounts.id", ondelete="SET NULL"), nullable=True
+    )
 
     autorespond_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     autorespond_min_compat: Mapped[int] = mapped_column(Integer, default=50)
@@ -42,6 +47,9 @@ class AutoparseCompany(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="autoparse_companies")
+    parse_hh_linked_account: Mapped[HhLinkedAccount | None] = relationship(
+        foreign_keys=[parse_hh_linked_account_id]
+    )
     vacancies: Mapped[list[AutoparsedVacancy]] = relationship(
         back_populates="autoparse_company",
         cascade="all, delete-orphan",

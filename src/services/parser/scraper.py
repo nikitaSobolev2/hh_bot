@@ -10,6 +10,7 @@ import asyncio
 import json
 import random
 import re
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
@@ -17,6 +18,7 @@ from bs4 import BeautifulSoup, Tag
 
 from src.config import settings
 from src.core.logging import get_logger
+from src.services.hh_ui.applicant_http import httpx_cookies_from_storage_state, url_suggests_login_page
 from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 from src.services.parser.keyword_match import matches_keyword_expression
 from src.worker.circuit_breaker import CircuitBreaker
@@ -48,6 +50,7 @@ _API_UNSUPPORTED_PARAMS = frozenset(
 )
 
 _hh_public_api_breaker_singleton: CircuitBreaker | None = None
+_RU_DATE_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
 
 # Rotated per request with settings.hh_user_agent — reduces identical fingerprint on public API.
 _HH_BROWSER_USER_AGENTS: tuple[str, ...] = (
@@ -165,6 +168,88 @@ def _html_to_plain_text(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
+def _parse_ru_date(val: str | None) -> datetime | None:
+    if not val:
+        return None
+    match = _RU_DATE_RE.search(val)
+    if not match:
+        return None
+    day, month, year = match.groups()
+    try:
+        return datetime(int(year), int(month), int(day), tzinfo=UTC).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _clean_text(text: str | None) -> str:
+    return _MULTI_SPACE_RE.sub(" ", (text or "").replace("\xa0", " ")).strip()
+
+
+def _parse_html_title_company_location(title_text: str) -> tuple[str, str, str]:
+    title_text = _clean_text(title_text)
+    if not title_text:
+        return "", "", ""
+    prefix = "Вакансия "
+    if title_text.startswith(prefix):
+        title_text = title_text[len(prefix) :]
+    match = re.match(r"(.+?) в (.+?), работа в компании (.+)$", title_text)
+    if match:
+        return _clean_text(match.group(1)), _clean_text(match.group(3)), _clean_text(match.group(2))
+    return title_text, "", ""
+
+
+def _extract_meta_description_parts(description: str) -> dict[str, str | datetime | None]:
+    desc = _clean_text(description)
+    if not desc:
+        return {
+            "salary": "",
+            "location": "",
+            "experience_name": "",
+            "employment_name": "",
+            "published_at": None,
+        }
+    salary_match = re.search(r"Зарплата:\s*([^\.]+)", desc)
+    location_match = re.search(
+        r"Зарплата:\s*[^\.]+\.\s*([^\.]+)\.\s*Требуемый опыт:",
+        desc,
+    )
+    experience_match = re.search(r"Требуемый опыт:\s*([^\.]+)", desc)
+    employment_match = re.search(r"Требуемый опыт:\s*[^\.]+\.\s*([^\.]+)\.", desc)
+    published_match = re.search(r"Дата публикации:\s*(\d{2}\.\d{2}\.\d{4})", desc)
+    return {
+        "salary": _clean_text(salary_match.group(1) if salary_match else ""),
+        "location": _clean_text(location_match.group(1) if location_match else ""),
+        "experience_name": _clean_text(experience_match.group(1) if experience_match else ""),
+        "employment_name": _clean_text(employment_match.group(1) if employment_match else ""),
+        "published_at": _parse_ru_date(published_match.group(1) if published_match else desc),
+    }
+
+
+def _extract_detail_field_from_soup(soup: BeautifulSoup, prefix: str) -> str:
+    for text_node in soup.find_all(string=True):
+        text = _clean_text(str(text_node))
+        if not text.startswith(prefix):
+            continue
+        value = _clean_text(text[len(prefix) :])
+        if value:
+            return value
+        parent = text_node.parent
+        if parent is not None:
+            parent_text = _clean_text(parent.get_text(" ", strip=True))
+            value = _clean_text(parent_text[len(prefix) :]) if parent_text.startswith(prefix) else ""
+            if value:
+                return value
+    return ""
+
+
+def _extract_company_link(soup: BeautifulSoup) -> str | None:
+    for a_tag in soup.find_all("a", href=True):
+        href = str(a_tag.get("href") or "")
+        if "/employer/" in href:
+            return href
+    return None
+
+
 def _vacancy_api_url(vacancy_id: str) -> str:
     """Return the HH API URL for a single vacancy detail."""
     return f"{HH_API_BASE}/{vacancy_id}"
@@ -235,6 +320,87 @@ def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = N
         "orm_fields": mapped["orm_fields"],
     }
     return result
+
+
+def _map_html_vacancy_to_page_data(soup: BeautifulSoup, url: str) -> dict:
+    title_tag = soup.find("title")
+    meta_desc = soup.find("meta", attrs={"name": "description"})
+    title_text = _clean_text(title_tag.get_text(strip=True) if title_tag else "")
+    desc_text = _clean_text(meta_desc.get("content") if meta_desc else "")
+    parsed_title, parsed_company, parsed_location = _parse_html_title_company_location(title_text)
+    meta_parts = _extract_meta_description_parts(desc_text)
+
+    description_el = soup.select_one('[data-qa="vacancy-description"]')
+    description = (
+        _html_to_plain_text(str(description_el))
+        if description_el is not None
+        else ""
+    )
+    skills = [
+        _clean_text(el.get_text(" ", strip=True))
+        for el in soup.select('[data-qa="skills-element"]')
+        if _clean_text(el.get_text(" ", strip=True))
+    ]
+
+    work_experience = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["work_experience"])
+    employment_type = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["employment_type"])
+    work_schedule = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["work_schedule"])
+    working_hours = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["working_hours"])
+    work_formats = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["work_formats"])
+    compensation_frequency = _extract_detail_field_from_soup(
+        soup, _DETAIL_FIELD_PREFIXES["compensation_frequency"]
+    )
+    salary = _clean_text(str(meta_parts.get("salary") or ""))
+    location = _clean_text(str(meta_parts.get("location") or parsed_location))
+
+    if not work_experience:
+        work_experience = _clean_text(str(meta_parts.get("experience_name") or ""))
+    if not employment_type:
+        employment_type = _clean_text(str(meta_parts.get("employment_name") or ""))
+
+    return {
+        "description": description,
+        "skills": skills,
+        "title": parsed_title,
+        "company_name": parsed_company,
+        "company_url": _extract_company_link(soup),
+        "salary": salary,
+        "work_experience": work_experience,
+        "employment_type": employment_type,
+        "work_schedule": work_schedule,
+        "work_formats": work_formats,
+        "working_hours": working_hours,
+        "compensation_frequency": compensation_frequency,
+        "employer_data": {},
+        "area_data": {},
+        "orm_fields": {
+            "snippet_requirement": None,
+            "snippet_responsibility": None,
+            "experience_id": None,
+            "experience_name": work_experience or None,
+            "schedule_id": None,
+            "schedule_name": work_schedule or None,
+            "employment_id": None,
+            "employment_name": employment_type or None,
+            "employment_form_id": None,
+            "employment_form_name": None,
+            "salary_from": None,
+            "salary_to": None,
+            "salary_currency": None,
+            "salary_gross": None,
+            "address_raw": location or None,
+            "address_city": location or None,
+            "address_street": None,
+            "address_building": None,
+            "address_lat": None,
+            "address_lng": None,
+            "metro_stations": None,
+            "vacancy_type_id": None,
+            "published_at": meta_parts.get("published_at"),
+            "work_format": None,
+            "professional_roles": None,
+        },
+    }
 
 
 class HHScraper:
@@ -332,6 +498,27 @@ class HHScraper:
                 else:
                     logger.error("Failed to fetch page", url=url)
                     return None
+
+    async def _fetch_page_with_meta(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+    ) -> tuple[BeautifulSoup | None, str | None]:
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
+        for attempt in range(self._retries):
+            try:
+                resp = await client.get(url, headers=self._headers(), timeout=self._timeout)
+                resp.raise_for_status()
+                return BeautifulSoup(resp.text, "html.parser"), str(resp.url)
+            except httpx.HTTPError as exc:
+                if attempt < self._retries - 1:
+                    wait = 3 + attempt * 2
+                    logger.warning("Request error, retrying", error=str(exc), wait=wait)
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error("Failed to fetch page", url=url)
+                    return None, None
 
     async def _fetch_api_page(self, client: httpx.AsyncClient, url: str) -> dict | None:
         """Fetch JSON from HH API (single-vacancy detail). Returns None on failure.
@@ -695,6 +882,8 @@ class HHScraper:
         *,
         blacklisted_ids: set[str] | None = None,
         known_ids_to_include: set[str] | None = None,
+        parse_mode: str = "api",
+        storage_state: dict | None = None,
     ) -> list[dict[str, str]]:
         """Collect vacancy URLs from search pages.
 
@@ -711,10 +900,15 @@ class HHScraper:
         page = 0
         last_total_pages: int | None = None
 
-        async with httpx.AsyncClient() as client:
+        client_kwargs: dict = {}
+        if parse_mode == "web" and storage_state:
+            client_kwargs["cookies"] = httpx_cookies_from_storage_state(storage_state)
+            client_kwargs["follow_redirects"] = True
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             while new_collected_count < target_count:
                 if page >= _MAX_PAGES:
-                    logger.warning("Reached max page limit", limit=_MAX_PAGES)
+                    logger.warning("Reached max page limit", limit=_MAX_PAGES, parse_mode=parse_mode)
                     break
                 if (
                     last_total_pages is not None
@@ -723,20 +917,46 @@ class HHScraper:
                 ):
                     break
 
-                url = self._build_api_url(base_url, page)
-                logger.info("Fetching search page", url=url, page=page + 1)
-                data = await self._fetch_vacancy_search_page(client, url)
-                if data is None:
+                if parse_mode == "web":
+                    url = self._build_page_url(base_url, page)
+                    logger.info("Fetching search page", url=url, page=page + 1, parse_mode=parse_mode)
+                    soup, final_url = await self._fetch_page_with_meta(client, url)
+                    if soup is None:
+                        break
+                    if final_url and url_suggests_login_page(final_url):
+                        logger.warning(
+                            "Web vacancy search redirected to login",
+                            page=page + 1,
+                            url=url,
+                            final_url=final_url,
+                            parse_mode=parse_mode,
+                            has_cookies=bool(storage_state),
+                        )
+                        break
+                    page_results = self._extract_vacancies_from_page(soup, keyword)
+                    raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
+                    page_had_results = bool(page_results) or raw_blocks > 0
+                else:
+                    url = self._build_api_url(base_url, page)
+                    logger.info("Fetching search page", url=url, page=page + 1, parse_mode=parse_mode)
+                    data = await self._fetch_vacancy_search_page(client, url)
+                    if data is None:
+                        break
+
+                    items = data.get("items", [])
+                    if not items:
+                        logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
+                        break
+
+                    last_total_pages = int(data.get("pages", 0) or 0)
+                    page_results = self._extract_vacancies_from_api_response(data, keyword)
+                    raw_blocks = len(items)
+                    page_had_results = bool(items)
+
+                if not page_had_results:
+                    logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
                     break
 
-                items = data.get("items", [])
-                if not items:
-                    logger.info("No vacancy items on page", page=page + 1, url=url)
-                    break
-
-                last_total_pages = int(data.get("pages", 0) or 0)
-
-                page_results = self._extract_vacancies_from_api_response(data, keyword)
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
                     page_results,
                     seen_urls,
@@ -751,13 +971,18 @@ class HHScraper:
                     "Search page scraped",
                     page=page + 1,
                     url=url,
-                    raw_blocks=len(items),
+                    parse_mode=parse_mode,
+                    raw_blocks=raw_blocks,
                     keyword_matched=len(page_results),
                     blacklisted_skipped=blacklisted_skipped,
                     new=new_count,
                     total=len(collected),
                     target=target_count,
+                    has_cookies=bool(storage_state),
                 )
+
+                if parse_mode == "web" and raw_blocks == 0:
+                    break
 
                 page += 1
 
@@ -852,13 +1077,24 @@ class HHScraper:
         self,
         client: httpx.AsyncClient,
         url: str,
+        *,
+        parse_mode: str = "api",
     ) -> dict:
-        """Parse a single vacancy page via HH API. Returns page_data shape with structured fields.
+        """Parse a single vacancy page. Returns page_data shape with structured fields.
 
-        For HH.ru URLs, fetches from API and maps to page_data
-        (employer_data, area_data, orm_fields).
+        In ``api`` mode, fetches HH API detail JSON.
+        In ``web`` mode, fetches the HTML vacancy page directly.
         Returns empty dict on failure.
         """
+        if parse_mode == "web":
+            soup, final_url = await self._fetch_page_with_meta(client, url)
+            if soup is None:
+                return {}
+            if final_url and url_suggests_login_page(final_url):
+                logger.warning("Web vacancy detail redirected to login", url=url, final_url=final_url)
+                return {}
+            return _map_html_vacancy_to_page_data(soup, url)
+
         vacancy_id = self._extract_vacancy_id(url)
         if not vacancy_id:
             return {}

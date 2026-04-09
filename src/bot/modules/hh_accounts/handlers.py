@@ -14,6 +14,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.bot.modules.autoparse.keyboards import parse_login_required_keyboard
+from src.bot.modules.autoparse.states import AutoparseEditForm, AutoparseForm
 from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
 from src.bot.modules.hh_accounts.keyboards import hh_account_row_keyboard, hh_accounts_hub_keyboard
 from src.bot.modules.hh_accounts.states import HhAccountRenameForm, HhBrowserImportForm
@@ -388,11 +390,28 @@ async def hh_browser_import_document(
     cipher = HhTokenCipher(settings.hh_token_encryption_key)
     await persist_browser_storage_state_for_user(session, user.id, state_dict, cipher=cipher)
     await session.commit()
-    await state.clear()
+    state_data = await state.get_data()
+    pending_flow = state_data.get("parse_pending_flow")
+    pending_company_id = int(state_data.get("parse_pending_company_id") or 0)
+    if pending_flow == "create":
+        await state.set_state(AutoparseForm.parse_hh_account)
+    elif pending_flow:
+        await state.set_state(AutoparseEditForm.edit_parse_mode)
+    else:
+        await state.clear()
 
     text, kb = await _hub_message(session, user, i18n)
     await message.answer(i18n.get("hh-accounts-browser-import-success"))
     await message.answer(text, reply_markup=kb)
+    if pending_flow:
+        await message.answer(
+            i18n.get("autoparse-parse-login-followup"),
+            reply_markup=parse_login_required_keyboard(
+                i18n,
+                company_id=pending_company_id,
+                back_action="hub" if pending_flow == "create" else "detail",
+            ),
+        )
 
 
 @router.message(HhBrowserImportForm.waiting_json)

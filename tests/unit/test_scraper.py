@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -7,6 +8,7 @@ from bs4 import BeautifulSoup
 from src.services.parser.scraper import (
     HHCaptchaRequiredError,
     HHScraper,
+    _map_html_vacancy_to_page_data,
     _hh_error_body_has_captcha,
 )
 
@@ -170,6 +172,30 @@ class TestCollectVacancyUrls:
 
         assert len(result) == 2
         assert mock_fetch.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_web_mode_collects_cards_from_html_fixture(self) -> None:
+        scraper = HHScraper()
+        html = (
+            Path(__file__).resolve().parents[2] / "docs" / "vacancies-list-page.html"
+        ).read_text(encoding="utf-8")
+        soup = BeautifulSoup(html, "html.parser")
+
+        with patch.object(
+            scraper,
+            "_fetch_page_with_meta",
+            new=AsyncMock(return_value=(soup, "https://hh.ru/search/vacancy")),
+        ):
+            result = await scraper.collect_vacancy_urls(
+                "https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                target_count=5,
+                parse_mode="web",
+            )
+
+        assert result
+        assert all(item["hh_vacancy_id"] for item in result)
+        assert all(item["url"].startswith("https://") for item in result)
 
 
 class TestCollectVacancyUrlsBatch:
@@ -432,6 +458,24 @@ class TestParseVacancyPage:
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result == {}
+
+    def test_maps_web_fixture_into_core_fields(self):
+        html = (
+            Path(__file__).resolve().parents[2] / "docs" / "resume-page.html"
+        ).read_text(encoding="utf-8")
+        soup = BeautifulSoup(html, "html.parser")
+
+        result = _map_html_vacancy_to_page_data(
+            soup,
+            "https://hh.ru/vacancy/131605980",
+        )
+
+        assert result["title"]
+        assert result["description"]
+        assert result["company_name"]
+        assert result["salary"] == "не указана"
+        assert result["skills"]
+        assert result["orm_fields"]["published_at"] is not None
 
 
 class TestHHScraperHeaders:

@@ -3,8 +3,8 @@
 import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
+from urllib.parse import parse_qs, urlparse
 
-import httpx
 import redis
 
 from src.config import settings
@@ -37,6 +37,18 @@ return 0
 def _autoparse_pipeline_batch_size() -> int:
     n = settings.hh_autoparse_pipeline_batch_size
     return n if n > 0 else settings.hh_vacancy_detail_concurrency
+
+
+def _search_url_resume_id(url: str) -> str | None:
+    try:
+        values = parse_qs(urlparse(url).query).get("resume") or []
+    except ValueError:
+        return None
+    for value in values:
+        resume_id = value.strip()
+        if resume_id:
+            return resume_id
+    return None
 
 # Atomically acquire or re-acquire a task-owned lock.
 # Returns 1 when the lock is taken (new or re-delivery of same task).
@@ -287,10 +299,17 @@ async def _run_autoparse_company_async(
 ) -> dict:
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
+    from src.repositories.hh_linked_account import HhLinkedAccountRepository
     from src.repositories.parsing import ParsedVacancyRepository
     from src.repositories.user import UserRepository
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient
+    from src.services.hh.crypto import HhTokenCipher
+    from src.services.hh_ui.applicant_negotiations_http import (
+        check_negotiations_browser_session_available,
+    )
+    from src.services.hh_ui.config import HhUiApplyConfig
+    from src.services.hh_ui.storage import decrypt_browser_storage
     from src.services.parser.hh_parser_service import HHParserService
     from src.services.parser.scraper import HHCaptchaRequiredError
     from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
@@ -366,6 +385,10 @@ async def _run_autoparse_company_async(
             if not company or company.is_deleted or not company.is_enabled:
                 return {"status": "skipped", "company_id": company_id}
 
+            parse_mode = company.parse_mode or "api"
+            resume_filter_id = _search_url_resume_id(company.search_url)
+            web_storage = None
+
             vacancy_repo = AutoparsedVacancyRepository(session)
             known_ids = await vacancy_repo.get_known_hh_ids_for_company(company_id)
 
@@ -386,6 +409,82 @@ async def _run_autoparse_company_async(
 
             we_repo = WorkExperienceRepository(session)
             work_experiences = await we_repo.get_active_by_user(company.user_id)
+
+            if parse_mode == "web" and company.parse_hh_linked_account_id:
+                hh_repo = HhLinkedAccountRepository(session)
+                hh_acc = await hh_repo.get_by_id(company.parse_hh_linked_account_id)
+                if not hh_acc or hh_acc.user_id != company.user_id or not hh_acc.browser_storage_enc:
+                    logger.warning(
+                        "Autoparse web run missing browser session",
+                        company_id=company_id,
+                        parse_mode=parse_mode,
+                        hh_linked_account_id=company.parse_hh_linked_account_id,
+                        resume_filter=bool(resume_filter_id),
+                    )
+                    if user and notify_user_id is not None and pipeline_progress is None:
+                        await _send_run_failure_notification(
+                            bot_token=settings.bot_token,
+                            chat_id=user.telegram_id,
+                            text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                        )
+                    return {"status": "error", "reason": "no_browser_session", "company_id": company_id}
+                try:
+                    cipher = HhTokenCipher(settings.hh_token_encryption_key)
+                    web_storage = decrypt_browser_storage(hh_acc.browser_storage_enc, cipher)
+                except Exception as exc:
+                    logger.warning(
+                        "Autoparse web session decrypt failed",
+                        company_id=company_id,
+                        hh_linked_account_id=company.parse_hh_linked_account_id,
+                        error=str(exc)[:200],
+                    )
+                    if user and notify_user_id is not None and pipeline_progress is None:
+                        await _send_run_failure_notification(
+                            bot_token=settings.bot_token,
+                            chat_id=user.telegram_id,
+                            text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                        )
+                    return {"status": "error", "reason": "decrypt_failed", "company_id": company_id}
+
+            if parse_mode == "web" and resume_filter_id:
+                if not web_storage:
+                    logger.warning(
+                        "Autoparse web run requires authenticated session",
+                        company_id=company_id,
+                        parse_mode=parse_mode,
+                        resume_filter=resume_filter_id,
+                    )
+                    if user and notify_user_id is not None and pipeline_progress is None:
+                        await _send_run_failure_notification(
+                            bot_token=settings.bot_token,
+                            chat_id=user.telegram_id,
+                            text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                        )
+                    return {"status": "error", "reason": "no_browser_session", "company_id": company_id}
+                session_status, _ = await asyncio.to_thread(
+                    check_negotiations_browser_session_available,
+                    web_storage,
+                    HhUiApplyConfig.from_settings(),
+                )
+                if session_status != "ok":
+                    logger.warning(
+                        "Autoparse web session precheck failed",
+                        company_id=company_id,
+                        parse_mode=parse_mode,
+                        resume_filter=resume_filter_id,
+                        hh_linked_account_id=company.parse_hh_linked_account_id,
+                        session_status=session_status,
+                    )
+                    if user and notify_user_id is not None and pipeline_progress is None:
+                        await _send_run_failure_notification(
+                            bot_token=settings.bot_token,
+                            chat_id=user.telegram_id,
+                            text=get_text(
+                                "autoparse-run-error-session-expired",
+                                user.language_code or "ru",
+                            ),
+                        )
+                    return {"status": "error", "reason": "session_expired", "company_id": company_id}
 
         if (
             not suppress_progress
@@ -413,7 +512,19 @@ async def _run_autoparse_company_async(
             if progress:
                 await progress.update_bar(progress_task_key, 0, current, total)
 
-        parser = HHParserService()
+        logger.info(
+            "Autoparse company starting",
+            company_id=company_id,
+            parse_mode=parse_mode,
+            resume_filter=bool(resume_filter_id),
+            hh_linked_account_id=company.parse_hh_linked_account_id,
+            has_browser_storage=bool(web_storage),
+            known_ids=len(known_ids),
+            reusable_cached_ids=len(reusable_cached_ids),
+            target_count=target_count,
+        )
+
+        parser = HHParserService(parse_mode=parse_mode, storage_state=web_storage)
         scraper = parser._scraper
         from src.services.parser.hh_parser_service import partition_collected_urls
 
@@ -424,11 +535,23 @@ async def _run_autoparse_company_async(
             company.keyword_filter,
             target_count,
             known_ids_to_include=known_ids,
+            parse_mode=parse_mode,
+            storage_state=web_storage,
         )
         cached_results, to_fetch = partition_collected_urls(
             collected_urls,
             target_count,
             reusable_cached_ids,
+        )
+        logger.info(
+            "Autoparse collection partitioned",
+            company_id=company_id,
+            parse_mode=parse_mode,
+            collected=len(collected_urls),
+            cached=len(cached_results),
+            to_fetch=len(to_fetch),
+            known_ids=len(known_ids),
+            reusable_cached_ids=len(reusable_cached_ids),
         )
 
         user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
@@ -697,24 +820,39 @@ async def _run_autoparse_company_async(
         pipeline_batch = _autoparse_pipeline_batch_size()
         sem = asyncio.Semaphore(settings.hh_vacancy_detail_concurrency)
 
-        async with httpx.AsyncClient() as client:
+        async with parser.build_client() as client:
             for batch_start in range(0, len(to_fetch), pipeline_batch):
                 if settings.hh_autoparse_inter_batch_sleep_seconds > 0 and batch_start > 0:
                     await asyncio.sleep(settings.hh_autoparse_inter_batch_sleep_seconds)
                 batch = to_fetch[batch_start : batch_start + pipeline_batch]
+                logger.info(
+                    "Autoparse detail batch started",
+                    company_id=company_id,
+                    parse_mode=parse_mode,
+                    batch_index=(batch_start // pipeline_batch) + 1,
+                    batch_size=len(batch),
+                    remaining=max(len(to_fetch) - batch_start, 0),
+                )
                 batch_results = await parser.fetch_details_batch_slice(client, batch, sem)
+                batch_success = 0
+                batch_failed = 0
                 for i, merged in enumerate(batch_results):
                     if isinstance(merged, HHCaptchaRequiredError):
                         raise merged
                     if isinstance(merged, Exception):
+                        batch_failed += 1
                         logger.warning(
                             "Vacancy fetch failed",
                             vacancy=batch[i],
                             error=merged,
+                            company_id=company_id,
+                            parse_mode=parse_mode,
                         )
                         continue
                     if merged is None:
+                        batch_failed += 1
                         continue
+                    batch_success += 1
                     detail_done += 1
                     await _on_vacancy_scraped(detail_done, target_count)
                     if cursor > 0:
@@ -729,6 +867,17 @@ async def _run_autoparse_company_async(
                     )
                     pending.append((merged, compat_input))
                     await flush_pending(force=False)
+                logger.info(
+                    "Autoparse detail batch completed",
+                    company_id=company_id,
+                    parse_mode=parse_mode,
+                    batch_index=(batch_start // pipeline_batch) + 1,
+                    batch_size=len(batch),
+                    batch_success=batch_success,
+                    batch_failed=batch_failed,
+                    detail_done=detail_done,
+                    pending_for_ai=len(pending),
+                )
 
         await flush_pending(force=True)
 
@@ -1216,6 +1365,25 @@ async def _send_run_completed_notification(
         text = get_text("autoparse-run-finished", locale, count=new_count)
     else:
         text = get_text("autoparse-run-finished-empty", locale)
+
+    bot = Bot(
+        token=bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
+    finally:
+        await bot.session.close()
+
+
+async def _send_run_failure_notification(
+    bot_token: str,
+    chat_id: int,
+    text: str,
+) -> None:
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
 
     bot = Bot(
         token=bot_token,

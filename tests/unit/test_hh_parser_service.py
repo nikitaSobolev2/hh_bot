@@ -139,6 +139,8 @@ class TestHHParserServiceDedup:
             "python",
             50,
             known_ids_to_include=known,
+            parse_mode="api",
+            storage_state=None,
         )
 
 

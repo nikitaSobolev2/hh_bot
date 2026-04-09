@@ -7,12 +7,15 @@ class AutoparseForm(StatesGroup):
     search_url = State()
     keyword_filter = State()
     skills = State()
+    parse_mode = State()
+    parse_hh_account = State()
     include_reacted = State()
 
 
 class AutoparseEditForm(StatesGroup):
     edit_keywords = State()
     edit_search_url = State()
+    edit_parse_mode = State()
 
 
 class FeedRespondForm(StatesGroup):

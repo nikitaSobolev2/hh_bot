@@ -95,10 +95,12 @@ class TestFormatCompanyDetail:
             is_enabled=True,
             total_runs=5,
             last_parsed_at=None,
+            parse_mode="web",
         )
         text = format_company_detail(company, 42, i18n)
         assert "Python Dev" in text
         assert "42" in text
+        assert "autoparse-parse-mode-web-label" in text
 
     def test_disabled_company(self):
         i18n = MagicMock()

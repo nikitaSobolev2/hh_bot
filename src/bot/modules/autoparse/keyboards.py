@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.bot.callbacks.common import MenuCallback
+from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
 from src.bot.modules.autoparse.callbacks import (
     AutoparseCallback,
     AutoparseDownloadCallback,
@@ -311,6 +312,128 @@ def include_reacted_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
     )
 
 
+def parse_mode_keyboard(
+    i18n: I18nContext,
+    *,
+    company_id: int = 0,
+    back_action: str = "hub",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-parse-mode-api"),
+                    callback_data=AutoparseCallback(
+                        action="parse_mode_api", company_id=company_id
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-parse-mode-web"),
+                    callback_data=AutoparseCallback(
+                        action="parse_mode_web", company_id=company_id
+                    ).pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-back"),
+                    callback_data=AutoparseCallback(action=back_action, company_id=company_id).pack(),
+                )
+            ],
+        ]
+    )
+
+
+def parse_hh_account_keyboard(
+    accounts: list,
+    i18n: I18nContext,
+    *,
+    company_id: int = 0,
+    back_action: str = "hub",
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for acc in accounts[:8]:
+        label = (acc.label or acc.hh_user_id)[:40]
+        if getattr(acc, "browser_storage_enc", None):
+            label = f"{label} {i18n.get('autoparse-parse-account-ready')}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=AutoparseCallback(
+                        action="parse_pick_hh_account",
+                        company_id=company_id,
+                        aux_id=acc.id,
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-login-now"),
+                callback_data=AutoparseCallback(
+                    action="parse_login_now", company_id=company_id
+                ).pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action=back_action, company_id=company_id).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def parse_login_required_keyboard(
+    i18n: I18nContext,
+    *,
+    company_id: int = 0,
+    back_action: str = "hub",
+    show_hh_accounts: bool = True,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-login-now"),
+                callback_data=AutoparseCallback(
+                    action="parse_login_now", company_id=company_id
+                ).pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-continue-after-login"),
+                callback_data=AutoparseCallback(
+                    action="parse_continue_after_login", company_id=company_id
+                ).pack(),
+            )
+        ],
+    ]
+    if show_hh_accounts:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("autoparse-parse-open-hh-accounts"),
+                    callback_data=HhAccountCallback(action="menu").pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-back"),
+                callback_data=AutoparseCallback(action=back_action, company_id=company_id).pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def autoparse_detail_keyboard(
     company: AutoparseCompany,
     i18n: I18nContext,
@@ -342,6 +465,12 @@ def autoparse_detail_keyboard(
                 text=i18n.get("autoparse-edit-search-url"),
                 callback_data=AutoparseCallback(
                     action="edit_search_url", company_id=company.id
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-edit-parse-mode"),
+                callback_data=AutoparseCallback(
+                    action="edit_parse_mode", company_id=company.id
                 ).pack(),
             ),
         ],
