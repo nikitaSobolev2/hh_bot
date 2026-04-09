@@ -38,8 +38,8 @@ async def ar_menu(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     count = await ap_service.get_vacancy_count(session, company.id)
@@ -69,13 +69,13 @@ async def ar_toggle(
     i18n: I18nContext,
 ) -> None:
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     await repo.update(company, autorespond_enabled=not company.autorespond_enabled)
     await session.commit()
-    company = await ap_service.get_autoparse_detail(session, company.id)
+    company = await ap_service.get_autoparse_detail(session, company.id, user.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
     ar_task_on = await autorespond_globally_enabled(session)
@@ -104,8 +104,8 @@ async def ar_mode(
     i18n: I18nContext,
 ) -> None:
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     new_mode = (
@@ -115,7 +115,7 @@ async def ar_mode(
     )
     await repo.update(company, autorespond_keyword_mode=new_mode)
     await session.commit()
-    company = await ap_service.get_autoparse_detail(session, company.id)
+    company = await ap_service.get_autoparse_detail(session, company.id, user.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
     ar_task_on = await autorespond_globally_enabled(session)
@@ -144,8 +144,8 @@ async def ar_limit(
     i18n: I18nContext,
 ) -> None:
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     raw = callback_data.page
@@ -155,7 +155,7 @@ async def ar_limit(
         return
     await repo.update(company, autorespond_max_per_run=lim)
     await session.commit()
-    company = await ap_service.get_autoparse_detail(session, company.id)
+    company = await ap_service.get_autoparse_detail(session, company.id, user.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
     ar_task_on = await autorespond_globally_enabled(session)
@@ -188,13 +188,13 @@ async def ar_thr(
         await callback.answer()
         return
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     await repo.update(company, autorespond_min_compat=thr)
     await session.commit()
-    company = await ap_service.get_autoparse_detail(session, company.id)
+    company = await ap_service.get_autoparse_detail(session, company.id, user.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
     ar_task_on = await autorespond_globally_enabled(session)
@@ -222,8 +222,8 @@ async def ar_resume(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     acc_repo = HhLinkedAccountRepository(session)
@@ -270,8 +270,8 @@ async def ar_resume_acc(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     acc_repo = HhLinkedAccountRepository(session)
@@ -477,8 +477,8 @@ async def ar_resume_pick(
     i18n: I18nContext,
 ) -> None:
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     acc_repo = HhLinkedAccountRepository(session)
@@ -501,7 +501,7 @@ async def ar_resume_pick(
         autorespond_resume_id=rid,
     )
     await session.commit()
-    company = await ap_service.get_autoparse_detail(session, company.id)
+    company = await ap_service.get_autoparse_detail(session, company.id, user.id)
     assert company is not None
     count = await ap_service.get_vacancy_count(session, company.id)
     ar_task_on = await autorespond_globally_enabled(session)
@@ -532,8 +532,8 @@ async def ar_run(
     if not await autorespond_globally_enabled(session):
         await callback.answer(i18n.get("autorespond-disabled-global"), show_alert=True)
         return
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     if not company.autorespond_enabled:

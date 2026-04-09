@@ -165,7 +165,7 @@ def _build_user_profile(
     work_experiences: list,
 ) -> tuple[list[str], str]:
     """Derive the user's tech stack and experience summary from settings and work history."""
-    from src.bot.modules.autoparse.services import derive_tech_stack_from_experiences
+    from src.services.autoparse_profile import derive_tech_stack_from_experiences
 
     custom_stack = ap_settings.get("tech_stack", [])
     if custom_stack:
@@ -821,7 +821,6 @@ async def _run_autoparse_company_async(
             await _progress_bot.session.close()
 
 
-_DELIVER_TASK_PREFIX = "autoparse:deliver_task:"
 _DELIVER_LOCK_PREFIX = "lock:autoparse:deliver:"
 _DELIVER_LOCK_TTL_S = 600
 
@@ -1057,6 +1056,8 @@ async def _deliver_results_async(
     )
     from src.repositories.user import UserRepository
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+    from src.services.autoparse_delivery import deliver_task_key
+    from src.services.autoparse_feed_cards import create_feed_session, send_feed_stats_card
 
     async with session_factory() as session:
         user_repo = UserRepository(session)
@@ -1085,15 +1086,15 @@ async def _deliver_results_async(
         diff_minutes = abs((now_user - target_time).total_seconds()) / 60
         if not force_now and diff_minutes > 30:
             eta = target_time.astimezone(UTC).replace(tzinfo=None)
-            deliver_task_key = f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}"
             r_sched = _redis_client()
             try:
-                _revoke_prior_scheduled_deliver(r_sched, deliver_task_key)
+                task_key = deliver_task_key(company_id, user_id)
+                _revoke_prior_scheduled_deliver(r_sched, task_key)
                 new_task = deliver_autoparse_results.apply_async(
                     args=[company_id, user_id],
                     eta=eta,
                 )
-                r_sched.set(deliver_task_key, new_task.id, ex=86400)
+                r_sched.set(task_key, new_task.id, ex=86400)
             finally:
                 r_sched.close()
             return {"status": "rescheduled", "eta": str(eta)}
@@ -1120,7 +1121,7 @@ async def _deliver_results_async(
                 locale = user.language_code or "ru"
 
                 company_repo = AutoparseCompanyRepository(session)
-                company = await company_repo.get_by_id(company_id)
+                company = await company_repo.get_by_id_for_user(company_id, user_id)
                 if not company or company.is_deleted:
                     return {"status": "company_not_found"}
 
@@ -1164,16 +1165,17 @@ async def _deliver_results_async(
                 hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
             )
 
-            feed_session_id = await _create_feed_session(
-                session_factory,
-                user_id=user_id,
-                company_id=company_id,
-                chat_id=user.telegram_id,
-                vacancy_ids=[v.id for v in new_vacancies],
-                hh_linked_account_id=hh_linked_id,
-            )
+            async with session_factory() as session:
+                feed_session_id = await create_feed_session(
+                    session,
+                    user_id=user_id,
+                    company_id=company_id,
+                    chat_id=user.telegram_id,
+                    vacancy_ids=[v.id for v in new_vacancies],
+                    hh_linked_account_id=hh_linked_id,
+                )
 
-            await _send_feed_stats_card(
+            await send_feed_stats_card(
                 bot_token=settings.bot_token,
                 chat_id=user.telegram_id,
                 vacancy_title=company.vacancy_title,
@@ -1181,6 +1183,7 @@ async def _deliver_results_async(
                 feed_session_id=feed_session_id,
                 locale=locale,
                 linked_accounts=hh_accounts,
+                back_action="hub",
             )
 
             async with session_factory() as session:
@@ -1197,122 +1200,6 @@ async def _deliver_results_async(
             _release_deliver_lock(r, lock_key, celery_task_id)
     finally:
         r.close()
-
-
-async def _create_feed_session(
-    session_factory,
-    user_id: int,
-    company_id: int,
-    chat_id: int,
-    vacancy_ids: list[int],
-    *,
-    hh_linked_account_id: int | None = None,
-) -> int:
-    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
-
-    async with session_factory() as session:
-        repo = VacancyFeedSessionRepository(session)
-        feed_session = await repo.create(
-            user_id=user_id,
-            autoparse_company_id=company_id,
-            chat_id=chat_id,
-            vacancy_ids=vacancy_ids,
-            hh_linked_account_id=hh_linked_account_id,
-            current_index=0,
-            liked_ids=[],
-            disliked_ids=[],
-            is_completed=False,
-        )
-        await session.commit()
-        return feed_session.id
-
-
-async def _send_feed_stats_card(
-    bot_token: str,
-    chat_id: int,
-    vacancy_title: str,
-    vacancies: list,
-    feed_session_id: int,
-    locale: str,
-    *,
-    linked_accounts: list | None = None,
-) -> None:
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.enums import ParseMode
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    from src.bot.modules.autoparse.callbacks import AutoparseCallback, FeedCallback
-    from src.bot.modules.autoparse.feed_services import build_stats_message
-
-    compat_scores = [v.compatibility_score for v in vacancies if v.compatibility_score is not None]
-    avg_compat = sum(compat_scores) / len(compat_scores) if compat_scores else None
-
-    text = build_stats_message(vacancy_title, len(vacancies), avg_compat, locale)
-    linked_accounts = linked_accounts or []
-    if len(linked_accounts) > 1:
-        text = f"{text}\n\n{get_text('feed-pick-hh-hint', locale)}"
-        rows: list[list[InlineKeyboardButton]] = []
-        for acc in linked_accounts:
-            label = (acc.label or acc.hh_user_id)[:40]
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=label,
-                        callback_data=FeedCallback(
-                            action="pick_hh_account",
-                            session_id=feed_session_id,
-                            hh_account_id=acc.id,
-                        ).pack(),
-                    )
-                ]
-            )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=get_text("btn-back", locale),
-                    callback_data=AutoparseCallback(action="hub").pack(),
-                )
-            ]
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-    else:
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=get_text("feed-btn-start", locale),
-                        callback_data=FeedCallback(action="start", session_id=feed_session_id).pack(),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=get_text("feed-btn-stop", locale),
-                        callback_data=FeedCallback(action="stop", session_id=feed_session_id).pack(),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=get_text("btn-back", locale),
-                        callback_data=AutoparseCallback(action="hub").pack(),
-                    )
-                ],
-            ]
-        )
-
-    bot = Bot(
-        token=bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-    finally:
-        await bot.session.close()
 
 
 async def _send_run_completed_notification(

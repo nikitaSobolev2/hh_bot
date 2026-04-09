@@ -129,6 +129,42 @@ async def test_get_all_disliked_vacancy_ids_for_user_returns_unique_across_compa
     assert disliked == {5, 15, 25}
 
 
+@pytest.mark.asyncio
+async def test_get_liked_vacancy_page_for_user_returns_page_and_total():
+    mock_session = MagicMock()
+    total_result = MagicMock()
+    total_result.scalar.return_value = 3
+    page_result = MagicMock()
+    page_result.scalars.return_value.all.return_value = [30, 20]
+    mock_session.execute = AsyncMock(side_effect=[total_result, page_result])
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    ids, total = await repo.get_liked_vacancy_page_for_user(user_id=1, offset=0, limit=2)
+
+    assert ids == [30, 20]
+    assert total == 3
+
+
+@pytest.mark.asyncio
+async def test_get_disliked_vacancy_page_for_user_returns_page_and_total():
+    mock_session = MagicMock()
+    total_result = MagicMock()
+    total_result.scalar.return_value = 4
+    page_result = MagicMock()
+    page_result.scalars.return_value.all.return_value = [40, 10]
+    mock_session.execute = AsyncMock(side_effect=[total_result, page_result])
+
+    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+
+    repo = VacancyFeedSessionRepository(mock_session)
+    ids, total = await repo.get_disliked_vacancy_page_for_user(user_id=1, offset=0, limit=2)
+
+    assert ids == [40, 10]
+    assert total == 4
+
+
 # ── VacancyFeedSessionRepository bulk clear (per company) ───────────
 
 

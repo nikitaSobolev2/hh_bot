@@ -72,6 +72,19 @@ class AutoparseCompanyRepository(BaseRepository[AutoparseCompany]):
         result = await self._session.execute(stmt)
         return result.scalar_one()
 
+    async def get_by_id_for_user(
+        self,
+        company_id: int,
+        user_id: int,
+    ) -> AutoparseCompany | None:
+        stmt = select(AutoparseCompany).where(
+            AutoparseCompany.id == company_id,
+            AutoparseCompany.user_id == user_id,
+            AutoparseCompany.is_deleted.is_(False),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def get_all_enabled(self) -> Sequence[AutoparseCompany]:
         stmt = select(AutoparseCompany).where(
             AutoparseCompany.is_enabled.is_(True),
@@ -94,8 +107,12 @@ class AutoparseCompanyRepository(BaseRepository[AutoparseCompany]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
-    async def soft_delete(self, company_id: int) -> None:
-        company = await self.get_by_id(company_id)
+    async def soft_delete(self, company_id: int, user_id: int | None = None) -> None:
+        company = (
+            await self.get_by_id_for_user(company_id, user_id)
+            if user_id is not None
+            else await self.get_by_id(company_id)
+        )
         if company:
             await self.update(company, is_deleted=True, is_enabled=False)
 

@@ -1,7 +1,6 @@
 """Handlers for the Autoparse feature."""
 
 import contextlib
-from datetime import UTC, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -45,11 +44,13 @@ from src.bot.utils.limits import get_min_compat_range
 from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
 from src.models.user import User
-from src.repositories.app_settings import AppSettingRepository
 from src.repositories.autoparse import AutoparsedVacancyRepository
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.repositories.parsing import ParsingCompanyRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+from src.services.autoparse_delivery import revoke_scheduled_delivery_async
+from src.services.autoparse_feed_cards import build_feed_stats_card, create_feed_session
+from src.services.autoparse_use_cases import build_company_detail_view
 
 router = Router(name="autoparse")
 router.include_router(feed_router)
@@ -76,13 +77,6 @@ async def _has_tech_stack(session: AsyncSession, user_id: int) -> bool:
     return bool(experiences)
 
 
-async def _user_has_hh_browser_session(session: AsyncSession, user_id: int) -> bool:
-    """True if the user has at least one HH account with saved Playwright storage."""
-    hh_repo = HhLinkedAccountRepository(session)
-    accs = await hh_repo.list_active_for_user(user_id)
-    return any(a.browser_storage_enc for a in accs)
-
-
 async def _resolve_hh_linked_account_for_negotiations_sync(
     session: AsyncSession,
     user: User,
@@ -99,22 +93,6 @@ async def _resolve_hh_linked_account_for_negotiations_sync(
         if a.browser_storage_enc:
             return a.id
     return None
-
-
-async def _should_show_run_now(
-    session: AsyncSession, company: AutoparseCompany, user: User
-) -> bool:
-    """Return True if the manual 'Run now' button should be shown for this company."""
-    if user.is_admin:
-        return company.is_enabled
-    if not company.is_enabled:
-        return False
-    settings_repo = AppSettingRepository(session)
-    interval_hours = int(await settings_repo.get_value("autoparse_interval_hours", default=6))
-    if company.last_parsed_at is None:
-        return True
-    elapsed = datetime.now(UTC).replace(tzinfo=None) - company.last_parsed_at
-    return elapsed > timedelta(hours=interval_hours)
 
 
 async def _render_autoparse_list(
@@ -150,30 +128,63 @@ async def _render_company_detail_message(
     i18n: I18nContext,
     company: AutoparseCompany,
 ) -> None:
-    count = await ap_service.get_vacancy_count(session, company.id)
-    show_run_now = await _should_show_run_now(session, company, user)
     ar_task_on = await autorespond_globally_enabled(session)
-    show_sync = await _user_has_hh_browser_session(session, user.id)
-    text = ap_service.format_company_detail(
-        company,
-        count,
-        i18n,
+    view = await build_company_detail_view(
+        session,
+        company=company,
+        user=user,
+        i18n=i18n,
         autorespond_global=True,
         autorespond_task_enabled=ar_task_on,
     )
     with contextlib.suppress(TelegramBadRequest):
         await message.edit_text(
-            text,
+            view.text,
             reply_markup=autoparse_detail_keyboard(
                 company,
                 i18n,
-                show_run_now=show_run_now,
-                show_show_now=(count > 0),
+                show_run_now=view.show_run_now,
+                show_show_now=view.show_show_now,
                 show_autorespond=True,
-                show_sync_negotiations=show_sync,
+                show_sync_negotiations=view.show_sync_negotiations,
             ),
             parse_mode="HTML",
         )
+
+
+async def _edit_company_detail_message_by_id(
+    *,
+    bot,
+    chat_id: int,
+    message_id: int,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+    company: AutoparseCompany,
+) -> None:
+    ar_task_on = await autorespond_globally_enabled(session)
+    view = await build_company_detail_view(
+        session,
+        company=company,
+        user=user,
+        i18n=i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=ar_task_on,
+    )
+    await bot.edit_message_text(
+        view.text,
+        chat_id=chat_id,
+        message_id=message_id,
+        reply_markup=autoparse_detail_keyboard(
+            company,
+            i18n,
+            show_run_now=view.show_run_now,
+            show_show_now=view.show_show_now,
+            show_autorespond=True,
+            show_sync_negotiations=view.show_sync_negotiations,
+        ),
+        parse_mode="HTML",
+    )
 
 
 # ── Hub ─────────────────────────────────────────────────────────────
@@ -236,7 +247,7 @@ async def template_selected(
     i18n: I18nContext,
 ) -> None:
     repo = ParsingCompanyRepository(session)
-    company = await repo.get_by_id(callback_data.company_id)
+    company = await repo.get_by_id_for_user(callback_data.company_id, user.id)
     if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
@@ -392,8 +403,8 @@ async def reset_likes_prompt(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     feed_repo = VacancyFeedSessionRepository(session)
@@ -417,8 +428,8 @@ async def confirm_reset_likes(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     feed_repo = VacancyFeedSessionRepository(session)
@@ -436,8 +447,8 @@ async def reset_disliked_prompt(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     feed_repo = VacancyFeedSessionRepository(session)
@@ -463,8 +474,8 @@ async def confirm_reset_disliked(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     feed_repo = VacancyFeedSessionRepository(session)
@@ -482,8 +493,8 @@ async def rebuild_pool_prompt(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     with contextlib.suppress(TelegramBadRequest):
@@ -505,17 +516,17 @@ async def confirm_rebuild_pool(
     from src.core.celery_async import run_celery_task
     from src.worker.tasks.autoparse import run_autoparse_company
 
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    company = await ap_service.reset_company_vacancy_pool(session, company.id)
+    company = await ap_service.reset_company_vacancy_pool(session, company.id, user.id)
     if company is None:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    company = await ap_service.mark_parsing_started(session, company.id)
+    company = await ap_service.mark_parsing_started(session, company.id, user.id)
     if company is None:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
@@ -536,8 +547,14 @@ async def show_liked_vacancies(
     await callback.answer()
     feed_repo = VacancyFeedSessionRepository(session)
     vacancy_repo = AutoparsedVacancyRepository(session)
-    liked_ids = await feed_repo.get_all_liked_vacancy_ids_for_user(user.id)
-    if not liked_ids:
+    page = callback_data.page
+    start = page * _VACANCIES_PER_PAGE
+    page_ids, total_liked = await feed_repo.get_liked_vacancy_page_for_user(
+        user.id,
+        offset=start,
+        limit=_VACANCIES_PER_PAGE,
+    )
+    if not page_ids:
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("autoparse-liked-empty"),
@@ -545,17 +562,13 @@ async def show_liked_vacancies(
             )
         return
 
-    ids_list = sorted(liked_ids, reverse=True)
-    page = callback_data.page
-    start = page * _VACANCIES_PER_PAGE
-    page_ids = ids_list[start : start + _VACANCIES_PER_PAGE]
-    has_more = start + _VACANCIES_PER_PAGE < len(ids_list)
+    has_more = start + _VACANCIES_PER_PAGE < total_liked
 
     vacancies = await vacancy_repo.get_by_ids_simple(page_ids)
     order = {vid: i for i, vid in enumerate(page_ids)}
     vacancies_sorted = sorted(vacancies, key=lambda v: order.get(v.id, 999))
 
-    lines = [f"<b>{i18n.get('autoparse-btn-show-liked')}</b> ({len(liked_ids)})\n"]
+    lines = [f"<b>{i18n.get('autoparse-btn-show-liked')}</b> ({total_liked})\n"]
     for i, v in enumerate(vacancies_sorted, start=start + 1):
         safe_title = v.title.replace("<", "&lt;").replace(">", "&gt;")
         lines.append(f"{i}. <a href='{v.url}'>{safe_title}</a>")
@@ -580,8 +593,14 @@ async def show_disliked_vacancies(
     await callback.answer()
     feed_repo = VacancyFeedSessionRepository(session)
     vacancy_repo = AutoparsedVacancyRepository(session)
-    disliked_ids = await feed_repo.get_all_disliked_vacancy_ids_for_user(user.id)
-    if not disliked_ids:
+    page = callback_data.page
+    start = page * _VACANCIES_PER_PAGE
+    page_ids, total_disliked = await feed_repo.get_disliked_vacancy_page_for_user(
+        user.id,
+        offset=start,
+        limit=_VACANCIES_PER_PAGE,
+    )
+    if not page_ids:
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("autoparse-disliked-empty"),
@@ -589,17 +608,13 @@ async def show_disliked_vacancies(
             )
         return
 
-    ids_list = sorted(disliked_ids, reverse=True)
-    page = callback_data.page
-    start = page * _VACANCIES_PER_PAGE
-    page_ids = ids_list[start : start + _VACANCIES_PER_PAGE]
-    has_more = start + _VACANCIES_PER_PAGE < len(ids_list)
+    has_more = start + _VACANCIES_PER_PAGE < total_disliked
 
     vacancies = await vacancy_repo.get_by_ids_simple(page_ids)
     order = {vid: i for i, vid in enumerate(page_ids)}
     vacancies_sorted = sorted(vacancies, key=lambda v: order.get(v.id, 999))
 
-    lines = [f"<b>{i18n.get('autoparse-btn-show-disliked')}</b> ({len(disliked_ids)})\n"]
+    lines = [f"<b>{i18n.get('autoparse-btn-show-disliked')}</b> ({total_disliked})\n"]
     for i, v in enumerate(vacancies_sorted, start=start + 1):
         safe_title = v.title.replace("<", "&lt;").replace(">", "&gt;")
         lines.append(f"{i}. <a href='{v.url}'>{safe_title}</a>")
@@ -675,88 +690,28 @@ async def handle_view_feed_below_compat(
             )
         return
 
-    from src.bot.modules.autoparse.callbacks import FeedCallback
-    from src.bot.modules.autoparse.feed_services import build_stats_message
-    from src.repositories.vacancy_feed import VacancyFeedSessionRepository
     from src.services.hh.feed_gating import HhFeedAccountStatus, classify_user_hh_accounts
 
     hh_status, hh_accounts = await classify_user_hh_accounts(session, user.id)
     hh_linked_id = hh_accounts[0].id if hh_status == HhFeedAccountStatus.SINGLE else None
 
-    feed_repo = VacancyFeedSessionRepository(session)
-    feed_session = await feed_repo.create(
+    feed_session_id = await create_feed_session(
+        session,
         user_id=user.id,
-        autoparse_company_id=first_company_id,
+        company_id=first_company_id,
         chat_id=user.telegram_id,
         vacancy_ids=[v.id for v in vacancies],
         hh_linked_account_id=hh_linked_id,
-        current_index=0,
-        liked_ids=[],
-        disliked_ids=[],
-        is_completed=False,
     )
-    await session.commit()
-
-    compat_scores = [v.compatibility_score for v in vacancies if v.compatibility_score is not None]
-    avg_compat = sum(compat_scores) / len(compat_scores) if compat_scores else None
     title = i18n.get("autoparse-feed-below-compat-title")
-    text = build_stats_message(title, len(vacancies), avg_compat, i18n.locale)
-
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    if len(hh_accounts) > 1:
-        text = f"{text}\n\n{i18n.get('feed-pick-hh-hint')}"
-        rows: list[list[InlineKeyboardButton]] = []
-        for acc in hh_accounts:
-            label = (acc.label or acc.hh_user_id)[:40]
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=label,
-                        callback_data=FeedCallback(
-                            action="pick_hh_account",
-                            session_id=feed_session.id,
-                            hh_account_id=acc.id,
-                        ).pack(),
-                    )
-                ]
-            )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-back"),
-                    callback_data=AutoparseCallback(action="list").pack(),
-                )
-            ]
-        )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-    else:
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=i18n.get("feed-btn-start"),
-                        callback_data=FeedCallback(
-                            action="start", session_id=feed_session.id
-                        ).pack(),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=i18n.get("feed-btn-stop"),
-                        callback_data=FeedCallback(
-                            action="stop", session_id=feed_session.id
-                        ).pack(),
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=i18n.get("btn-back"),
-                        callback_data=AutoparseCallback(action="list").pack(),
-                    )
-                ],
-            ]
-        )
+    text, keyboard = build_feed_stats_card(
+        vacancy_title=title,
+        vacancies=vacancies,
+        feed_session_id=feed_session_id,
+        locale=i18n.locale,
+        linked_accounts=hh_accounts,
+        back_action="list",
+    )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             text,
@@ -776,7 +731,7 @@ async def company_detail(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
     if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
@@ -796,8 +751,8 @@ async def sync_negotiations_with_app(
     from src.core.celery_async import run_celery_task
     from src.worker.tasks.negotiations_sync import sync_negotiations_from_hh_task
 
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     hh_id = await _resolve_hh_linked_account_for_negotiations_sync(session, user, company)
@@ -827,8 +782,8 @@ async def edit_keywords_start(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
@@ -865,38 +820,23 @@ async def edit_keywords_receive(
     from src.repositories.autoparse import AutoparseCompanyRepository
 
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(company_id, user.id)
+    if not company:
         await message.answer(i18n.get("autoparse-not-found"))
         return
 
     await repo.update(company, keyword_filter=message.text.strip())
     await session.commit()
 
-    count = await ap_service.get_vacancy_count(session, company.id)
-    show_run_now = await _should_show_run_now(session, company, user)
-    ar_task_on = await autorespond_globally_enabled(session)
-    show_sync = await _user_has_hh_browser_session(session, user.id)
-    text = ap_service.format_company_detail(
-        company,
-        count,
-        i18n,
-        autorespond_global=True,
-        autorespond_task_enabled=ar_task_on,
-    )
     with contextlib.suppress(TelegramBadRequest):
-        await message.bot.edit_message_text(
-            text,
+        await _edit_company_detail_message_by_id(
+            bot=message.bot,
             chat_id=message.chat.id,
             message_id=detail_message_id,
-            reply_markup=autoparse_detail_keyboard(
-                company,
-                i18n,
-                show_run_now=show_run_now,
-                show_show_now=(count > 0),
-                show_autorespond=True,
-                show_sync_negotiations=show_sync,
-            ),
+            user=user,
+            session=session,
+            i18n=i18n,
+            company=company,
         )
     await message.answer(i18n.get("autoparse-edit-keywords-saved"))
 
@@ -913,8 +853,8 @@ async def edit_search_url_start(
     state: FSMContext,
     i18n: I18nContext,
 ) -> None:
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if not company or company.user_id != user.id:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
@@ -956,8 +896,8 @@ async def edit_search_url_receive(
     from src.repositories.autoparse import AutoparseCompanyRepository
 
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(company_id)
-    if not company or company.user_id != user.id:
+    company = await repo.get_by_id_for_user(company_id, user.id)
+    if not company:
         await state.clear()
         await message.answer(i18n.get("autoparse-not-found"))
         return
@@ -966,30 +906,15 @@ async def edit_search_url_receive(
     await session.commit()
     await state.clear()
 
-    count = await ap_service.get_vacancy_count(session, company.id)
-    show_run_now = await _should_show_run_now(session, company, user)
-    ar_task_on = await autorespond_globally_enabled(session)
-    show_sync = await _user_has_hh_browser_session(session, user.id)
-    text = ap_service.format_company_detail(
-        company,
-        count,
-        i18n,
-        autorespond_global=True,
-        autorespond_task_enabled=ar_task_on,
-    )
     with contextlib.suppress(TelegramBadRequest):
-        await message.bot.edit_message_text(
-            text,
+        await _edit_company_detail_message_by_id(
+            bot=message.bot,
             chat_id=message.chat.id,
             message_id=detail_message_id,
-            reply_markup=autoparse_detail_keyboard(
-                company,
-                i18n,
-                show_run_now=show_run_now,
-                show_show_now=(count > 0),
-                show_autorespond=True,
-                show_sync_negotiations=show_sync,
-            ),
+            user=user,
+            session=session,
+            i18n=i18n,
+            company=company,
         )
     await message.answer(i18n.get("autoparse-edit-search-url-saved"))
 
@@ -1005,37 +930,17 @@ async def toggle_company(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    new_state = await ap_service.toggle_autoparse_company(session, callback_data.company_id)
+    company = await ap_service.toggle_autoparse_company(session, callback_data.company_id, user.id)
+    if not company:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     msg = (
-        i18n.get("autoparse-toggle-enabled") if new_state else i18n.get("autoparse-toggle-disabled")
+        i18n.get("autoparse-toggle-enabled")
+        if company.is_enabled
+        else i18n.get("autoparse-toggle-disabled")
     )
     await callback.answer(msg, show_alert=True)
-
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
-    if company:
-        count = await ap_service.get_vacancy_count(session, company.id)
-        show_run_now = await _should_show_run_now(session, company, user)
-        ar_task_on = await autorespond_globally_enabled(session)
-        show_sync = await _user_has_hh_browser_session(session, user.id)
-        text = ap_service.format_company_detail(
-            company,
-            count,
-            i18n,
-            autorespond_global=True,
-            autorespond_task_enabled=ar_task_on,
-        )
-        with contextlib.suppress(TelegramBadRequest):
-            await callback.message.edit_text(
-                text,
-                reply_markup=autoparse_detail_keyboard(
-                    company,
-                    i18n,
-                    show_run_now=show_run_now,
-                    show_show_now=(count > 0),
-                    show_autorespond=True,
-                    show_sync_negotiations=show_sync,
-                ),
-            )
+    await _render_company_detail_message(callback.message, user, session, i18n, company)
 
 
 # ── Run now ─────────────────────────────────────────────────────────
@@ -1052,65 +957,62 @@ async def run_now(
     from src.core.celery_async import run_celery_task
     from src.worker.tasks.autoparse import run_autoparse_company
 
-    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
     if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    if not await _should_show_run_now(session, company, user):
-        count = await ap_service.get_vacancy_count(session, company.id)
-        ar_task_on = await autorespond_globally_enabled(session)
-        show_sync = await _user_has_hh_browser_session(session, user.id)
-        text = ap_service.format_company_detail(
-            company,
-            count,
-            i18n,
-            autorespond_global=True,
-            autorespond_task_enabled=ar_task_on,
-        )
+    view = await build_company_detail_view(
+        session,
+        company=company,
+        user=user,
+        i18n=i18n,
+        autorespond_global=True,
+        autorespond_task_enabled=await autorespond_globally_enabled(session),
+    )
+    if not view.show_run_now:
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
-                text,
+                view.text,
                 reply_markup=autoparse_detail_keyboard(
                     company,
                     i18n,
                     show_run_now=False,
-                    show_show_now=(count > 0),
+                    show_show_now=view.show_show_now,
                     show_autorespond=True,
-                    show_sync_negotiations=show_sync,
+                    show_sync_negotiations=view.show_sync_negotiations,
                 ),
+                parse_mode="HTML",
             )
         await callback.answer(i18n.get("autoparse-run-already-running"), show_alert=True)
         return
 
-    company = await ap_service.mark_parsing_started(session, company.id)
+    company = await ap_service.mark_parsing_started(session, company.id, user.id)
     if company is None:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
     await run_celery_task(run_autoparse_company, company.id, notify_user_id=user.id)
     await callback.answer(i18n.get("autoparse-run-started"), show_alert=True)
-
-    count = await ap_service.get_vacancy_count(session, company.id)
-    ar_task_on = await autorespond_globally_enabled(session)
-    show_sync = await _user_has_hh_browser_session(session, user.id)
-    text = ap_service.format_company_detail(
-        company,
-        count,
-        i18n,
+    refreshed_view = await build_company_detail_view(
+        session,
+        company=company,
+        user=user,
+        i18n=i18n,
         autorespond_global=True,
-        autorespond_task_enabled=ar_task_on,
+        autorespond_task_enabled=await autorespond_globally_enabled(session),
     )
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
-            text,
+            refreshed_view.text,
             reply_markup=autoparse_detail_keyboard(
                 company,
                 i18n,
                 show_run_now=False,
-                show_show_now=(count > 0),
+                show_show_now=refreshed_view.show_show_now,
                 show_autorespond=True,
-                show_sync_negotiations=show_sync,
+                show_sync_negotiations=refreshed_view.show_sync_negotiations,
             ),
+            parse_mode="HTML",
         )
 
 
@@ -1122,32 +1024,22 @@ async def show_new_vacancies_now(
     callback: CallbackQuery,
     callback_data: AutoparseCallback,
     user: User,
+    session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.core.celery_async import normalize_celery_task_id, run_celery_task, run_sync_in_thread
-    from src.core.redis import create_async_redis
-    from src.worker.app import celery_app
-    from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX, deliver_autoparse_results
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.autoparse import deliver_autoparse_results
 
-    task_key = f"{_DELIVER_TASK_PREFIX}{callback_data.company_id}:{user.id}"
-    redis = create_async_redis()
-    try:
-        scheduled_id = await redis.get(task_key)
-        if scheduled_id:
-            tid = normalize_celery_task_id(scheduled_id)
-            if tid:
-                await run_sync_in_thread(
-                    celery_app.control.revoke,
-                    tid,
-                    terminate=False,
-                )
-            await redis.delete(task_key)
-    finally:
-        await redis.aclose()
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    await revoke_scheduled_delivery_async(company.id, user.id)
 
     await run_celery_task(
         deliver_autoparse_results,
-        callback_data.company_id,
+        company.id,
         user.id,
         True,
     )
@@ -1179,7 +1071,10 @@ async def delete_confirmed(
     user: User,
     i18n: I18nContext,
 ) -> None:
-    await ap_service.soft_delete_autoparse_company(session, callback_data.company_id, user.id)
+    deleted = await ap_service.soft_delete_autoparse_company(session, callback_data.company_id, user.id)
+    if not deleted:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(
             i18n.get("autoparse-deleted"),
@@ -1209,10 +1104,11 @@ async def download_menu(
 async def download_file(
     callback: CallbackQuery,
     callback_data: AutoparseDownloadCallback,
+    user: User,
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    vacancies = await ap_service.get_all_vacancies(session, callback_data.company_id)
+    vacancies = await ap_service.get_all_vacancies(session, callback_data.company_id, user.id)
     if not vacancies:
         await callback.answer(i18n.get("autoparse-empty-list"), show_alert=True)
         return

@@ -179,7 +179,7 @@ async def _generate_summary_async(
         for e in raw_experiences
     ]
 
-    from src.bot.modules.autoparse.services import derive_tech_stack_from_experiences
+    from src.services.autoparse_profile import derive_tech_stack_from_experiences
 
     tech_stack = derive_tech_stack_from_experiences(raw_experiences)
 

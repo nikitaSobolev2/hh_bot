@@ -258,7 +258,7 @@ async def test_generate_summary_retries_once_when_first_invalid(mock_session_fac
             return_value=mock_vs_repo,
         ),
         patch(
-            "src.bot.modules.autoparse.services.derive_tech_stack_from_experiences",
+            "src.services.autoparse_profile.derive_tech_stack_from_experiences",
             return_value=["Python"],
         ),
         patch("src.services.ai.client.AIClient") as mock_ai_cls,
@@ -324,7 +324,7 @@ async def test_generate_summary_logs_warning_when_both_outputs_invalid(
             return_value=mock_vs_repo,
         ),
         patch(
-            "src.bot.modules.autoparse.services.derive_tech_stack_from_experiences",
+            "src.services.autoparse_profile.derive_tech_stack_from_experiences",
             return_value=["Py"],
         ),
         patch("src.services.ai.client.AIClient") as mock_ai_cls,

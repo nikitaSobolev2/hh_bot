@@ -319,6 +319,7 @@ class TestDeliverLastDeliveredAt:
 
         company_repo = MagicMock()
         company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.get_by_id_for_user = AsyncMock(return_value=company)
         company_repo.update = AsyncMock()
 
         vacancy_repo = MagicMock()
@@ -446,6 +447,83 @@ class TestDeliverLastDeliveredAt:
         vacancy_repo.get_by_company.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_passes_configured_min_compatibility_to_delivery_queries(self):
+        user = self._make_user()
+        user.autoparse_settings = {"min_compatibility_percent": 73}
+        company = self._make_company()
+        queued_vacancy = self._make_vacancy()
+        queued_vacancy.id = 5
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
+            user=user,
+            company=company,
+            vacancies=[],
+        )
+        feed_repo.get_all_seen_vacancy_ids = AsyncMock(return_value={5})
+        vacancy_repo.get_by_ids = AsyncMock(return_value=[queued_vacancy])
+
+        with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+            patch(
+                "src.services.autoparse_feed_cards.create_feed_session",
+                new_callable=AsyncMock,
+                return_value=42,
+            ),
+            patch(
+                "src.services.autoparse_feed_cards.send_feed_stats_card",
+                new_callable=AsyncMock,
+            ),
+            _patch_hh_classify_single(),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        assert result == {"status": "delivered", "count": 1}
+        assert vacancy_repo.get_new_since.call_args.args[2] == 73
+        assert vacancy_repo.get_by_ids.call_args.args == ([5], 73)
+
+    @pytest.mark.asyncio
+    async def test_returns_company_not_found_when_company_not_owned_by_user(self):
+        user = self._make_user()
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=user)
+        company_repo = MagicMock()
+        company_repo.get_by_id_for_user = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+        ):
+            result = await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 99, 1, force_now=True
+            )
+
+        assert result == {"status": "company_not_found"}
+
+    @pytest.mark.asyncio
     async def test_returns_no_new_vacancies_when_get_new_since_is_empty(self):
         user = self._make_user()
         company = self._make_company()
@@ -555,12 +633,12 @@ class TestDeliverLastDeliveredAt:
                 return_value=feed_repo,
             ),
             patch(
-                "src.worker.tasks.autoparse._create_feed_session",
+                "src.services.autoparse_feed_cards.create_feed_session",
                 new_callable=AsyncMock,
                 return_value=42,
             ),
             patch(
-                "src.worker.tasks.autoparse._send_feed_stats_card",
+                "src.services.autoparse_feed_cards.send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
             _patch_hh_classify_single(),
@@ -660,7 +738,7 @@ class TestDeliverDedupe:
         with (
             patch("src.repositories.user.UserRepository", return_value=user_repo),
             patch("src.worker.tasks.autoparse._redis_client", return_value=fake_redis),
-            patch("src.worker.tasks.autoparse._send_feed_stats_card", AsyncMock()) as send_card,
+            patch("src.services.autoparse_feed_cards.send_feed_stats_card", AsyncMock()) as send_card,
         ):
             result = await _deliver_results_async(
                 self._make_session_factory(MagicMock()), task, 1, 1, force_now=True
@@ -822,6 +900,7 @@ class TestDeliverSeenIdsFilter:
         user_repo.get_by_id = AsyncMock(return_value=user)
         company_repo = MagicMock()
         company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.get_by_id_for_user = AsyncMock(return_value=company)
         company_repo.update = AsyncMock()
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(return_value=[reacted_vacancy, new_vacancy])
@@ -849,12 +928,12 @@ class TestDeliverSeenIdsFilter:
                 return_value=feed_repo,
             ),
             patch(
-                "src.worker.tasks.autoparse._create_feed_session",
+                "src.services.autoparse_feed_cards.create_feed_session",
                 new_callable=AsyncMock,
                 return_value=99,
             ) as mock_create,
             patch(
-                "src.worker.tasks.autoparse._send_feed_stats_card",
+                "src.services.autoparse_feed_cards.send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
             _patch_hh_classify_single(),
@@ -881,6 +960,7 @@ class TestDeliverSeenIdsFilter:
         user_repo.get_by_id = AsyncMock(return_value=user)
         company_repo = MagicMock()
         company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.get_by_id_for_user = AsyncMock(return_value=company)
         company_repo.update = AsyncMock()
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(
@@ -910,12 +990,12 @@ class TestDeliverSeenIdsFilter:
                 return_value=feed_repo,
             ),
             patch(
-                "src.worker.tasks.autoparse._create_feed_session",
+                "src.services.autoparse_feed_cards.create_feed_session",
                 new_callable=AsyncMock,
                 return_value=99,
             ) as mock_create,
             patch(
-                "src.worker.tasks.autoparse._send_feed_stats_card",
+                "src.services.autoparse_feed_cards.send_feed_stats_card",
                 new_callable=AsyncMock,
             ),
             _patch_hh_classify_single(),
@@ -939,6 +1019,7 @@ class TestDeliverSeenIdsFilter:
         user_repo.get_by_id = AsyncMock(return_value=user)
         company_repo = MagicMock()
         company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.get_by_id_for_user = AsyncMock(return_value=company)
         company_repo.update = AsyncMock()
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(return_value=[vacancy])
@@ -982,6 +1063,7 @@ class TestDeliverSeenIdsFilter:
         user_repo.get_by_id = AsyncMock(return_value=user)
         company_repo = MagicMock()
         company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.get_by_id_for_user = AsyncMock(return_value=company)
         vacancy_repo = MagicMock()
         vacancy_repo.get_new_since = AsyncMock(return_value=[])
         vacancy_repo.get_by_ids = AsyncMock(return_value=[])

@@ -1,4 +1,4 @@
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.vacancy_feed import VacancyFeedSession
@@ -69,6 +69,20 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
             liked.update(ids)
         return liked
 
+    async def get_liked_vacancy_page_for_user(
+        self,
+        user_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 15,
+    ) -> tuple[list[int], int]:
+        return await self._get_distinct_user_reaction_page(
+            user_id,
+            VacancyFeedSession.liked_ids,
+            offset=offset,
+            limit=limit,
+        )
+
     async def get_all_disliked_vacancy_ids_for_user(self, user_id: int) -> set[int]:
         """Return unique vacancy IDs the user has disliked across all autoparse companies."""
         stmt = select(VacancyFeedSession.disliked_ids).where(
@@ -79,6 +93,20 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
         for (ids,) in result:
             disliked.update(ids)
         return disliked
+
+    async def get_disliked_vacancy_page_for_user(
+        self,
+        user_id: int,
+        *,
+        offset: int = 0,
+        limit: int = 15,
+    ) -> tuple[list[int], int]:
+        return await self._get_distinct_user_reaction_page(
+            user_id,
+            VacancyFeedSession.disliked_ids,
+            offset=offset,
+            limit=limit,
+        )
 
     async def get_liked_vacancy_ids_for_user_company(
         self, user_id: int, company_id: int
@@ -133,3 +161,28 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
             VacancyFeedSession.autoparse_company_id == company_id,
         )
         await self._session.execute(stmt)
+
+    async def _get_distinct_user_reaction_page(
+        self,
+        user_id: int,
+        reaction_column,
+        *,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[int], int]:
+        reaction_ids = (
+            select(func.unnest(reaction_column).label("vacancy_id"))
+            .where(VacancyFeedSession.user_id == user_id)
+            .subquery()
+        )
+        total_stmt = select(func.count(distinct(reaction_ids.c.vacancy_id)))
+        page_stmt = (
+            select(reaction_ids.c.vacancy_id)
+            .distinct()
+            .order_by(reaction_ids.c.vacancy_id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        total_result = await self._session.execute(total_stmt)
+        page_result = await self._session.execute(page_stmt)
+        return list(page_result.scalars().all()), int(total_result.scalar() or 0)

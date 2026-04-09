@@ -26,6 +26,7 @@ async def test_soft_delete_revokes_delivery_when_user_id_provided():
     """soft_delete_autoparse_company with user_id calls _revoke_scheduled_delivery_async."""
     mock_session = AsyncMock()
     mock_repo = AsyncMock()
+    mock_repo.get_by_id_for_user = AsyncMock(return_value=MagicMock())
     mock_repo.soft_delete = AsyncMock()
     mock_session.commit = AsyncMock()
 
@@ -43,7 +44,7 @@ async def test_soft_delete_revokes_delivery_when_user_id_provided():
 
         await soft_delete_autoparse_company(mock_session, 42, user_id=7)
 
-        mock_repo.soft_delete.assert_called_once_with(42)
+        mock_repo.soft_delete.assert_called_once_with(42, 7)
         mock_revoke.assert_called_once_with(42, 7)
 
 
@@ -52,6 +53,7 @@ async def test_soft_delete_no_revoke_when_no_user_id():
     """soft_delete_autoparse_company without user_id does NOT call revoke."""
     mock_session = AsyncMock()
     mock_repo = AsyncMock()
+    mock_repo.get_by_id = AsyncMock(return_value=MagicMock())
     mock_repo.soft_delete = AsyncMock()
 
     with (
@@ -68,4 +70,5 @@ async def test_soft_delete_no_revoke_when_no_user_id():
 
         await soft_delete_autoparse_company(mock_session, 42)
 
+        mock_repo.soft_delete.assert_called_once_with(42, None)
         mock_revoke.assert_not_called()

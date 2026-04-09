@@ -11,6 +11,7 @@ from src.bot.modules.autoparse.services import (
     reset_company_vacancy_pool,
 )
 from src.models.autoparse import AutoparsedVacancy
+from src.services.autoparse_profile import derive_tech_stack_from_experiences
 
 
 def _make_vacancy(**kwargs) -> AutoparsedVacancy:
@@ -45,6 +46,8 @@ class TestGenerateLinks:
         v2 = _make_vacancy(hh_vacancy_id="2", url="https://hh.ru/vacancy/2")
         result = generate_links_txt([v1, v2])
         assert result.count("\n") == 1
+        assert "https://hh.ru/vacancy/1" in result
+        assert "https://hh.ru/vacancy/2" in result
 
 
 class TestGenerateSummary:
@@ -198,3 +201,54 @@ class TestResetCompanyVacancyPool:
         vacancy_repo.delete_all_by_company.assert_awaited_once_with(7)
         company_repo.update.assert_awaited_once_with(company, last_delivered_at=None)
         session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_company_missing(self):
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=None)
+
+        vacancy_repo = MagicMock()
+        vacancy_repo.delete_all_by_company = AsyncMock()
+        feed_repo = MagicMock()
+        feed_repo.delete_all_for_company = AsyncMock()
+        session = MagicMock()
+        session.commit = AsyncMock()
+
+        with (
+            patch(
+                "src.bot.modules.autoparse.services.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.bot.modules.autoparse.services.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.bot.modules.autoparse.services.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+        ):
+            result = await reset_company_vacancy_pool(session, company_id=7)
+
+        assert result is None
+        feed_repo.delete_all_for_company.assert_not_called()
+        vacancy_repo.delete_all_by_company.assert_not_called()
+        session.commit.assert_not_called()
+
+
+class TestDeriveTechStackFromExperiences:
+    def test_deduplicates_case_insensitively(self):
+        exp1 = MagicMock(stack="Python, Django")
+        exp2 = MagicMock(stack="python, FastAPI")
+
+        assert derive_tech_stack_from_experiences([exp1, exp2]) == [
+            "Python",
+            "Django",
+            "FastAPI",
+        ]
+
+    def test_ignores_empty_stack_entries(self):
+        exp1 = MagicMock(stack="Python, ,  ")
+        exp2 = MagicMock(stack="")
+
+        assert derive_tech_stack_from_experiences([exp1, exp2]) == ["Python"]

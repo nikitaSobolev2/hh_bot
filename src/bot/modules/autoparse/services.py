@@ -3,19 +3,38 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.autoparse import AutoparseCompany, AutoparsedVacancy
-from src.models.work_experience import UserWorkExperience
 from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
 from src.repositories.user import UserRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+from src.services.autoparse_delivery import revoke_scheduled_delivery_async
+from src.services.autoparse_profile import derive_tech_stack_from_experiences
+from src.services.autoparse_use_cases import format_company_detail
 
-if TYPE_CHECKING:
-    from src.core.i18n import I18nContext
-
+__all__ = (
+    "COVER_LETTER_STYLES",
+    "DEFAULT_COVER_LETTER_STYLE",
+    "create_autoparse_company",
+    "derive_tech_stack_from_experiences",
+    "format_company_detail",
+    "generate_full_md",
+    "generate_links_txt",
+    "generate_summary_txt",
+    "get_all_vacancies",
+    "get_autoparse_detail",
+    "get_reacted_vacancy_ids_for_user",
+    "get_user_autoparse_companies",
+    "get_user_autoparse_settings",
+    "get_vacancy_count",
+    "mark_parsing_started",
+    "reset_company_vacancy_pool",
+    "soft_delete_autoparse_company",
+    "toggle_autoparse_company",
+    "update_user_autoparse_settings",
+)
 
 async def create_autoparse_company(
     session: AsyncSession,
@@ -52,50 +71,47 @@ async def get_user_autoparse_companies(
     return companies, total
 
 
-async def toggle_autoparse_company(session: AsyncSession, company_id: int) -> bool:
+async def toggle_autoparse_company(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int | None = None,
+) -> AutoparseCompany | None:
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(company_id)
+    company = (
+        await repo.get_by_id_for_user(company_id, user_id)
+        if user_id is not None
+        else await repo.get_by_id(company_id)
+    )
     if not company:
-        return False
-    new_state = await repo.toggle(company)
+        return None
+    await repo.toggle(company)
     await session.commit()
-    return new_state
+    return company
 
 
 async def soft_delete_autoparse_company(
     session: AsyncSession,
     company_id: int,
     user_id: int | None = None,
-) -> None:
+) -> bool:
     repo = AutoparseCompanyRepository(session)
-    await repo.soft_delete(company_id)
+    company = (
+        await repo.get_by_id_for_user(company_id, user_id)
+        if user_id is not None
+        else await repo.get_by_id(company_id)
+    )
+    if not company:
+        return False
+    await repo.soft_delete(company_id, user_id)
     await session.commit()
 
     if user_id is not None:
         await _revoke_scheduled_delivery_async(company_id, user_id)
+    return True
 
 
 async def _revoke_scheduled_delivery_async(company_id: int, user_id: int) -> None:
-    from src.core.celery_async import normalize_celery_task_id, run_sync_in_thread
-    from src.core.redis import create_async_redis
-    from src.worker.app import celery_app
-    from src.worker.tasks.autoparse import _DELIVER_TASK_PREFIX
-
-    task_key = f"{_DELIVER_TASK_PREFIX}{company_id}:{user_id}"
-    redis = create_async_redis()
-    try:
-        scheduled_id = await redis.get(task_key)
-        if scheduled_id:
-            tid = normalize_celery_task_id(scheduled_id)
-            if tid:
-                await run_sync_in_thread(
-                    celery_app.control.revoke,
-                    tid,
-                    terminate=False,
-                )
-            await redis.delete(task_key)
-    finally:
-        await redis.aclose()
+    await revoke_scheduled_delivery_async(company_id, user_id)
 
 
 async def get_reacted_vacancy_ids_for_user(session: AsyncSession, user_id: int) -> set[int]:
@@ -106,14 +122,28 @@ async def get_reacted_vacancy_ids_for_user(session: AsyncSession, user_id: int) 
     return liked | disliked
 
 
-async def get_autoparse_detail(session: AsyncSession, company_id: int) -> AutoparseCompany | None:
+async def get_autoparse_detail(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int | None = None,
+) -> AutoparseCompany | None:
     repo = AutoparseCompanyRepository(session)
-    return await repo.get_by_id(company_id)
+    if user_id is None:
+        return await repo.get_by_id(company_id)
+    return await repo.get_by_id_for_user(company_id, user_id)
 
 
-async def mark_parsing_started(session: AsyncSession, company_id: int) -> AutoparseCompany | None:
+async def mark_parsing_started(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int | None = None,
+) -> AutoparseCompany | None:
     repo = AutoparseCompanyRepository(session)
-    company = await repo.get_by_id(company_id)
+    company = (
+        await repo.get_by_id_for_user(company_id, user_id)
+        if user_id is not None
+        else await repo.get_by_id(company_id)
+    )
     if company:
         await repo.update(company, last_parsed_at=datetime.now(UTC).replace(tzinfo=None))
         await session.commit()
@@ -123,9 +153,14 @@ async def mark_parsing_started(session: AsyncSession, company_id: int) -> Autopa
 async def reset_company_vacancy_pool(
     session: AsyncSession,
     company_id: int,
+    user_id: int | None = None,
 ) -> AutoparseCompany | None:
     company_repo = AutoparseCompanyRepository(session)
-    company = await company_repo.get_by_id(company_id)
+    company = (
+        await company_repo.get_by_id_for_user(company_id, user_id)
+        if user_id is not None
+        else await company_repo.get_by_id(company_id)
+    )
     if not company:
         return None
 
@@ -143,65 +178,18 @@ async def get_vacancy_count(session: AsyncSession, company_id: int) -> int:
     return await repo.count_by_company(company_id)
 
 
-async def get_all_vacancies(session: AsyncSession, company_id: int) -> list[AutoparsedVacancy]:
+async def get_all_vacancies(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int | None = None,
+) -> list[AutoparsedVacancy]:
+    if user_id is not None:
+        company_repo = AutoparseCompanyRepository(session)
+        company = await company_repo.get_by_id_for_user(company_id, user_id)
+        if company is None:
+            return []
     repo = AutoparsedVacancyRepository(session)
     return await repo.get_all_by_company(company_id)
-
-
-def format_company_detail(
-    company: AutoparseCompany,
-    vacancies_count: int,
-    i18n: I18nContext,
-    *,
-    autorespond_global: bool = False,
-    autorespond_task_enabled: bool | None = None,
-) -> str:
-    status = (
-        i18n.get("autoparse-status-enabled")
-        if company.is_enabled
-        else i18n.get("autoparse-status-disabled")
-    )
-    last_run = company.last_parsed_at.strftime("%Y-%m-%d %H:%M") if company.last_parsed_at else "—"
-    url_label = i18n.get("autoparse-detail-url")
-    lines = [
-        f"<b>{i18n.get('autoparse-detail-title')}</b>",
-        "",
-        f"<b>{company.vacancy_title}</b>",
-        f"{i18n.get('autoparse-detail-status')}: {status}",
-        f"{url_label}: <a href='{company.search_url}'>{url_label}</a>",
-        f"{i18n.get('autoparse-detail-keywords')}: {company.keyword_filter or '—'}",
-        f"{i18n.get('autoparse-detail-skills')}: {company.skills or '—'}",
-        "",
-        f"{i18n.get('autoparse-detail-metrics')}:",
-        f"  {i18n.get('autoparse-detail-runs')}: {company.total_runs}",
-        f"  {i18n.get('autoparse-detail-vacancies')}: {vacancies_count}",
-        f"  {i18n.get('autoparse-detail-last-run')}: {last_run}",
-    ]
-    if autorespond_global:
-        ar_on = i18n.get("yes") if company.autorespond_enabled else i18n.get("no")
-        mode_key = (
-            "autorespond-mode-title-only"
-            if company.autorespond_keyword_mode == "title_only"
-            else "autorespond-mode-title-keywords"
-        )
-        lim = company.autorespond_max_per_run
-        lim_s = i18n.get("autorespond-limit-all") if lim < 0 else str(lim)
-        fb = f"{company.autorespond_resume_id[:8]}…" if company.autorespond_resume_id else "—"
-        lines.extend(
-            [
-                "",
-                f"<b>{i18n.get('autorespond-section-title')}</b>",
-                f"{i18n.get('autorespond-detail-enabled')}: {ar_on}",
-                f"{i18n.get('autorespond-detail-threshold')}: {company.autorespond_min_compat}%",
-                f"{i18n.get('autorespond-detail-mode')}: {i18n.get(mode_key)}",
-                f"{i18n.get('autorespond-detail-limit')}: {lim_s}",
-                f"{i18n.get('autorespond-detail-resume-explain')}",
-                f"{i18n.get('autorespond-detail-resume-fallback-id', fallback=fb)}",
-            ]
-        )
-        if autorespond_task_enabled is False:
-            lines.append(i18n.get("autorespond-worker-disabled-hint"))
-    return "\n".join(lines)
 
 
 def generate_links_txt(vacancies: list[AutoparsedVacancy]) -> str:
@@ -288,13 +276,3 @@ async def update_user_autoparse_settings(
     await session.commit()
 
 
-def derive_tech_stack_from_experiences(experiences: list[UserWorkExperience]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for exp in experiences:
-        for tech in exp.stack.split(","):
-            normalized = tech.strip()
-            if normalized and normalized.lower() not in seen:
-                seen.add(normalized.lower())
-                result.append(normalized)
-    return result

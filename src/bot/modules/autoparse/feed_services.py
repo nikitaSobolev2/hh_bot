@@ -249,16 +249,9 @@ def build_stats_message(
     avg_compat: float | None,
     locale: str = "ru",
 ) -> str:
-    lines = [
-        f"📥 <b>{html.escape(vacancy_title)}</b>",
-        "",
-        get_text("feed-stats-count", locale, count=count),
-    ]
-    if avg_compat is not None:
-        lines.append(get_text("feed-stats-avg-compat", locale, avg=f"{avg_compat:.0f}"))
-    lines.append("")
-    lines.append(get_text("feed-stats-hint", locale))
-    return "\n".join(lines)
+    from src.services.autoparse_feed_cards import build_stats_message as shared_build_stats_message
+
+    return shared_build_stats_message(vacancy_title, count, avg_compat, locale)
 
 
 async def employer_questions_pending_for_feed(
