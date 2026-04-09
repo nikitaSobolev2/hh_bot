@@ -616,6 +616,7 @@ async def tick_autorespond_bar(
     title: str | None = None,
     celery_task_id: str | None = None,
     bar_index: int = 0,
+    finish_progress_task: bool = True,
 ) -> bool:
     """Increment done counter, refresh bar, finish pinned progress when done >= total.
 
@@ -673,7 +674,10 @@ async def tick_autorespond_bar(
                 done=done,
                 total=total,
                 failed_ui=failed_n,
+                finish_progress_task=finish_progress_task,
             )
+            if not finish_progress_task:
+                return True
             finish_note = None
             if failed_n > 0:
                 finish_note = get_text(

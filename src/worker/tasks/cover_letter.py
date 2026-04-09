@@ -499,6 +499,9 @@ async def _generate_cover_letter_async(
                         footer_failed_line=None,
                         title=ap.get("title"),
                         celery_task_id=ap.get("celery_task_id"),
+                        finish_progress_task=bool(
+                            ap.get("finish_progress_task", True)
+                        ),
                     )
                 finally:
                     await tick_bot.session.close()

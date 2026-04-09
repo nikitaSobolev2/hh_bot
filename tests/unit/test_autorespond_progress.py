@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from types import ModuleType
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -127,8 +129,6 @@ def test_load_checkpoint_empty_items_returns_resume(monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.asyncio
 async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
-    from src.bot.modules.progress.handlers import _try_refresh_autorespond
-
     callback = MagicMock()
     callback.answer = AsyncMock()
     i18n = MagicMock()
@@ -139,7 +139,11 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
     tail = [{"autoparsed_vacancy_id": 1, "hh_vacancy_id": "9", "resume_id": "r", "vacancy_url": "https://hh.ru/vacancy/9"}]
     resume = {"user_id": 1, "chat_id": 2, "message_id": 0, "locale": "ru", "hh_linked_account_id": 3, "feed_session_id": 0, "cover_letter_style": "x", "cover_task_enabled": True, "silent_feed": True, "autorespond_progress": {}}
 
+    hh_ui_stub = ModuleType("src.worker.tasks.hh_ui_apply")
+    hh_ui_stub.apply_to_vacancies_batch_ui_task = SimpleNamespace()
+
     with (
+        patch.dict(sys.modules, {"src.worker.tasks.hh_ui_apply": hh_ui_stub}),
         patch(
             "src.bot.modules.progress.handlers.is_autorespond_cancelled_sync",
             return_value=False,
@@ -161,6 +165,8 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
             new_callable=AsyncMock,
         ) as mock_run,
     ):
+        from src.bot.modules.progress.handlers import _try_refresh_autorespond
+
         mock_run.return_value = MagicMock(id="new-celery-id")
         await _try_refresh_autorespond(
             callback, i18n, "autorespond:8:tid", 2, svc
@@ -174,8 +180,6 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
 @pytest.mark.asyncio
 async def test_refresh_autorespond_revokes_active_celery_task() -> None:
     """When a child batch is in flight, refresh terminates it before re-enqueueing."""
-    from src.bot.modules.progress.handlers import _try_refresh_autorespond
-
     callback = MagicMock()
     callback.answer = AsyncMock()
     i18n = MagicMock()
@@ -197,7 +201,11 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
         "autorespond_progress": {},
     }
 
+    hh_ui_stub = ModuleType("src.worker.tasks.hh_ui_apply")
+    hh_ui_stub.apply_to_vacancies_batch_ui_task = SimpleNamespace()
+
     with (
+        patch.dict(sys.modules, {"src.worker.tasks.hh_ui_apply": hh_ui_stub}),
         patch(
             "src.bot.modules.progress.handlers.is_autorespond_cancelled_sync",
             return_value=False,
@@ -230,6 +238,8 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
             new_callable=AsyncMock,
         ) as mock_run,
     ):
+        from src.bot.modules.progress.handlers import _try_refresh_autorespond
+
         mock_run.return_value = MagicMock(id="new-id")
         await _try_refresh_autorespond(
             callback, i18n, "autorespond:8:tid", 2, svc
@@ -241,3 +251,49 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
     assert sync_kw.get("terminate") is True
     mock_clear_active.assert_called_once_with(2, "autorespond:8:tid")
     mock_run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tick_autorespond_bar_does_not_finish_task_group_progress() -> None:
+    from src.services.autorespond_progress import tick_autorespond_bar
+
+    redis = MagicMock()
+    redis.incr = AsyncMock(return_value=3)
+    redis.expire = AsyncMock()
+    redis.get = AsyncMock(return_value="0")
+    redis.delete = AsyncMock()
+    redis.aclose = AsyncMock()
+
+    svc = MagicMock()
+    svc.update_bar = AsyncMock()
+    svc.update_footer = AsyncMock()
+    svc.finish_task = AsyncMock()
+
+    with (
+        patch(
+            "src.services.autorespond_progress.create_progress_redis",
+            return_value=redis,
+        ),
+        patch(
+            "src.services.autorespond_progress._rehydrate_autorespond_progress_task_if_missing",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_progress.ProgressService",
+            return_value=svc,
+        ),
+    ):
+        finished = await tick_autorespond_bar(
+            bot=MagicMock(),
+            chat_id=7,
+            task_key="taskgroup:abc",
+            total=3,
+            locale="en",
+            footer_failed_line="failed: 0",
+            finish_progress_task=False,
+        )
+
+    assert finished is True
+    svc.finish_task.assert_not_awaited()
+    redis.delete.assert_not_called()

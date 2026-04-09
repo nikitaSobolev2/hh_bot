@@ -385,15 +385,30 @@ async def handle_progress_cancel(
         state = json.loads(raw)
         celery_task_id = normalize_celery_task_id(state.get("celery_task_id"))
         child_celery_task_id = normalize_celery_task_id(state.get("child_celery_task_id"))
+        active_hh_ui_task_id = normalize_celery_task_id(
+            get_hh_ui_batch_active_sync(chat_id, task_key)
+        )
+        has_autorespond_children = bool(
+            active_hh_ui_task_id
+            or load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
+            or load_autorespond_ui_tail_sync(chat_id, task_key)
+        )
 
         if not celery_task_id:
-            if task_key.startswith("autorespond:"):
+            if task_key.startswith("autorespond:") or has_autorespond_children:
                 await set_autorespond_cancelled(chat_id, task_key)
                 await clear_autorespond_done_counter(chat_id, task_key)
                 await clear_autorespond_failed_counter(chat_id, task_key)
                 clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
                 clear_hh_ui_resume_envelope_sync(chat_id, task_key)
                 clear_autorespond_ui_tail_sync(chat_id, task_key)
+                if active_hh_ui_task_id:
+                    await run_sync_in_thread(
+                        celery_app.control.revoke,
+                        active_hh_ui_task_id,
+                        terminate=True,
+                    )
+                    clear_hh_ui_batch_active_sync(chat_id, task_key)
                 set_user_cancelled_sync(chat_id, task_key)
                 await svc.cancel_task(task_key)
                 await callback.answer(
@@ -409,9 +424,10 @@ async def handle_progress_cancel(
             )
             return
 
-        if task_key.startswith("autorespond:"):
+        if task_key.startswith("autorespond:") or has_autorespond_children:
             await set_autorespond_cancelled(chat_id, task_key)
             await clear_autorespond_done_counter(chat_id, task_key)
+            await clear_autorespond_failed_counter(chat_id, task_key)
             clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
             clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)
@@ -422,6 +438,13 @@ async def handle_progress_cancel(
                 child_celery_task_id,
                 terminate=True,
             )
+        if active_hh_ui_task_id and active_hh_ui_task_id != child_celery_task_id:
+            await run_sync_in_thread(
+                celery_app.control.revoke,
+                active_hh_ui_task_id,
+                terminate=True,
+            )
+            clear_hh_ui_batch_active_sync(chat_id, task_key)
         await run_sync_in_thread(
             celery_app.control.revoke,
             celery_task_id,

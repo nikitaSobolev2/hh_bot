@@ -171,9 +171,11 @@ async def _notify_negotiations_limit_exceeded(
     if not autorespond_progress or not autorespond_progress.get("task_key"):
         return
     task_key = str(autorespond_progress["task_key"])
+    finish_progress_task = bool(autorespond_progress.get("finish_progress_task", True))
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
         clear_autorespond_failed_counter,
+        clear_autorespond_ui_tail_sync,
         clear_hh_ui_batch_checkpoint_sync,
         clear_hh_ui_resume_envelope_sync,
         set_autorespond_cancelled,
@@ -183,6 +185,18 @@ async def _notify_negotiations_limit_exceeded(
     await set_autorespond_cancelled(chat_id, task_key)
     clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
     clear_hh_ui_resume_envelope_sync(chat_id, task_key)
+    clear_autorespond_ui_tail_sync(chat_id, task_key)
+    if not finish_progress_task:
+        redis = create_progress_redis()
+        try:
+            svc = ProgressService(bot, chat_id, redis, locale)
+            await svc.update_footer(
+                task_key,
+                [get_text("hh-ui-negotiations-limit-shortage", locale)],
+            )
+        finally:
+            await redis.aclose()
+        return
     await clear_autorespond_done_counter(chat_id, task_key)
     await clear_autorespond_failed_counter(chat_id, task_key)
     redis = create_progress_redis()
@@ -271,6 +285,9 @@ async def _finalize_batch_item_async(
                     title=autorespond_progress.get("title"),
                     celery_task_id=autorespond_progress.get("celery_task_id"),
                     bar_index=int(autorespond_progress.get("bar_index", 0)),
+                    finish_progress_task=bool(
+                        autorespond_progress.get("finish_progress_task", True)
+                    ),
                 )
         remaining = [
             x
@@ -333,10 +350,38 @@ async def _apply_batch_ui_async(
 
     bot = self.create_bot()
     cover_ai = None
+    send_error_screenshot_to_user = False
+    task_key = (
+        str(autorespond_progress["task_key"])
+        if autorespond_progress and autorespond_progress.get("task_key")
+        else None
+    )
+    item_by_vid: dict[int, dict] = {int(x["autoparsed_vacancy_id"]): x for x in items}
+    finalized_vids: set[int] = set()
+    resume_blob = (
+        hh_ui_batch_resume_payload(
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            locale=locale,
+            hh_linked_account_id=hh_linked_account_id,
+            feed_session_id=feed_session_id,
+            cover_letter_style=cover_letter_style,
+            cover_task_enabled=cover_task_enabled,
+            silent_feed=silent_feed,
+            autorespond_progress=autorespond_progress,
+        )
+        if task_key
+        else None
+    )
     try:
         from src.services.ai.client import AIClient
 
         cipher = HhTokenCipher(settings.hh_token_encryption_key)
+        if task_key:
+            save_hh_ui_batch_checkpoint_sync(
+                chat_id, task_key, list(items), resume=resume_blob
+            )
 
         async with session_factory() as session:
             acc_repo = HhLinkedAccountRepository(session)
@@ -347,21 +392,53 @@ async def _apply_batch_ui_async(
                     account_id=hh_linked_account_id,
                 )
                 for it in items:
-                    with contextlib.suppress(Exception):
-                        async with session_factory() as s2:
-                            await feed_services.remove_liked_on_apply_failure(
-                                s2, feed_session_id, int(it["autoparsed_vacancy_id"])
-                            )
+                    await _finalize_batch_item_async(
+                        self=self,
+                        session_factory=session_factory,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        locale=locale,
+                        hh_linked_account_id=hh_linked_account_id,
+                        feed_session_id=feed_session_id,
+                        it=it,
+                        result=ApplyResult(
+                            outcome=ApplyOutcome.ERROR,
+                            detail="no_browser_session",
+                        ),
+                        items=items,
+                        finalized_vids=finalized_vids,
+                        bot=bot,
+                        silent_feed=silent_feed,
+                        send_error_screenshot_to_user=send_error_screenshot_to_user,
+                        autorespond_progress=autorespond_progress,
+                        resume_blob=resume_blob,
+                    )
                 return {"status": "error", "reason": "no_browser_session"}
 
             storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
             if not storage:
                 for it in items:
-                    with contextlib.suppress(Exception):
-                        async with session_factory() as s2:
-                            await feed_services.remove_liked_on_apply_failure(
-                                s2, feed_session_id, int(it["autoparsed_vacancy_id"])
-                            )
+                    await _finalize_batch_item_async(
+                        self=self,
+                        session_factory=session_factory,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        locale=locale,
+                        hh_linked_account_id=hh_linked_account_id,
+                        feed_session_id=feed_session_id,
+                        it=it,
+                        result=ApplyResult(
+                            outcome=ApplyOutcome.ERROR,
+                            detail="decrypt_failed",
+                        ),
+                        items=items,
+                        finalized_vids=finalized_vids,
+                        bot=bot,
+                        silent_feed=silent_feed,
+                        send_error_screenshot_to_user=send_error_screenshot_to_user,
+                        autorespond_progress=autorespond_progress,
+                        resume_blob=resume_blob,
+                    )
                 return {"status": "error", "reason": "decrypt_failed"}
 
             settings_repo = AppSettingRepository(session)
@@ -387,34 +464,6 @@ async def _apply_batch_ui_async(
                 config = replace(config, attach_error_screenshot_bytes=True)
 
         from src.services.hh.vacancy_public import hh_vacancy_public_preflight
-
-        item_by_vid: dict[int, dict] = {int(x["autoparsed_vacancy_id"]): x for x in items}
-        finalized_vids: set[int] = set()
-        task_key = (
-            str(autorespond_progress["task_key"])
-            if autorespond_progress and autorespond_progress.get("task_key")
-            else None
-        )
-        resume_blob = (
-            hh_ui_batch_resume_payload(
-                user_id=user_id,
-                chat_id=chat_id,
-                message_id=message_id,
-                locale=locale,
-                hh_linked_account_id=hh_linked_account_id,
-                feed_session_id=feed_session_id,
-                cover_letter_style=cover_letter_style,
-                cover_task_enabled=cover_task_enabled,
-                silent_feed=silent_feed,
-                autorespond_progress=autorespond_progress,
-            )
-            if task_key
-            else None
-        )
-        if task_key:
-            save_hh_ui_batch_checkpoint_sync(
-                chat_id, task_key, list(items), resume=resume_blob
-            )
 
         if task_key and autorespond_progress:
             from src.services.autorespond_progress import (
@@ -1229,6 +1278,9 @@ async def _apply_ui_async(
                     title=autorespond_progress.get("title"),
                     celery_task_id=autorespond_progress.get("celery_task_id"),
                     bar_index=int(autorespond_progress.get("bar_index", 0)),
+                    finish_progress_task=bool(
+                        autorespond_progress.get("finish_progress_task", True)
+                    ),
                 )
         with contextlib.suppress(Exception):
             await bot.session.close()

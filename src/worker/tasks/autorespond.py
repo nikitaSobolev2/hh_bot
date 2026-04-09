@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from datetime import datetime
 
@@ -30,6 +31,35 @@ from src.worker.tasks.negotiations_sync import _sync_negotiations_async
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
+
+
+async def _wait_for_autorespond_work_units(
+    chat_id: int,
+    task_key: str,
+    total: int,
+) -> None:
+    """Wait until every autorespond work unit has ticked its shared progress counter."""
+    if chat_id <= 0 or not task_key or total <= 0:
+        return
+    from src.services.autorespond_progress import (
+        autorespond_cancel_redis_key,
+        autorespond_done_redis_key,
+    )
+    from src.services.progress_service import create_progress_redis
+
+    redis = create_progress_redis()
+    try:
+        done_key = autorespond_done_redis_key(chat_id, task_key)
+        cancel_key = autorespond_cancel_redis_key(chat_id, task_key)
+        while True:
+            done = int(await redis.get(done_key) or 0)
+            if done >= total:
+                return
+            if await redis.get(cancel_key):
+                return
+            await asyncio.sleep(0.5)
+    finally:
+        await redis.aclose()
 
 
 def _autorespond_filter_rejection_counts(
@@ -489,6 +519,7 @@ async def _run_autorespond_async(
                 "title": company.vacancy_title,
                 "celery_task_id": celery_id,
                 "bar_index": progress_bar_index,
+                "finish_progress_task": not is_task_group_pipeline,
             }
             if (task_key and progress and progress_bot and show_progress)
             else None
@@ -498,7 +529,7 @@ async def _run_autorespond_async(
         _autorespond_exit = "ok"
 
         try:
-            async def flush_ui_batch() -> None:
+            def flush_ui_batch() -> None:
                 nonlocal queued
                 if not ui_batch_buffer:
                     return
@@ -588,6 +619,9 @@ async def _run_autorespond_async(
                             title=ar_prog.get("title"),
                             celery_task_id=ar_prog.get("celery_task_id"),
                             bar_index=int(ar_prog.get("bar_index", 0)),
+                            finish_progress_task=bool(
+                                ar_prog.get("finish_progress_task", True)
+                            ),
                         )
                     continue
                 if preflight.requires_employer_test:
@@ -611,12 +645,15 @@ async def _run_autorespond_async(
                             title=ar_prog.get("title"),
                             celery_task_id=ar_prog.get("celery_task_id"),
                             bar_index=int(ar_prog.get("bar_index", 0)),
+                            finish_progress_task=bool(
+                                ar_prog.get("finish_progress_task", True)
+                            ),
                         )
                     continue
 
                 if settings.hh_ui_apply_enabled:
                     if not try_acquire_ui_apply_slot_sync(user.id):
-                        await flush_ui_batch()
+                        flush_ui_batch()
                         logger.info(
                             "autorespond_rate_limited",
                             company_id=company_id,
@@ -685,6 +722,9 @@ async def _run_autorespond_async(
                                 title=ar_prog.get("title"),
                                 celery_task_id=ar_prog.get("celery_task_id"),
                                 bar_index=int(ar_prog.get("bar_index", 0)),
+                                finish_progress_task=bool(
+                                    ar_prog.get("finish_progress_task", True)
+                                ),
                             )
                         continue
                     item_d = {
@@ -698,7 +738,7 @@ async def _run_autorespond_async(
                     if task_key and user.telegram_id:
                         save_autorespond_ui_tail_sync(user.telegram_id, task_key, list(queue_ui_items))
                     if len(ui_batch_buffer) >= settings.hh_ui_apply_batch_size:
-                        await flush_ui_batch()
+                        flush_ui_batch()
                 else:
                     if len(resume_items) > 1 and cover_ai_client is None:
                         cover_ai_client = AIClient()
@@ -723,6 +763,9 @@ async def _run_autorespond_async(
                                 title=ar_prog.get("title"),
                                 celery_task_id=ar_prog.get("celery_task_id"),
                                 bar_index=int(ar_prog.get("bar_index", 0)),
+                                finish_progress_task=bool(
+                                    ar_prog.get("finish_progress_task", True)
+                                ),
                             )
                         continue
                     letter_for_api: str | None = None
@@ -812,9 +855,12 @@ async def _run_autorespond_async(
                             title=ar_prog.get("title"),
                             celery_task_id=ar_prog.get("celery_task_id"),
                             bar_index=int(ar_prog.get("bar_index", 0)),
+                            finish_progress_task=bool(
+                                ar_prog.get("finish_progress_task", True)
+                            ),
                         )
 
-            await flush_ui_batch()
+            flush_ui_batch()
 
             # Do not clear hh_ui checkpoint / parent UI tail here: children may still be
             # applying in Playwright. Cleanup runs when ``tick_autorespond_bar`` reaches
@@ -832,7 +878,7 @@ async def _run_autorespond_async(
             raise
         finally:
             # If Celery soft-timeout or another error stops the loop mid-way, the last
-            # partial UI batch may never reach the normal ``await flush_ui_batch()`` — then
+            # partial UI batch may never reach the normal ``flush_ui_batch()`` — then
             # no hh_ui tasks run for those rows and the progress bar never reaches ``total``.
             if _autorespond_exit not in ("cancelled", "rate_limited"):
                 try:
@@ -844,7 +890,7 @@ async def _run_autorespond_async(
                             trigger=trigger,
                             pending=len(ui_batch_buffer),
                         )
-                    await flush_ui_batch()
+                    flush_ui_batch()
                 except Exception as exc:
                     logger.warning(
                         "autorespond_flush_ui_batch_finally_failed",
@@ -859,6 +905,29 @@ async def _run_autorespond_async(
             if progress_bot and pipeline_context is None:
                 with contextlib.suppress(Exception):
                     await progress_bot.session.close()
+
+        if (
+            is_task_group_pipeline
+            and task_key
+            and user.telegram_id
+            and work_units > 0
+        ):
+            if settings.hh_ui_apply_enabled:
+                await _wait_for_autorespond_work_units(
+                    user.telegram_id,
+                    task_key,
+                    work_units,
+                )
+            with contextlib.suppress(Exception):
+                await progress.set_nested_step_state(task_key, "applications", "done")
+            with contextlib.suppress(Exception):
+                await clear_autorespond_done_counter(user.telegram_id, task_key)
+            with contextlib.suppress(Exception):
+                await clear_autorespond_failed_counter(user.telegram_id, task_key)
+            with contextlib.suppress(Exception):
+                clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
+                clear_hh_ui_resume_envelope_sync(user.telegram_id, task_key)
+                clear_autorespond_ui_tail_sync(user.telegram_id, task_key)
 
         logger.info(
             "autorespond_completed",
