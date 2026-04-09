@@ -227,6 +227,30 @@ def confirm_reset_disliked_keyboard(company_id: int, i18n: I18nContext) -> Inlin
     )
 
 
+def confirm_rebuild_company_keyboard(
+    company_id: int,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.get("btn-confirm"),
+                    callback_data=AutoparseCallback(
+                        action="confirm_rebuild_pool", company_id=company_id
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
+                    text=i18n.get("btn-cancel"),
+                    callback_data=AutoparseCallback(
+                        action="detail", company_id=company_id
+                    ).pack(),
+                ),
+            ]
+        ]
+    )
+
+
 def liked_disliked_list_keyboard(
     action: str,
     page: int,
@@ -340,6 +364,14 @@ def autoparse_detail_keyboard(
                     action="reset_disliked_prompt", company_id=company.id
                 ).pack(),
             ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-btn-rebuild-pool"),
+                callback_data=AutoparseCallback(
+                    action="rebuild_pool_prompt", company_id=company.id
+                ).pack(),
+            )
         ],
         [
             InlineKeyboardButton(

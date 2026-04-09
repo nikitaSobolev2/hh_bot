@@ -245,6 +245,7 @@ def _build_autoparsed_vacancy(
 
 
 async def _resolve_cached_vacancy(
+    company_id: int,
     hh_id: str,
     vac: dict,
     vacancy_repo,
@@ -252,12 +253,12 @@ async def _resolve_cached_vacancy(
 ) -> tuple[dict, object | None, object | None]:
     """Return (enriched_vac, existing_autoparsed, existing_parsed) for a cached vacancy.
 
-    Tries AutoparsedVacancy first (full data). Falls back to ParsedVacancy
-    to merge description and raw_skills onto the card-level dict so that
-    AI compatibility scoring can still run even when the vacancy was only
-    previously seen via the manual parsing feature.
+    Tries this company's own AutoparsedVacancy rows first. Falls back to
+    ParsedVacancy to merge description and raw_skills onto the card-level
+    dict so that AI compatibility scoring can still run even when the vacancy
+    was only previously seen via the manual parsing feature.
     """
-    existing_ap = await vacancy_repo.get_by_hh_id_with_employer(hh_id)
+    existing_ap = await vacancy_repo.get_by_company_hh_id_with_employer(company_id, hh_id)
     if existing_ap is not None:
         return vac, existing_ap, None
 
@@ -368,9 +369,8 @@ async def _run_autoparse_company_async(
             vacancy_repo = AutoparsedVacancyRepository(session)
             known_ids = await vacancy_repo.get_known_hh_ids_for_company(company_id)
 
-            global_ids = await vacancy_repo.get_all_known_hh_ids()
             parsed_repo = ParsedVacancyRepository(session)
-            global_ids |= await parsed_repo.get_all_hh_ids()
+            reusable_cached_ids = known_ids | await parsed_repo.get_all_hh_ids()
 
             settings_repo = AppSettingRepository(session)
             user_repo = UserRepository(session)
@@ -417,16 +417,19 @@ async def _run_autoparse_company_async(
         scraper = parser._scraper
         from src.services.parser.hh_parser_service import partition_collected_urls
 
-        # Only company-known IDs are "free" toward target_count. Globally known vacancies
-        # still count as new for this company so we surface them in output; partition
-        # below uses global_ids to avoid redundant GET /vacancies/{id} when data exists.
+        # Reuse only this company's own autoparsed rows plus the shared manual-parse cache.
+        # Another autoparse company must never act as a detail cache source here.
         collected_urls = await scraper.collect_vacancy_urls(
             company.search_url,
             company.keyword_filter,
             target_count,
             known_ids_to_include=known_ids,
         )
-        cached_results, to_fetch = partition_collected_urls(collected_urls, target_count, global_ids)
+        cached_results, to_fetch = partition_collected_urls(
+            collected_urls,
+            target_count,
+            reusable_cached_ids,
+        )
 
         user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
         ai_client = AIClient() if (user_stack or user_exp) else None
@@ -584,7 +587,11 @@ async def _run_autoparse_company_async(
 
                 if vac.get("cached"):
                     vac, existing_ap, existing_parsed = await _resolve_cached_vacancy(
-                        hh_id, vac, vacancy_repo, parsed_repo
+                        company_id,
+                        hh_id,
+                        vac,
+                        vacancy_repo,
+                        parsed_repo,
                     )
                     if existing_ap is not None:
                         vac_dict = _orm_to_vac_dict(existing_ap)

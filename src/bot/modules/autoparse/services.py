@@ -120,6 +120,24 @@ async def mark_parsing_started(session: AsyncSession, company_id: int) -> Autopa
     return company
 
 
+async def reset_company_vacancy_pool(
+    session: AsyncSession,
+    company_id: int,
+) -> AutoparseCompany | None:
+    company_repo = AutoparseCompanyRepository(session)
+    company = await company_repo.get_by_id(company_id)
+    if not company:
+        return None
+
+    feed_repo = VacancyFeedSessionRepository(session)
+    vacancy_repo = AutoparsedVacancyRepository(session)
+    await feed_repo.delete_all_for_company(company_id)
+    await vacancy_repo.delete_all_by_company(company_id)
+    await company_repo.update(company, last_delivered_at=None)
+    await session.commit()
+    return company
+
+
 async def get_vacancy_count(session: AsyncSession, company_id: int) -> int:
     repo = AutoparsedVacancyRepository(session)
     return await repo.count_by_company(company_id)

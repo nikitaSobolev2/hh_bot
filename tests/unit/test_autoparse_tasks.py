@@ -87,18 +87,23 @@ class TestResolveCachedVacancy:
         existing.description = "desc"
 
         vacancy_repo = MagicMock()
-        vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=existing)
+        vacancy_repo.get_by_company_hh_id_with_employer = AsyncMock(return_value=existing)
         parsed_vacancy_repo = MagicMock()
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
 
         vac = {"hh_vacancy_id": "123", "url": "http://hh.ru/vacancy/123", "cached": True}
         returned_vac, returned_ap, returned_parsed = await _resolve_cached_vacancy(
-            "123", vac, vacancy_repo, parsed_vacancy_repo
+            77,
+            "123",
+            vac,
+            vacancy_repo,
+            parsed_vacancy_repo,
         )
 
         assert returned_ap is existing
         assert returned_parsed is None
         assert returned_vac is vac
+        vacancy_repo.get_by_company_hh_id_with_employer.assert_awaited_once_with(77, "123")
         parsed_vacancy_repo.get_by_hh_id_with_employer.assert_not_called()
 
     @pytest.mark.asyncio
@@ -113,13 +118,17 @@ class TestResolveCachedVacancy:
         parsed_record.work_format = None
 
         vacancy_repo = MagicMock()
-        vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
+        vacancy_repo.get_by_company_hh_id_with_employer = AsyncMock(return_value=None)
         parsed_vacancy_repo = MagicMock()
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=parsed_record)
 
         vac = {"hh_vacancy_id": "456", "url": "http://hh.ru/vacancy/456", "cached": True}
         returned_vac, returned_ap, returned_parsed = await _resolve_cached_vacancy(
-            "456", vac, vacancy_repo, parsed_vacancy_repo
+            12,
+            "456",
+            vac,
+            vacancy_repo,
+            parsed_vacancy_repo,
         )
 
         assert returned_ap is None
@@ -131,13 +140,17 @@ class TestResolveCachedVacancy:
     @pytest.mark.asyncio
     async def test_returns_original_vac_when_not_found_anywhere(self):
         vacancy_repo = MagicMock()
-        vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
+        vacancy_repo.get_by_company_hh_id_with_employer = AsyncMock(return_value=None)
         parsed_vacancy_repo = MagicMock()
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
 
         vac = {"hh_vacancy_id": "789", "url": "http://hh.ru/vacancy/789", "cached": True}
         returned_vac, returned_ap, returned_parsed = await _resolve_cached_vacancy(
-            "789", vac, vacancy_repo, parsed_vacancy_repo
+            55,
+            "789",
+            vac,
+            vacancy_repo,
+            parsed_vacancy_repo,
         )
 
         assert returned_ap is None
@@ -156,13 +169,17 @@ class TestResolveCachedVacancy:
         parsed_record.work_format = None
 
         vacancy_repo = MagicMock()
-        vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=None)
+        vacancy_repo.get_by_company_hh_id_with_employer = AsyncMock(return_value=None)
         parsed_vacancy_repo = MagicMock()
         parsed_vacancy_repo.get_by_hh_id_with_employer = AsyncMock(return_value=parsed_record)
 
         vac = {"hh_vacancy_id": "999", "cached": True}
         returned_vac, _, _ = await _resolve_cached_vacancy(
-            "999", vac, vacancy_repo, parsed_vacancy_repo
+            99,
+            "999",
+            vac,
+            vacancy_repo,
+            parsed_vacancy_repo,
         )
 
         assert returned_vac["description"] == ""

@@ -29,6 +29,7 @@ from src.bot.modules.autoparse.keyboards import (
     autoparse_settings_keyboard,
     cancel_keyboard,
     confirm_delete_keyboard,
+    confirm_rebuild_company_keyboard,
     confirm_reset_disliked_keyboard,
     confirm_reset_likes_keyboard,
     cover_letter_style_keyboard,
@@ -471,6 +472,57 @@ async def confirm_reset_disliked(
     await session.commit()
     await _render_company_detail_message(callback.message, user, session, i18n, company)
     await callback.answer(i18n.get("autoparse-reset-dislikes-done"))
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "rebuild_pool_prompt"))
+async def rebuild_pool_prompt(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-confirm-rebuild-pool"),
+            reply_markup=confirm_rebuild_company_keyboard(company.id, i18n),
+        )
+    await callback.answer()
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "confirm_rebuild_pool"))
+async def confirm_rebuild_pool(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.autoparse import run_autoparse_company
+
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id)
+    if not company or company.user_id != user.id:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    company = await ap_service.reset_company_vacancy_pool(session, company.id)
+    if company is None:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    company = await ap_service.mark_parsing_started(session, company.id)
+    if company is None:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    await run_celery_task(run_autoparse_company, company.id, notify_user_id=user.id)
+    await _render_company_detail_message(callback.message, user, session, i18n, company)
+    await callback.answer(i18n.get("autoparse-rebuild-pool-started"), show_alert=True)
 
 
 @router.callback_query(AutoparseCallback.filter(F.action == "show_liked"))

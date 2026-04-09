@@ -8,6 +8,7 @@ from src.bot.modules.autoparse.services import (
     generate_links_txt,
     generate_summary_txt,
     get_reacted_vacancy_ids_for_user,
+    reset_company_vacancy_pool,
 )
 from src.models.autoparse import AutoparsedVacancy
 
@@ -155,3 +156,45 @@ class TestGetReactedVacancyIdsForUser:
             result = await get_reacted_vacancy_ids_for_user(mock_session, user_id=42)
 
         assert result == {1, 2, 3, 4, 5}
+
+
+class TestResetCompanyVacancyPool:
+    @pytest.mark.asyncio
+    async def test_clears_company_vacancies_and_feed_sessions(self):
+        company = MagicMock()
+        company.id = 7
+
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock(return_value=company)
+
+        vacancy_repo = MagicMock()
+        vacancy_repo.delete_all_by_company = AsyncMock()
+
+        feed_repo = MagicMock()
+        feed_repo.delete_all_for_company = AsyncMock()
+
+        session = MagicMock()
+        session.commit = AsyncMock()
+
+        with (
+            patch(
+                "src.bot.modules.autoparse.services.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.bot.modules.autoparse.services.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.bot.modules.autoparse.services.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+        ):
+            result = await reset_company_vacancy_pool(session, company_id=7)
+
+        assert result is company
+        feed_repo.delete_all_for_company.assert_awaited_once_with(7)
+        vacancy_repo.delete_all_by_company.assert_awaited_once_with(7)
+        company_repo.update.assert_awaited_once_with(company, last_delivered_at=None)
+        session.commit.assert_awaited_once()

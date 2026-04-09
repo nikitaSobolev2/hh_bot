@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -158,11 +158,39 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def get_by_company_hh_id(
+        self,
+        company_id: int,
+        hh_vacancy_id: str,
+    ) -> AutoparsedVacancy | None:
+        stmt = select(AutoparsedVacancy).where(
+            AutoparsedVacancy.autoparse_company_id == company_id,
+            AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def get_by_hh_id_with_employer(self, hh_vacancy_id: str) -> AutoparsedVacancy | None:
         stmt = (
             select(AutoparsedVacancy)
             .options(selectinload(AutoparsedVacancy.employer))
             .where(AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
+    async def get_by_company_hh_id_with_employer(
+        self,
+        company_id: int,
+        hh_vacancy_id: str,
+    ) -> AutoparsedVacancy | None:
+        stmt = (
+            select(AutoparsedVacancy)
+            .options(selectinload(AutoparsedVacancy.employer))
+            .where(
+                AutoparsedVacancy.autoparse_company_id == company_id,
+                AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id,
+            )
         )
         result = await self._session.execute(stmt)
         return result.scalars().first()
@@ -208,6 +236,12 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         stmt = select(AutoparsedVacancy.hh_vacancy_id).distinct()
         result = await self._session.execute(stmt)
         return set(result.scalars().all())
+
+    async def delete_all_by_company(self, company_id: int) -> None:
+        stmt = delete(AutoparsedVacancy).where(
+            AutoparsedVacancy.autoparse_company_id == company_id,
+        )
+        await self._session.execute(stmt)
 
     async def get_by_ids(
         self,

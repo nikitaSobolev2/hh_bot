@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.vacancy_feed import VacancyFeedSession
@@ -125,5 +125,11 @@ class VacancyFeedSessionRepository(BaseRepository[VacancyFeedSession]):
                 VacancyFeedSession.autoparse_company_id == company_id,
             )
             .values(disliked_ids=[])
+        )
+        await self._session.execute(stmt)
+
+    async def delete_all_for_company(self, company_id: int) -> None:
+        stmt = delete(VacancyFeedSession).where(
+            VacancyFeedSession.autoparse_company_id == company_id,
         )
         await self._session.execute(stmt)
