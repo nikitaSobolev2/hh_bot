@@ -89,7 +89,7 @@ class TestGenerateFullMd:
 class TestCreateAutoparseCompany:
     @pytest.mark.asyncio
     @patch("src.bot.modules.autoparse.services.AutoparseCompanyRepository")
-    async def test_passes_include_reacted_in_feed_to_repo(self, mock_repo_cls):
+    async def test_passes_create_fields_to_repo(self, mock_repo_cls):
         mock_repo = MagicMock()
         mock_company = MagicMock()
         mock_company.id = 1
@@ -106,16 +106,18 @@ class TestCreateAutoparseCompany:
             url="https://hh.ru/search?text=python",
             keywords="python",
             skills="Python,Django",
-            include_reacted_in_feed=True,
+            parse_mode="web",
+            parse_hh_linked_account_id=42,
         )
 
         mock_repo.create.assert_called_once()
         call_kwargs = mock_repo.create.call_args.kwargs
-        assert call_kwargs["include_reacted_in_feed"] is True
         assert call_kwargs["keyword_check_enabled"] is True
+        assert call_kwargs["parse_mode"] == "web"
+        assert call_kwargs["parse_hh_linked_account_id"] == 42
 
     @pytest.mark.asyncio
-    async def test_create_autoparse_company_default_include_reacted_is_false(self):
+    async def test_create_autoparse_company_does_not_send_removed_include_reacted_field(self):
         mock_repo = MagicMock()
         mock_company = MagicMock()
         mock_company.id = 1
@@ -138,7 +140,7 @@ class TestCreateAutoparseCompany:
             )
 
             call_kwargs = mock_repo.create.call_args.kwargs
-            assert call_kwargs.get("include_reacted_in_feed", False) is False
+            assert "include_reacted_in_feed" not in call_kwargs
             assert call_kwargs["keyword_check_enabled"] is True
 
 

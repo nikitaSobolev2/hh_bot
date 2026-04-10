@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from src.models.autoparse import AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL
 from src.services.hh.feed_gating import HhFeedAccountStatus
 from src.worker.tasks.autoparse import (
     _build_user_profile,
@@ -283,13 +284,11 @@ class TestDeliverLastDeliveredAt:
         self,
         *,
         last_delivered_at: datetime | None = None,
-        include_reacted_in_feed: bool = False,
     ) -> MagicMock:
         company = MagicMock()
         company.last_delivered_at = last_delivered_at
         company.vacancy_title = "Python Dev"
         company.is_deleted = False
-        company.include_reacted_in_feed = include_reacted_in_feed
         return company
 
     def _make_vacancy(self) -> MagicMock:
@@ -305,6 +304,7 @@ class TestDeliverLastDeliveredAt:
         v.work_schedule = None
         v.working_hours = None
         v.raw_skills = None
+        v.published_at = None
         return v
 
     def _make_repos(
@@ -374,6 +374,42 @@ class TestDeliverLastDeliveredAt:
 
         since_used = vacancy_repo.get_new_since.call_args.args[1]
         assert since_used == last_delivered
+
+    @pytest.mark.asyncio
+    async def test_uses_replay_sentinel_as_since_when_set(self):
+        user = self._make_user()
+        company = self._make_company(
+            last_delivered_at=AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL
+        )
+        user_repo, company_repo, vacancy_repo, feed_repo = self._make_repos(
+            user=user, company=company, vacancies=[]
+        )
+
+        with (
+            patch(
+                "src.worker.tasks.autoparse._redis_client",
+                return_value=self._make_fake_deliver_redis(),
+            ),
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch(
+                "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+        ):
+            await _deliver_results_async(
+                self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
+            )
+
+        since_used = vacancy_repo.get_new_since.call_args.args[1]
+        assert since_used == AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL
 
     @pytest.mark.asyncio
     async def test_falls_back_to_24h_window_when_last_delivered_at_is_none(self):
@@ -857,12 +893,11 @@ class TestDeliverSeenIdsFilter:
         user.telegram_id = 100
         return user
 
-    def _make_company(self, include_reacted_in_feed: bool = False) -> MagicMock:
+    def _make_company(self, last_delivered_at: datetime | None = None) -> MagicMock:
         company = MagicMock()
-        company.last_delivered_at = datetime(2026, 1, 1, 12, 0, 0)
+        company.last_delivered_at = last_delivered_at or datetime(2026, 1, 1, 12, 0, 0)
         company.vacancy_title = "Python Dev"
         company.is_deleted = False
-        company.include_reacted_in_feed = include_reacted_in_feed
         return company
 
     def _make_vacancy(self, vacancy_id: int) -> MagicMock:
@@ -879,6 +914,7 @@ class TestDeliverSeenIdsFilter:
         v.work_schedule = None
         v.working_hours = None
         v.raw_skills = None
+        v.published_at = None
         return v
 
     def _make_fake_deliver_redis(self) -> MagicMock:
@@ -947,12 +983,12 @@ class TestDeliverSeenIdsFilter:
         assert passed_ids == [2]
 
     @pytest.mark.asyncio
-    async def test_excludes_reacted_vacancies_even_when_include_reacted_in_feed_is_true(
-        self,
-    ):
-        """Reacted vacancies are always excluded from feed, regardless of setting."""
+    async def test_replays_reacted_vacancies_when_replay_sentinel_is_set(self):
+        """Migration sentinel reopens all historical vacancies for one replay."""
         user = self._make_user()
-        company = self._make_company(include_reacted_in_feed=True)
+        company = self._make_company(
+            last_delivered_at=AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL
+        )
         reacted_vacancy = self._make_vacancy(1)
         new_vacancy = self._make_vacancy(2)
 
@@ -1004,9 +1040,9 @@ class TestDeliverSeenIdsFilter:
                 self._make_session_factory(MagicMock()), MagicMock(), 1, 1, force_now=True
             )
 
-        assert result == {"status": "delivered", "count": 1}
+        assert result == {"status": "delivered", "count": 2}
         passed_ids = mock_create.call_args.kwargs["vacancy_ids"]
-        assert passed_ids == [2]
+        assert set(passed_ids) == {1, 2}
 
     @pytest.mark.asyncio
     async def test_returns_no_new_vacancies_when_all_were_reacted_to(self):

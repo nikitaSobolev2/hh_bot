@@ -1323,6 +1323,7 @@ async def _deliver_results_async(
 ) -> dict:
     from zoneinfo import ZoneInfo
 
+    from src.models.autoparse import AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL
     from src.repositories.autoparse import (
         AutoparseCompanyRepository,
         AutoparsedVacancyRepository,
@@ -1400,6 +1401,9 @@ async def _deliver_results_async(
                     return {"status": "company_not_found"}
 
                 vacancy_repo = AutoparsedVacancyRepository(session)
+                replay_all_vacancies = (
+                    company.last_delivered_at == AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL
+                )
                 since = company.last_delivered_at or (
                     datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
                 )
@@ -1410,9 +1414,9 @@ async def _deliver_results_async(
                 reacted_ids = await feed_repo.get_all_reacted_vacancy_ids(user_id, company_id)
                 queued_ids = await feed_repo.get_all_seen_vacancy_ids(user_id, company_id)
 
-                # Always exclude vacancies the user has already liked or disliked.
-                # include_reacted_in_feed may later control re-parsing; feed never re-shows reacted.
-                new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
+                if not replay_all_vacancies:
+                    # Normal delivery never re-shows vacancies the user already rated.
+                    new_vacancies = [v for v in new_vacancies if v.id not in reacted_ids]
 
                 # Also re-surface vacancies that were queued in a previous session but
                 # never reached because the user stopped early.

@@ -34,7 +34,6 @@ from src.bot.modules.autoparse.keyboards import (
     confirm_reset_likes_keyboard,
     cover_letter_style_keyboard,
     download_format_keyboard,
-    include_reacted_keyboard,
     liked_disliked_list_keyboard,
     parse_hh_account_keyboard,
     parse_login_required_keyboard,
@@ -166,26 +165,6 @@ async def _prompt_parse_mode_step(
     )
 
 
-async def _prompt_include_reacted_step(
-    target: CallbackQuery | Message,
-    state: FSMContext,
-    i18n: I18nContext,
-) -> None:
-    await state.set_state(AutoparseForm.include_reacted)
-    if isinstance(target, CallbackQuery):
-        with contextlib.suppress(TelegramBadRequest):
-            await target.message.edit_text(
-                i18n.get("autoparse-include-reacted-prompt"),
-                reply_markup=include_reacted_keyboard(i18n),
-            )
-        await target.answer()
-        return
-    await target.answer(
-        i18n.get("autoparse-include-reacted-prompt"),
-        reply_markup=include_reacted_keyboard(i18n),
-    )
-
-
 async def _finalize_pending_parse_setup(
     target: CallbackQuery | Message,
     *,
@@ -200,12 +179,30 @@ async def _finalize_pending_parse_setup(
     parse_hh_linked_account_id = data.get("parse_pending_hh_linked_account_id")
 
     if flow == "create":
-        await state.update_data(
+        company = await ap_service.create_autoparse_company(
+            session,
+            user.id,
+            data["vacancy_title"],
+            data["search_url"],
+            data.get("keyword_filter", ""),
+            data.get("skills", ""),
+            keyword_check_enabled=True,
             parse_mode=parse_mode,
             parse_hh_linked_account_id=parse_hh_linked_account_id,
-            parse_pending_selected_hh_account_id=None,
         )
-        await _prompt_include_reacted_step(target, state, i18n)
+        await state.clear()
+        if isinstance(target, CallbackQuery):
+            with contextlib.suppress(TelegramBadRequest):
+                await target.message.edit_text(
+                    i18n.get("autoparse-created-success", id=str(company.id)),
+                    reply_markup=autoparse_hub_keyboard(i18n),
+                )
+            await target.answer()
+        else:
+            await target.answer(
+                i18n.get("autoparse-created-success", id=str(company.id)),
+                reply_markup=autoparse_hub_keyboard(i18n),
+            )
         return
 
     company_id = int(data.get("parse_pending_company_id") or 0)
@@ -792,41 +789,6 @@ async def parse_continue_after_login(
         session=session,
         i18n=i18n,
     )
-
-
-@router.callback_query(
-    AutoparseCallback.filter(F.action.in_({"include_reacted_yes", "include_reacted_no"}))
-)
-async def include_reacted_selected(
-    callback: CallbackQuery,
-    callback_data: AutoparseCallback,
-    user: User,
-    session: AsyncSession,
-    state: FSMContext,
-    i18n: I18nContext,
-) -> None:
-    data = await state.get_data()
-    include_reacted = callback_data.action == "include_reacted_yes"
-
-    company = await ap_service.create_autoparse_company(
-        session,
-        user.id,
-        data["vacancy_title"],
-        data["search_url"],
-        data.get("keyword_filter", ""),
-        data.get("skills", ""),
-        include_reacted_in_feed=include_reacted,
-        keyword_check_enabled=True,
-        parse_mode=data.get("parse_mode", "api"),
-        parse_hh_linked_account_id=data.get("parse_hh_linked_account_id"),
-    )
-    await state.clear()
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(
-            i18n.get("autoparse-created-success", id=str(company.id)),
-            reply_markup=autoparse_hub_keyboard(i18n),
-        )
-    await callback.answer()
 
 
 # ── List ────────────────────────────────────────────────────────────

@@ -9,7 +9,6 @@ class AutoparseForm(StatesGroup):
     skills = State()
     parse_mode = State()
     parse_hh_account = State()
-    include_reacted = State()
 
 
 class AutoparseEditForm(StatesGroup):

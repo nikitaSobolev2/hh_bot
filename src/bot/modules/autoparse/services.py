@@ -45,7 +45,6 @@ async def create_autoparse_company(
     keywords: str,
     skills: str,
     *,
-    include_reacted_in_feed: bool = False,
     keyword_check_enabled: bool = True,
     parse_mode: str = "api",
     parse_hh_linked_account_id: int | None = None,
@@ -58,7 +57,6 @@ async def create_autoparse_company(
         keyword_filter=keywords,
         keyword_check_enabled=keyword_check_enabled,
         skills=skills,
-        include_reacted_in_feed=include_reacted_in_feed,
         parse_mode=parse_mode,
         parse_hh_linked_account_id=parse_hh_linked_account_id,
     )

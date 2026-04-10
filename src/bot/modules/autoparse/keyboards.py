@@ -287,31 +287,6 @@ def liked_disliked_list_keyboard(
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-def include_reacted_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
-    """Keyboard for include reacted vacancies step in create flow."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-include-reacted-yes"),
-                    callback_data=AutoparseCallback(action="include_reacted_yes").pack(),
-                ),
-                InlineKeyboardButton(
-                    text=i18n.get("autoparse-include-reacted-no"),
-                    callback_data=AutoparseCallback(action="include_reacted_no").pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text=i18n.get("btn-cancel"),
-                    callback_data=AutoparseCallback(action="hub").pack(),
-                )
-            ],
-        ]
-    )
-
-
 def parse_mode_keyboard(
     i18n: I18nContext,
     *,

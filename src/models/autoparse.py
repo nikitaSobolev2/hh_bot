@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from src.models.hh_linked_account import HhLinkedAccount
     from src.models.user import User
 
+AUTOPARSE_REPLAY_LAST_DELIVERED_AT_SENTINEL = datetime(1970, 1, 1)
+
 
 class AutoparseCompany(Base):
     __tablename__ = "autoparse_companies"
@@ -30,7 +32,6 @@ class AutoparseCompany(Base):
     last_delivered_at: Mapped[datetime | None] = mapped_column(default=None)
     total_runs: Mapped[int] = mapped_column(Integer, default=0)
     total_vacancies_found: Mapped[int] = mapped_column(Integer, default=0)
-    include_reacted_in_feed: Mapped[bool] = mapped_column(Boolean, default=False)
     parse_mode: Mapped[str] = mapped_column(String(16), default="api")
     parse_hh_linked_account_id: Mapped[int | None] = mapped_column(
         ForeignKey("hh_linked_accounts.id", ondelete="SET NULL"), nullable=True
