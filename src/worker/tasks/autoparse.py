@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 _DISPATCH_LOCK_KEY = "lock:autoparse:dispatch"
 _RUN_LOCK_PREFIX = "lock:autoparse:run:"
 _ANALYSIS_BATCH_SIZE = 5
+_VACANCY_PROCESSING_LOCK_TTL = 1800
 
 # Extend lock TTL while the same Celery task id still holds the key (sliding window).
 _LOCK_RENEW_SCRIPT = """
@@ -254,6 +255,16 @@ def _build_autoparsed_vacancy(
         work_format=of.get("work_format"),
         professional_roles=of.get("professional_roles"),
     )
+
+
+def _reuse_analysis_fields(source) -> tuple[float | None, str | None, list[str] | None]:
+    """Copy AI analysis fields from another autoparsed vacancy row."""
+    compat_score = getattr(source, "compatibility_score", None)
+    ai_summary = getattr(source, "ai_summary", None) or None
+    ai_stack = getattr(source, "ai_stack", None)
+    if isinstance(ai_stack, list):
+        ai_stack = list(ai_stack)
+    return compat_score, ai_summary, ai_stack
 
 
 async def _resolve_cached_vacancy(
@@ -524,7 +535,11 @@ async def _run_autoparse_company_async(
             target_count=target_count,
         )
 
-        parser = HHParserService(parse_mode=parse_mode, storage_state=web_storage)
+        parser = HHParserService(
+            parse_mode=parse_mode,
+            detail_parse_mode="api",
+            storage_state=web_storage,
+        )
         scraper = parser._scraper
         from src.services.parser.hh_parser_service import partition_collected_urls
 
@@ -727,65 +742,116 @@ async def _run_autoparse_company_async(
         pending: list[tuple[dict, VacancyCompatInput]] = []
         new_count = 0
         new_autorespond_vacancy_ids: list[int] = []
+        company_user_id = company.user_id
 
         async def process_ai_db_chunk(chunk: list[tuple[dict, VacancyCompatInput]]) -> None:
             nonlocal new_count, analyzed_count
             if not chunk:
                 return
-            vac_dicts = [item[0] for item in chunk]
-            compat_inputs = [item[1] for item in chunk]
-
-            analyses: dict = {}
-            if ai_client:
-                analyses = await ai_client.analyze_vacancies_batch(
-                    compat_inputs,
-                    user_tech_stack=user_stack,
-                    user_work_experience=user_exp,
-                )
+            rows_to_insert: list[tuple[dict, float | None, str | None, list[str] | None]] = []
+            ai_batch: list[tuple[dict, VacancyCompatInput]] = []
+            locked_hh_ids: list[str] = []
 
             async with session_factory() as session:
-                from src.repositories.hh import HHAreaRepository, HHEmployerRepository
-
-                employer_repo = HHEmployerRepository(session)
-                area_repo = HHAreaRepository(session)
-                inserted: list = []
-                for vac_dict, compat_input in zip(vac_dicts, compat_inputs, strict=True):
-                    analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
-                    compat_score = analysis.compatibility_score if analysis else None
-                    ai_summary = (analysis.summary or None) if analysis else None
-                    ai_stack = (analysis.stack or None) if analysis else None
-
-                    employer_id = vac_dict.get("_employer_id")
-                    area_id = vac_dict.get("_area_id")
-                    if employer_id is None or area_id is None:
-                        employer_data = vac_dict.get("employer_data") or {}
-                        area_data = vac_dict.get("area_data") or {}
-                        if employer_id is None and employer_data.get("id"):
-                            employer = await employer_repo.get_or_create_by_hh_id(employer_data)
-                            employer_id = employer.id
-                        if area_id is None and area_data.get("id"):
-                            area = await area_repo.get_or_create_by_hh_id(area_data)
-                            area_id = area.id
-
-                    row = _build_autoparsed_vacancy(
-                        vac_dict,
-                        company_id,
-                        compat_score,
-                        ai_summary,
-                        ai_stack,
-                        employer_id=employer_id,
-                        area_id=area_id,
+                vacancy_repo = AutoparsedVacancyRepository(session)
+                for vac_dict, compat_input in chunk:
+                    reusable = await vacancy_repo.get_analyzed_for_user_hh_id(
+                        company_user_id,
+                        compat_input.hh_vacancy_id,
+                        exclude_company_id=company_id,
                     )
-                    session.add(row)
-                    inserted.append(row)
-                await session.commit()
-                new_autorespond_vacancy_ids.extend(
-                    int(r.id) for r in inserted if getattr(r, "id", None) is not None
-                )
+                    if reusable is not None:
+                        rows_to_insert.append((vac_dict, *_reuse_analysis_fields(reusable)))
+                        continue
 
-            new_count += len(chunk)
+                    if not ai_client:
+                        rows_to_insert.append((vac_dict, None, None, None))
+                        continue
+
+                    acquired = await task.acquire_user_vacancy_processing_lock(
+                        company_user_id,
+                        compat_input.hh_vacancy_id,
+                        ttl=_VACANCY_PROCESSING_LOCK_TTL,
+                    )
+                    if not acquired:
+                        reusable = await vacancy_repo.get_analyzed_for_user_hh_id(
+                            company_user_id,
+                            compat_input.hh_vacancy_id,
+                            exclude_company_id=company_id,
+                        )
+                        if reusable is not None:
+                            rows_to_insert.append((vac_dict, *_reuse_analysis_fields(reusable)))
+                        else:
+                            rows_to_insert.append((vac_dict, None, None, None))
+                        continue
+
+                    locked_hh_ids.append(compat_input.hh_vacancy_id)
+                    ai_batch.append((vac_dict, compat_input))
+
+            analyses: dict = {}
+            try:
+                if ai_batch:
+                    analyses = await ai_client.analyze_vacancies_batch(
+                        [item[1] for item in ai_batch],
+                        user_tech_stack=user_stack,
+                        user_work_experience=user_exp,
+                    )
+
+                for vac_dict, compat_input in ai_batch:
+                    analysis = analyses.get(compat_input.hh_vacancy_id) if analyses else None
+                    rows_to_insert.append(
+                        (
+                            vac_dict,
+                            analysis.compatibility_score if analysis else None,
+                            (analysis.summary or None) if analysis else None,
+                            (analysis.stack or None) if analysis else None,
+                        )
+                    )
+
+                async with session_factory() as session:
+                    from src.repositories.hh import HHAreaRepository, HHEmployerRepository
+
+                    employer_repo = HHEmployerRepository(session)
+                    area_repo = HHAreaRepository(session)
+                    inserted: list = []
+                    for vac_dict, compat_score, ai_summary, ai_stack in rows_to_insert:
+                        employer_id = vac_dict.get("_employer_id")
+                        area_id = vac_dict.get("_area_id")
+                        if employer_id is None or area_id is None:
+                            employer_data = vac_dict.get("employer_data") or {}
+                            area_data = vac_dict.get("area_data") or {}
+                            if employer_id is None and employer_data.get("id"):
+                                employer = await employer_repo.get_or_create_by_hh_id(employer_data)
+                                employer_id = employer.id
+                            if area_id is None and area_data.get("id"):
+                                area = await area_repo.get_or_create_by_hh_id(area_data)
+                                area_id = area.id
+
+                        row = _build_autoparsed_vacancy(
+                            vac_dict,
+                            company_id,
+                            compat_score,
+                            ai_summary,
+                            ai_stack,
+                            employer_id=employer_id,
+                            area_id=area_id,
+                        )
+                        session.add(row)
+                        inserted.append(row)
+                    await session.commit()
+                    new_autorespond_vacancy_ids.extend(
+                        int(r.id) for r in inserted if getattr(r, "id", None) is not None
+                    )
+            finally:
+                for hh_vacancy_id in locked_hh_ids:
+                    await task.release_user_vacancy_processing_lock(
+                        company_user_id,
+                        hh_vacancy_id,
+                    )
+
+            new_count += len(rows_to_insert)
             if ai_client:
-                analyzed_count += len(chunk)
+                analyzed_count += len(rows_to_insert)
                 await checkpoint.save(
                     checkpoint_key,
                     task_id,
@@ -1093,45 +1159,80 @@ async def _update_compat_unseen_async(
         try:
             for batch_start in range(0, len(vacancies), _ANALYSIS_BATCH_SIZE):
                 batch = vacancies[batch_start : batch_start + _ANALYSIS_BATCH_SIZE]
-                compat_inputs = [
-                    VacancyCompatInput(
-                        hh_vacancy_id=v.hh_vacancy_id,
-                        title=v.title or "",
-                        skills=v.raw_skills or [],
-                        description=v.description or "",
-                        vacancy_api_context=build_vacancy_api_context_from_orm(v),
-                    )
-                    for v in batch
-                ]
-
-                try:
-                    analyses = await ai_client.analyze_vacancies_batch(
-                        compat_inputs,
-                        user_tech_stack=user_stack,
-                        user_work_experience=user_exp,
-                    )
-                    cb.record_success()
-                except Exception as exc:
-                    cb.record_failure()
-                    logger.error("Update compat batch failed", error=str(exc))
-                    raise
+                prepared_updates: list[
+                    tuple[int, float | None, str | None, list[str] | None]
+                ] = []
+                ai_batch: list[tuple[int, VacancyCompatInput]] = []
+                locked_hh_ids: list[str] = []
 
                 async with session_factory() as session:
-                    vacancy_repo = AutoparsedVacancyRepository(session)
-                    for vac, compat_input in zip(batch, compat_inputs, strict=True):
+                    for vac in batch:
+                        acquired = await task.acquire_user_vacancy_processing_lock(
+                            user_id,
+                            vac.hh_vacancy_id,
+                            ttl=_VACANCY_PROCESSING_LOCK_TTL,
+                        )
+                        if not acquired:
+                            continue
+
+                        locked_hh_ids.append(vac.hh_vacancy_id)
+                        ai_batch.append(
+                            (
+                                vac.id,
+                                VacancyCompatInput(
+                                    hh_vacancy_id=vac.hh_vacancy_id,
+                                    title=vac.title or "",
+                                    skills=vac.raw_skills or [],
+                                    description=vac.description or "",
+                                    vacancy_api_context=build_vacancy_api_context_from_orm(vac),
+                                ),
+                            )
+                        )
+
+                analyses: dict = {}
+                try:
+                    if ai_batch:
+                        try:
+                            analyses = await ai_client.analyze_vacancies_batch(
+                                [item[1] for item in ai_batch],
+                                user_tech_stack=user_stack,
+                                user_work_experience=user_exp,
+                            )
+                            cb.record_success()
+                        except Exception as exc:
+                            cb.record_failure()
+                            logger.error("Update compat batch failed", error=str(exc))
+                            raise
+
+                    for vacancy_id, compat_input in ai_batch:
                         analysis = analyses.get(compat_input.hh_vacancy_id)
                         if analysis is None:
                             continue
-                        existing = await vacancy_repo.get_by_id(vac.id)
-                        if existing:
-                            await vacancy_repo.update(
-                                existing,
-                                compatibility_score=analysis.compatibility_score,
-                                ai_summary=analysis.summary or None,
-                                ai_stack=analysis.stack or None,
+                        prepared_updates.append(
+                            (
+                                vacancy_id,
+                                analysis.compatibility_score,
+                                analysis.summary or None,
+                                analysis.stack or None,
                             )
-                            updated_count += 1
-                    await session.commit()
+                        )
+
+                    async with session_factory() as session:
+                        vacancy_repo = AutoparsedVacancyRepository(session)
+                        for vacancy_id, compat_score, ai_summary, ai_stack in prepared_updates:
+                            existing = await vacancy_repo.get_by_id(vacancy_id)
+                            if existing:
+                                await vacancy_repo.update(
+                                    existing,
+                                    compatibility_score=compat_score,
+                                    ai_summary=ai_summary,
+                                    ai_stack=ai_stack,
+                                )
+                                updated_count += 1
+                        await session.commit()
+                finally:
+                    for hh_vacancy_id in locked_hh_ids:
+                        await task.release_user_vacancy_processing_lock(user_id, hh_vacancy_id)
 
             if user:
                 locale = user.language_code or "ru"

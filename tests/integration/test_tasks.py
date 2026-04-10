@@ -10,6 +10,8 @@ must target source modules (e.g. src.services.progress_service.ProgressService)
 rather than the calling module.
 """
 
+import sys
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +32,8 @@ def _make_company(company_id: int = 5, vacancy_title: str = "Backend Dev"):
     c.user_id = 42
     c.total_runs = 0
     c.total_vacancies_found = 0
+    c.parse_mode = "api"
+    c.parse_hh_linked_account_id = None
     return c
 
 
@@ -83,6 +87,7 @@ def _repo_patches(company, user):
     vacancy_repo = AsyncMock()
     vacancy_repo.get_known_hh_ids_for_company = AsyncMock(return_value=set())
     vacancy_repo.get_all_known_hh_ids = AsyncMock(return_value=set())
+    vacancy_repo.get_analyzed_for_user_hh_id = AsyncMock(return_value=None)
 
     parsed_repo = AsyncMock()
     parsed_repo.get_all_hh_ids = AsyncMock(return_value=set())
@@ -123,6 +128,35 @@ def _repo_patches(company, user):
         ),
     ]
     return patches
+
+
+def _configure_vacancy_processing_locks(task, *, acquired: bool = True):
+    task.acquire_user_vacancy_processing_lock = AsyncMock(return_value=acquired)
+    task.release_user_vacancy_processing_lock = AsyncMock()
+    return task
+
+
+def _crypto_patches():
+    crypto_module = ModuleType("src.services.hh.crypto")
+    crypto_module.HhTokenCipher = MagicMock()
+    storage_module = ModuleType("src.services.hh_ui.storage")
+    storage_module.decrypt_browser_storage = MagicMock(return_value={})
+    return [
+        patch.dict(
+            sys.modules,
+            {
+                "src.services.hh.crypto": crypto_module,
+                "src.services.hh_ui.storage": storage_module,
+            },
+        )
+    ]
+
+
+def _progress_patches(progress_mock):
+    return [
+        patch("src.services.progress_service.ProgressService", return_value=progress_mock),
+        patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +204,7 @@ class TestAutoparseTaskProgressIntegration:
         from contextlib import ExitStack
 
         with ExitStack() as stack:
-            for p in base_patches + _repo_patches(company, user):
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
                 stack.enter_context(p)
 
             from src.worker.tasks.autoparse import _run_autoparse_company_async
@@ -224,7 +258,7 @@ class TestAutoparseTaskProgressIntegration:
         from contextlib import ExitStack
 
         with ExitStack() as stack:
-            for p in base_patches + _repo_patches(company, user):
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
                 stack.enter_context(p)
 
             from src.worker.tasks.autoparse import _run_autoparse_company_async
@@ -271,7 +305,7 @@ class TestAutoparseTaskProgressIntegration:
         from contextlib import ExitStack
 
         with ExitStack() as stack:
-            for p in base_patches + _repo_patches(company, user):
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
                 stack.enter_context(p)
 
             from src.worker.tasks.autoparse import _run_autoparse_company_async
@@ -320,7 +354,7 @@ class TestAutoparseTaskProgressIntegration:
         from contextlib import ExitStack
 
         with ExitStack() as stack:
-            for p in base_patches + _repo_patches(company, user):
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
                 stack.enter_context(p)
 
             from src.worker.tasks.autoparse import _run_autoparse_company_async
@@ -366,7 +400,7 @@ class TestAutoparseTaskProgressIntegration:
         from contextlib import ExitStack
 
         with ExitStack() as stack:
-            for p in base_patches + _repo_patches(company, user):
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
                 stack.enter_context(p)
 
             from src.worker.tasks.autoparse import _run_autoparse_company_async
@@ -391,6 +425,7 @@ class TestAutoparseTaskProgressIntegration:
         session_factory = MagicMock(return_value=session)
         fake_task = MagicMock()
         fake_task.request.id = "test-id-6"
+        _configure_vacancy_processing_locks(fake_task)
 
         # 55 search cards -> detail fetch + AI; total_to_analyze=55; target_count=50 from settings
         search_cards = [
@@ -410,17 +445,14 @@ class TestAutoparseTaskProgressIntegration:
         progress_mock = AsyncMock()
 
         settings_repo = AsyncMock()
-
-        async def get_value(key, default=None):
-            if key == "autoparse_target_count":
-                return "50"
-            if key == "autoparse_interval_hours":
-                return "6"
-            if key == "task_autoparse_enabled":
-                return "true"
-            return default
-
-        settings_repo.get_value = get_value
+        settings_values = {
+            "autoparse_target_count": "50",
+            "autoparse_interval_hours": "6",
+            "task_autoparse_enabled": "true",
+        }
+        settings_repo.get_value = AsyncMock(
+            side_effect=lambda key, default=None: settings_values.get(key, default)
+        )
 
         base_patches = [
             patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
@@ -442,8 +474,6 @@ class TestAutoparseTaskProgressIntegration:
                 "src.repositories.hh.HHAreaRepository.get_or_create_by_hh_id",
                 new=AsyncMock(return_value=MagicMock(id=1)),
             ),
-            patch("src.services.progress_service.ProgressService", return_value=progress_mock),
-            patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
             patch(
                 "src.services.task_checkpoint.TaskCheckpointService",
                 return_value=_make_checkpoint_mock(),
@@ -467,7 +497,12 @@ class TestAutoparseTaskProgressIntegration:
         from contextlib import ExitStack
 
         with ExitStack() as stack:
-            for p in base_patches + _repo_patches(company, user):
+            for p in (
+                base_patches
+                + _repo_patches(company, user)
+                + _crypto_patches()
+                + _progress_patches(progress_mock)
+            ):
                 stack.enter_context(p)
             # Override settings to return target_count=50; our 55 results yield total_to_analyze=55
             stack.enter_context(
@@ -481,7 +516,7 @@ class TestAutoparseTaskProgressIntegration:
             vacancy_repo_bar = AsyncMock()
             vacancy_repo_bar.get_known_hh_ids_for_company = AsyncMock(return_value=set())
             vacancy_repo_bar.get_all_known_hh_ids = AsyncMock(
-                return_value=set(str(i) for i in range(5))
+                return_value={str(i) for i in range(5)}
             )
             stack.enter_context(
                 patch(
@@ -500,11 +535,193 @@ class TestAutoparseTaskProgressIntegration:
             )
 
         assert result["status"] == "completed"
-        # Parsing bar (index 0) must be synced to (55, 55) so both bars share the same denominator
+        # Parsing bar should progress through the actual fetched detail count.
         parsing_sync_calls = [
             c for c in progress_mock.update_bar.call_args_list
-            if c.args[1] == 0 and c.args[2] == 55 and c.args[3] == 55
+            if c.args[1] == 0 and c.args[2] == 50 and c.args[3] == 50
         ]
         assert len(parsing_sync_calls) >= 1, (
-            "Parsing bar should be updated to (55, 55) when total_to_analyze=55"
+            "Parsing bar should be updated to (50, 50) after fetching the capped detail batch"
         )
+
+    @pytest.mark.asyncio
+    async def test_reuses_same_user_analysis_without_second_ai_call(self):
+        company = _make_company(company_id=21, vacancy_title="Python Dev")
+        user = _make_user(telegram_id=777)
+        user.autoparse_settings = {"tech_stack": ["Python"]}
+        session = _make_session()
+        session_factory = MagicMock(return_value=session)
+        fake_task = MagicMock()
+        fake_task.request.id = "test-id-reuse"
+        _configure_vacancy_processing_locks(fake_task)
+
+        search_cards = [
+            {"hh_vacancy_id": "123", "url": "https://hh.ru/vacancy/123", "title": "Python Dev"}
+        ]
+        page_data = {
+            "description": "d",
+            "skills": ["Python"],
+            "orm_fields": {},
+            "employer_data": {"id": "1", "name": "Co"},
+            "area_data": {"id": "1", "name": "Msk"},
+            "title": "Python Dev",
+            "company_name": "Co",
+        }
+        reusable = MagicMock(
+            compatibility_score=88.0,
+            ai_summary="Reused summary",
+            ai_stack=["Python", "FastAPI"],
+        )
+        progress_mock = AsyncMock()
+
+        base_patches = [
+            patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
+                new=AsyncMock(return_value=search_cards),
+            ),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.parse_vacancy_page",
+                new=AsyncMock(return_value=page_data),
+            ),
+            patch(
+                "src.repositories.hh.HHEmployerRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.repositories.hh.HHAreaRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
+            patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
+            patch(
+                "src.worker.tasks.autoparse._send_run_completed_notification",
+                new=AsyncMock(),
+            ),
+            patch("aiogram.Bot", return_value=_make_mock_bot()),
+            patch(
+                "src.services.ai.client.AIClient.analyze_vacancies_batch",
+                new_callable=AsyncMock,
+            ),
+        ]
+
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            ai_mock = None
+            for p in (
+                base_patches
+                + _repo_patches(company, user)
+                + _crypto_patches()
+                + _progress_patches(progress_mock)
+            ):
+                result = stack.enter_context(p)
+                if getattr(p, "attribute", None) == "analyze_vacancies_batch":
+                    ai_mock = result
+            vacancy_repo = AsyncMock()
+            vacancy_repo.get_known_hh_ids_for_company = AsyncMock(return_value=set())
+            vacancy_repo.get_all_known_hh_ids = AsyncMock(return_value=set())
+            vacancy_repo.get_analyzed_for_user_hh_id = AsyncMock(return_value=reusable)
+            stack.enter_context(
+                patch(
+                    "src.repositories.autoparse.AutoparsedVacancyRepository",
+                    return_value=vacancy_repo,
+                )
+            )
+
+            from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+            result = await _run_autoparse_company_async(
+                session_factory,
+                fake_task,
+                company_id=21,
+                notify_user_id=42,
+            )
+
+        assert result["status"] == "completed"
+        assert ai_mock.await_count == 0
+        fake_task.acquire_user_vacancy_processing_lock.assert_not_awaited()
+        inserted_row = session.add.call_args.args[0]
+        assert inserted_row.compatibility_score == pytest.approx(88.0)
+        assert inserted_row.ai_summary == "Reused summary"
+        assert inserted_row.ai_stack == ["Python", "FastAPI"]
+
+    @pytest.mark.asyncio
+    async def test_web_mode_uses_web_search_but_api_detail(self):
+        company = _make_company(company_id=22, vacancy_title="Python Dev")
+        company.parse_mode = "web"
+        user = _make_user(telegram_id=888)
+        session = _make_session()
+        session_factory = MagicMock(return_value=session)
+        fake_task = MagicMock()
+        fake_task.request.id = "test-id-web-api-detail"
+
+        search_cards = [
+            {"hh_vacancy_id": "321", "url": "https://hh.ru/vacancy/321", "title": "Python Dev"}
+        ]
+        page_data = {
+            "description": "d",
+            "skills": ["Python"],
+            "orm_fields": {},
+            "employer_data": {"id": "1", "name": "Co"},
+            "area_data": {"id": "1", "name": "Msk"},
+            "title": "Python Dev",
+            "company_name": "Co",
+        }
+
+        base_patches = [
+            patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
+                new=AsyncMock(return_value=search_cards),
+            ),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.parse_vacancy_page",
+                new=AsyncMock(return_value=page_data),
+            ),
+            patch(
+                "src.repositories.hh.HHEmployerRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.repositories.hh.HHAreaRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
+            patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
+        ]
+
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            collect_mock = None
+            detail_mock = None
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
+                result = stack.enter_context(p)
+                if getattr(p, "attribute", None) == "collect_vacancy_urls":
+                    collect_mock = result
+                elif getattr(p, "attribute", None) == "parse_vacancy_page":
+                    detail_mock = result
+
+            from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+            result = await _run_autoparse_company_async(
+                session_factory,
+                fake_task,
+                company_id=22,
+                notify_user_id=None,
+            )
+
+        assert result["status"] == "completed"
+        assert collect_mock.await_args.kwargs["parse_mode"] == "web"
+        assert detail_mock.await_args.kwargs["parse_mode"] == "api"

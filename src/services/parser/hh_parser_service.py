@@ -39,6 +39,7 @@ class HHParserService:
         vacancy_fetch_concurrency: int | None = None,
         *,
         parse_mode: str = "api",
+        detail_parse_mode: str | None = None,
         storage_state: dict | None = None,
     ) -> None:
         self._scraper = scraper or HHScraper()
@@ -48,11 +49,12 @@ class HHParserService:
             else settings.hh_vacancy_detail_concurrency
         )
         self._parse_mode = parse_mode
+        self._detail_parse_mode = detail_parse_mode or parse_mode
         self._storage_state = storage_state
 
     def build_client(self) -> httpx.AsyncClient:
         kwargs: dict = {}
-        if self._parse_mode == "web" and self._storage_state:
+        if self._detail_parse_mode == "web" and self._storage_state:
             kwargs["cookies"] = httpx_cookies_from_storage_state(self._storage_state)
             kwargs["follow_redirects"] = True
         return httpx.AsyncClient(**kwargs)
@@ -77,7 +79,7 @@ class HHParserService:
         page_data = await self._scraper.parse_vacancy_page(
             client,
             vac["url"],
-            parse_mode=self._parse_mode,
+            parse_mode=self._detail_parse_mode,
         )
         if not page_data:
             return None

@@ -1288,6 +1288,8 @@ class TestUpdateCompatUnseen:
         mock_task = MagicMock()
         mock_task.acquire_user_task_lock = AsyncMock(return_value=True)
         mock_task.release_user_task_lock = AsyncMock()
+        mock_task.acquire_user_vacancy_processing_lock = AsyncMock(return_value=True)
+        mock_task.release_user_vacancy_processing_lock = AsyncMock()
 
         mock_session = MagicMock()
         mock_session.commit = AsyncMock()
@@ -1323,6 +1325,8 @@ class TestUpdateCompatUnseen:
         mock_task = MagicMock()
         mock_task.acquire_user_task_lock = AsyncMock(return_value=False)
         mock_task.release_user_task_lock = AsyncMock()
+        mock_task.acquire_user_vacancy_processing_lock = AsyncMock()
+        mock_task.release_user_vacancy_processing_lock = AsyncMock()
 
         session_factory = MagicMock()
 
@@ -1394,6 +1398,8 @@ class TestUpdateCompatUnseen:
         mock_task = MagicMock()
         mock_task.acquire_user_task_lock = AsyncMock(return_value=True)
         mock_task.release_user_task_lock = AsyncMock()
+        mock_task.acquire_user_vacancy_processing_lock = AsyncMock(return_value=True)
+        mock_task.release_user_vacancy_processing_lock = AsyncMock()
 
         with patch(
             "src.repositories.app_settings.AppSettingRepository",
@@ -1441,3 +1447,110 @@ class TestUpdateCompatUnseen:
         assert result["updated_count"] == 1
         mock_ai_client.analyze_vacancies_batch.assert_called_once()
         vacancy_repo.update.assert_called()
+        mock_task.acquire_user_vacancy_processing_lock.assert_awaited_once_with(
+            1,
+            "123",
+            ttl=1800,
+        )
+        mock_task.release_user_vacancy_processing_lock.assert_awaited_once_with(1, "123")
+
+    @pytest.mark.asyncio
+    async def test_skips_ai_when_vacancy_processing_lock_not_acquired(self):
+        mock_user = MagicMock()
+        mock_user.id = 1
+        mock_user.autoparse_settings = {"tech_stack": ["Python"]}
+        mock_user.telegram_id = 100
+        mock_user.language_code = "ru"
+
+        mock_vacancy = MagicMock()
+        mock_vacancy.id = 10
+        mock_vacancy.hh_vacancy_id = "123"
+        mock_vacancy.title = "Python Dev"
+        mock_vacancy.raw_skills = ["Python"]
+        mock_vacancy.description = "Great job"
+        mock_vacancy.snippet_requirement = None
+        mock_vacancy.snippet_responsibility = None
+        mock_vacancy.experience_name = None
+        mock_vacancy.schedule_name = None
+        mock_vacancy.employment_name = None
+        mock_vacancy.employment_form_name = None
+        mock_vacancy.work_format = None
+        mock_vacancy.professional_roles = None
+
+        mock_session = MagicMock()
+        mock_session.commit = AsyncMock()
+
+        @asynccontextmanager
+        async def session_factory():
+            yield mock_session
+
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=mock_user)
+        settings_repo = MagicMock()
+        settings_repo.get_value = AsyncMock(return_value=True)
+        we_repo = MagicMock()
+        we_repo.get_active_by_user = AsyncMock(return_value=[])
+        feed_repo = MagicMock()
+        feed_repo.get_all_liked_vacancy_ids_for_user = AsyncMock(return_value=set())
+        feed_repo.get_all_disliked_vacancy_ids_for_user = AsyncMock(return_value=set())
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_unseen_for_user = AsyncMock(return_value=[mock_vacancy])
+        vacancy_repo.get_by_id = AsyncMock(return_value=mock_vacancy)
+        vacancy_repo.update = AsyncMock()
+
+        mock_ai_client = MagicMock()
+        mock_ai_client.analyze_vacancies_batch = AsyncMock()
+
+        mock_task = MagicMock()
+        mock_task.acquire_user_task_lock = AsyncMock(return_value=True)
+        mock_task.release_user_task_lock = AsyncMock()
+        mock_task.acquire_user_vacancy_processing_lock = AsyncMock(return_value=False)
+        mock_task.release_user_vacancy_processing_lock = AsyncMock()
+
+        with patch(
+            "src.repositories.app_settings.AppSettingRepository",
+            return_value=settings_repo,
+        ), patch(
+            "src.repositories.user.UserRepository",
+            return_value=user_repo,
+        ), patch(
+            "src.repositories.work_experience.WorkExperienceRepository",
+            return_value=we_repo,
+        ), patch(
+            "src.repositories.vacancy_feed.VacancyFeedSessionRepository",
+            return_value=feed_repo,
+        ), patch(
+            "src.repositories.autoparse.AutoparsedVacancyRepository",
+            return_value=vacancy_repo,
+        ), patch(
+            "src.services.ai.client.AIClient",
+            return_value=mock_ai_client,
+        ), patch(
+            "src.worker.circuit_breaker.CircuitBreaker",
+        ), patch(
+            "src.config.settings",
+            bot_token="fake",
+        ), patch(
+            "src.core.i18n.get_text",
+            side_effect=lambda key, locale, **kw: key,
+        ), patch(
+            "aiogram.Bot",
+        ) as mock_bot_cls:
+            mock_bot_instance = MagicMock()
+            mock_bot_instance.send_message = AsyncMock()
+            mock_bot_instance.session.close = AsyncMock()
+            mock_bot_cls.return_value = mock_bot_instance
+
+            from src.worker.tasks.autoparse import _update_compat_unseen_async
+
+            result = await _update_compat_unseen_async(
+                session_factory,
+                mock_task,
+                user_id=1,
+            )
+
+        assert result["status"] == "completed"
+        assert result["updated_count"] == 0
+        mock_ai_client.analyze_vacancies_batch.assert_not_called()
+        vacancy_repo.update.assert_not_called()
+        mock_task.release_user_vacancy_processing_lock.assert_not_called()

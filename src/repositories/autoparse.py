@@ -212,6 +212,31 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def get_analyzed_for_user_hh_id(
+        self,
+        user_id: int,
+        hh_vacancy_id: str,
+        *,
+        exclude_company_id: int | None = None,
+    ) -> AutoparsedVacancy | None:
+        stmt = (
+            select(AutoparsedVacancy)
+            .join(AutoparseCompany, AutoparsedVacancy.autoparse_company_id == AutoparseCompany.id)
+            .where(
+                AutoparseCompany.user_id == user_id,
+                AutoparseCompany.is_deleted.is_(False),
+                AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id,
+                AutoparsedVacancy.compatibility_score.is_not(None),
+                AutoparsedVacancy.compatibility_score != NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT,
+            )
+            .order_by(*_feed_order_by_clause())
+            .limit(1)
+        )
+        if exclude_company_id is not None:
+            stmt = stmt.where(AutoparsedVacancy.autoparse_company_id != exclude_company_id)
+        result = await self._session.execute(stmt)
+        return result.scalars().first()
+
     async def get_known_hh_ids_for_company(self, company_id: int) -> set[str]:
         stmt = select(AutoparsedVacancy.hh_vacancy_id).where(
             AutoparsedVacancy.autoparse_company_id == company_id

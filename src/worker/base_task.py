@@ -18,11 +18,27 @@ All Celery tasks in this project should inherit from ``HHBotTask`` (or use the
 from __future__ import annotations
 
 import contextlib
+from typing import TYPE_CHECKING
 
 import structlog
 from celery import Task
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+if TYPE_CHECKING:
+    from aiogram import Bot
+    from aiogram.types import InlineKeyboardMarkup
+    from src.worker.circuit_breaker import CircuitBreaker
+
+_RELEASE_IF_OWNER_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false then return 0 end
+if current == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+"""
 
 
 class HHBotTask(Task):
@@ -319,5 +335,42 @@ class HHBotTask(Task):
         key = f"lock:user_task:{task_type}:{user_id}"
         try:
             await redis.delete(key)
+        finally:
+            await redis.aclose()
+
+    async def acquire_user_vacancy_processing_lock(
+        self,
+        user_id: int,
+        hh_vacancy_id: str,
+        ttl: int = 1800,
+    ) -> bool:
+        """Attempt to acquire a per-user vacancy-processing lock.
+
+        Prevents duplicate compatibility generation for the same HH vacancy
+        while still allowing different users to process that vacancy
+        independently.
+        """
+        from src.core.redis import create_async_redis
+
+        redis = create_async_redis()
+        key = f"lock:user_vacancy_processing:{user_id}:{hh_vacancy_id}"
+        try:
+            acquired = await redis.set(key, self.request.id or "1", nx=True, ex=ttl)
+            return bool(acquired)
+        finally:
+            await redis.aclose()
+
+    async def release_user_vacancy_processing_lock(
+        self,
+        user_id: int,
+        hh_vacancy_id: str,
+    ) -> None:
+        """Release the per-user vacancy-processing lock."""
+        from src.core.redis import create_async_redis
+
+        redis = create_async_redis()
+        key = f"lock:user_vacancy_processing:{user_id}:{hh_vacancy_id}"
+        try:
+            await redis.eval(_RELEASE_IF_OWNER_SCRIPT, 1, key, self.request.id or "1")
         finally:
             await redis.aclose()
