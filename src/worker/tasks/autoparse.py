@@ -267,6 +267,15 @@ def _reuse_analysis_fields(source) -> tuple[float | None, str | None, list[str] 
     return compat_score, ai_summary, ai_stack
 
 
+def _has_analysis_fields(
+    compat_score: float | None,
+    ai_summary: str | None,
+    ai_stack: list[str] | None,
+) -> bool:
+    """Return True when compatibility analysis is already available for a vacancy."""
+    return compat_score is not None or ai_summary is not None or ai_stack is not None
+
+
 async def _resolve_cached_vacancy(
     company_id: int,
     hh_id: str,
@@ -851,7 +860,12 @@ async def _run_autoparse_company_async(
 
             new_count += len(rows_to_insert)
             if ai_client:
-                analyzed_count += len(rows_to_insert)
+                analyzed_rows = sum(
+                    1
+                    for _, compat_score, ai_summary, ai_stack in rows_to_insert
+                    if _has_analysis_fields(compat_score, ai_summary, ai_stack)
+                )
+                analyzed_count += analyzed_rows
                 await checkpoint.save(
                     checkpoint_key,
                     task_id,
