@@ -30,7 +30,7 @@ from src.services.hh.linked_account_browser_storage import persist_browser_stora
 from src.services.hh.oauth_state import generate_state, store_state
 from src.services.hh.oauth_tokens import build_authorize_url
 from src.services.hh_ui.applicant_negotiations_http import check_negotiations_browser_session_available
-from src.services.hh_ui.browser_link import validate_playwright_storage_state
+from src.services.hh_ui.browser_link import validate_logged_in_playwright_storage_state
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.storage import decrypt_browser_storage
 from src.worker.tasks.hh_login_assist import hh_login_assist_task
@@ -41,6 +41,7 @@ _VALIDATION_ERROR_I18N = {
     "not-a-json-object": "hh-accounts-browser-err-not-object",
     "missing-cookies-array": "hh-accounts-browser-err-no-cookies",
     "no-hh-cookies": "hh-accounts-browser-err-no-hh",
+    "not-logged-in": "hh-accounts-browser-err-not-logged-in",
 }
 
 
@@ -380,7 +381,7 @@ async def hh_browser_import_document(
         return
 
     try:
-        state_dict = validate_playwright_storage_state(parsed)
+        state_dict = validate_logged_in_playwright_storage_state(parsed)
     except ValueError as exc:
         code = str(exc.args[0]) if exc.args else "unknown"
         msg_key = _VALIDATION_ERROR_I18N.get(code, "hh-accounts-browser-err-unknown")

@@ -33,6 +33,12 @@ from src.repositories.autoparse import AutoparsedVacancyRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
+from src.services.hh.feed_gating import (
+    HhFeedAccountCapability,
+    HhFeedAccountStatus,
+    classify_user_hh_accounts,
+    hh_account_supports_capability,
+)
 
 router = Router(name="feed")
 
@@ -78,6 +84,25 @@ def _resume_cache_to_lists(resume_list_cache: list | None) -> tuple[list[str], l
     if not ids:
         return None
     return ids, titles
+
+
+def _current_feed_account_capability() -> HhFeedAccountCapability:
+    from src.config import settings
+
+    return (
+        HhFeedAccountCapability.BROWSER
+        if settings.hh_ui_apply_enabled
+        else HhFeedAccountCapability.API
+    )
+
+
+def _feed_ineligible_account_message(
+    i18n: I18nContext,
+    capability: HhFeedAccountCapability,
+) -> str:
+    if capability == HhFeedAccountCapability.BROWSER:
+        return i18n.get("feed-pick-hh-browser-required")
+    return i18n.get("feed-pick-hh-api-required")
 
 
 def feed_respond_resume_keyboard(
@@ -449,16 +474,50 @@ async def handle_feed_start(
         await callback.answer(i18n.get("feed-session-not-found"), show_alert=True)
         return
 
+    capability = _current_feed_account_capability()
+    feed_repo = VacancyFeedSessionRepository(session)
+    start_alert: str | None = None
     if feed_session.hh_linked_account_id is None:
-        hh_repo = HhLinkedAccountRepository(session)
-        accs = await hh_repo.list_active_for_user(user.id)
-        if len(accs) > 1:
+        hh_status, hh_accounts = await classify_user_hh_accounts(
+            session,
+            user.id,
+            capability=capability,
+        )
+        if hh_status == HhFeedAccountStatus.MULTI:
             await callback.answer(i18n.get("feed-pick-hh-first"), show_alert=True)
             return
-        if len(accs) == 1:
-            feed_repo = VacancyFeedSessionRepository(session)
-            await feed_repo.update(feed_session, hh_linked_account_id=accs[0].id)
+        if hh_status == HhFeedAccountStatus.SINGLE:
+            await feed_repo.update(feed_session, hh_linked_account_id=hh_accounts[0].id)
             await session.commit()
+            feed_session.hh_linked_account_id = hh_accounts[0].id
+        elif hh_status == HhFeedAccountStatus.NONE:
+            start_alert = _feed_ineligible_account_message(i18n, capability)
+    else:
+        hh_repo = HhLinkedAccountRepository(session)
+        acc = await hh_repo.get_by_id(feed_session.hh_linked_account_id)
+        if (
+            not acc
+            or acc.user_id != user.id
+            or acc.revoked_at
+            or not hh_account_supports_capability(acc, capability)
+        ):
+            await feed_repo.update(feed_session, hh_linked_account_id=None)
+            await session.commit()
+            feed_session.hh_linked_account_id = None
+            hh_status, hh_accounts = await classify_user_hh_accounts(
+                session,
+                user.id,
+                capability=capability,
+            )
+            if hh_status == HhFeedAccountStatus.MULTI:
+                await callback.answer(i18n.get("feed-pick-hh-first"), show_alert=True)
+                return
+            if hh_status == HhFeedAccountStatus.SINGLE:
+                await feed_repo.update(feed_session, hh_linked_account_id=hh_accounts[0].id)
+                await session.commit()
+                feed_session.hh_linked_account_id = hh_accounts[0].id
+            elif hh_status == HhFeedAccountStatus.NONE:
+                start_alert = _feed_ineligible_account_message(i18n, capability)
 
     vacancy_repo = AutoparsedVacancyRepository(session)
     vacancy_id = feed_session.vacancy_ids[feed_session.current_index]
@@ -480,7 +539,10 @@ async def handle_feed_start(
 
     with contextlib.suppress(TelegramBadRequest):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
+    if start_alert:
+        await callback.answer(start_alert, show_alert=True)
+    else:
+        await callback.answer()
 
 
 @router.callback_query(FeedCallback.filter(F.action.in_({"like", "dislike"})))
@@ -928,8 +990,15 @@ async def handle_feed_pick_hh_account(
 
     hh_repo = HhLinkedAccountRepository(session)
     acc = await hh_repo.get_by_id(callback_data.hh_account_id)
+    capability = _current_feed_account_capability()
     if not acc or acc.user_id != user.id or acc.revoked_at:
         await callback.answer(i18n.get("hh-account-not-found"), show_alert=True)
+        return
+    if not hh_account_supports_capability(acc, capability):
+        await callback.answer(
+            _feed_ineligible_account_message(i18n, capability),
+            show_alert=True,
+        )
         return
 
     feed_repo = VacancyFeedSessionRepository(session)
@@ -981,6 +1050,19 @@ async def _feed_respond_core(
         return
     if not feed_session.hh_linked_account_id:
         await callback.answer(i18n.get("feed-pick-hh-first"), show_alert=True)
+        return
+
+    capability = _current_feed_account_capability()
+    acc_repo = HhLinkedAccountRepository(session)
+    acc = await acc_repo.get_by_id(feed_session.hh_linked_account_id)
+    if not acc or acc.user_id != user.id or acc.revoked_at:
+        await callback.answer(i18n.get("hh-account-not-found"), show_alert=True)
+        return
+    if not hh_account_supports_capability(acc, capability):
+        await callback.answer(
+            _feed_ineligible_account_message(i18n, capability),
+            show_alert=True,
+        )
         return
 
     vacancy_repo = AutoparsedVacancyRepository(session)
@@ -1046,8 +1128,6 @@ async def _feed_respond_core(
     titles: list[str] = []
 
     if settings.hh_ui_apply_enabled:
-        acc_repo = HhLinkedAccountRepository(session)
-        acc = await acc_repo.get_by_id(feed_session.hh_linked_account_id)
         if not acc or not acc.browser_storage_enc:
             await callback.answer(i18n.get("feed-respond-no-browser-session"), show_alert=True)
             return

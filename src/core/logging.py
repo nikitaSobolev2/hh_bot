@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 
 import structlog
@@ -9,6 +10,32 @@ from rich.logging import RichHandler
 from src.config import settings
 
 _CONFIGURED = False
+
+
+def _build_file_handler(log_dir) -> RotatingFileHandler | None:
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_dir / "hh_bot.log",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        print(
+            f"logging: file logging disabled for {log_dir!s}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    return file_handler
 
 
 class TelegramLogHandler(logging.Handler):
@@ -53,7 +80,6 @@ def setup_logging() -> None:
     _CONFIGURED = True
 
     log_dir = settings.log_dir
-    log_dir.mkdir(parents=True, exist_ok=True)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -70,20 +96,9 @@ def setup_logging() -> None:
     console_handler.setLevel(logging.INFO)
     root_logger.addHandler(console_handler)
 
-    file_handler = RotatingFileHandler(
-        log_dir / "hh_bot.log",
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-    )
-    root_logger.addHandler(file_handler)
+    file_handler = _build_file_handler(log_dir)
+    if file_handler is not None:
+        root_logger.addHandler(file_handler)
 
     tg_handler = TelegramLogHandler(settings.bot_token)
     tg_handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s\n%(message)s"))

@@ -58,6 +58,7 @@ def make_feed_session():
         user_id: int = 42,
         company_id: int = 10,
         chat_id: int = 42,
+        hh_linked_account_id: int | None = None,
         vacancy_ids: list | None = None,
         current_index: int = 0,
         liked_ids: list | None = None,
@@ -71,6 +72,7 @@ def make_feed_session():
         feed_session.user_id = user_id
         feed_session.autoparse_company_id = company_id
         feed_session.chat_id = chat_id
+        feed_session.hh_linked_account_id = hh_linked_account_id
         feed_session.vacancy_ids = vacancy_ids if vacancy_ids is not None else [1, 2, 3]
         feed_session.current_index = current_index
         feed_session.liked_ids = liked_ids if liked_ids is not None else []

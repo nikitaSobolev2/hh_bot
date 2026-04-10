@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.bot.modules.autoparse.callbacks import FeedCallback
+from src.services.hh.feed_gating import HhFeedAccountStatus
 
 
 def _make_callback(session_id: int, action: str, vacancy_id: int = 0):
@@ -44,6 +45,10 @@ async def test_handle_feed_start_sends_first_vacancy_card(make_feed_session, mak
         patch(
             "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
             AsyncMock(return_value=feed_session),
+        ),
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.classify_user_hh_accounts",
+            AsyncMock(return_value=(HhFeedAccountStatus.NONE, [])),
         ),
         patch("src.bot.modules.autoparse.feed_handlers.AutoparsedVacancyRepository") as mock_repo,
     ):
@@ -113,6 +118,100 @@ async def test_handle_feed_start_alerts_when_session_completed(make_feed_session
     assert callback.answer.call_args.kwargs.get("show_alert") is True
 
 
+@pytest.mark.asyncio
+async def test_handle_feed_start_auto_selects_only_browser_capable_account(
+    make_feed_session,
+    make_vacancy,
+) -> None:
+    callback, callback_data = _make_callback(session_id=1, action="start")
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(
+        session_id=1,
+        vacancy_ids=[10],
+        current_index=0,
+        is_completed=False,
+        hh_linked_account_id=None,
+    )
+    vacancy = make_vacancy(vacancy_id=10, url="https://hh.ru/10")
+    user = MagicMock(id=42)
+    browser_account = MagicMock(id=7)
+
+    with (
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
+            AsyncMock(return_value=feed_session),
+        ),
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.classify_user_hh_accounts",
+            AsyncMock(return_value=(HhFeedAccountStatus.SINGLE, [browser_account])),
+        ),
+        patch("src.bot.modules.autoparse.feed_handlers.VacancyFeedSessionRepository") as feed_repo_cls,
+        patch("src.bot.modules.autoparse.feed_handlers.AutoparsedVacancyRepository") as mock_repo,
+    ):
+        feed_repo = AsyncMock()
+        feed_repo.update = AsyncMock()
+        feed_repo_cls.return_value = feed_repo
+        mock_repo_instance = AsyncMock()
+        mock_repo_instance.get_by_id = AsyncMock(return_value=vacancy)
+        mock_repo.return_value = mock_repo_instance
+
+        from src.bot.modules.autoparse.feed_handlers import handle_feed_start
+
+        await handle_feed_start(
+            callback=callback,
+            callback_data=callback_data,
+            session=mock_session,
+            user=user,
+            i18n=_make_i18n(),
+        )
+
+    feed_repo.update.assert_awaited_once_with(feed_session, hh_linked_account_id=7)
+    mock_session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_feed_pick_hh_account_rejects_ineligible_account(
+    make_feed_session,
+) -> None:
+    callback, callback_data = _make_callback(session_id=1, action="pick_hh_account")
+    callback_data.hh_account_id = 99
+    mock_session = AsyncMock()
+    feed_session = make_feed_session(session_id=1, is_completed=False)
+    user = MagicMock(id=42)
+    ineligible_account = MagicMock(user_id=42, revoked_at=None)
+
+    with (
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.feed_services.get_feed_session",
+            AsyncMock(return_value=feed_session),
+        ),
+        patch("src.bot.modules.autoparse.feed_handlers.HhLinkedAccountRepository") as repo_cls,
+        patch(
+            "src.bot.modules.autoparse.feed_handlers.hh_account_supports_capability",
+            return_value=False,
+        ),
+        patch(
+            "src.bot.modules.autoparse.feed_handlers._current_feed_account_capability",
+            return_value="browser",
+        ),
+    ):
+        repo = AsyncMock()
+        repo.get_by_id = AsyncMock(return_value=ineligible_account)
+        repo_cls.return_value = repo
+
+        from src.bot.modules.autoparse.feed_handlers import handle_feed_pick_hh_account
+
+        await handle_feed_pick_hh_account(
+            callback=callback,
+            callback_data=callback_data,
+            session=mock_session,
+            user=user,
+            i18n=_make_i18n(),
+        )
+
+    callback.answer.assert_awaited_once_with("feed-pick-hh-browser-required", show_alert=True)
+
+
 # ── handle_feed_react ───────────────────────────────────────────────
 
 
@@ -123,7 +222,7 @@ async def test_handle_feed_react_like_advances_to_next_vacancy(make_feed_session
     feed_session = make_feed_session(vacancy_ids=[10, 20], current_index=0, is_completed=False)
     next_vacancy = make_vacancy(vacancy_id=20, url="https://hh.ru/20")
 
-    async def simulate_record_reaction(session, fs, vacancy_id, is_like):
+    def simulate_record_reaction(session, fs, vacancy_id, is_like):
         fs.current_index = 1
 
     with (
@@ -167,7 +266,7 @@ async def test_handle_feed_react_on_last_vacancy_shows_results(make_feed_session
         is_completed=False,
     )
 
-    async def simulate_record_reaction(session, fs, vacancy_id, is_like):
+    def simulate_record_reaction(session, fs, vacancy_id, is_like):
         fs.current_index = 1
         fs.liked_ids = [vacancy_id]
 

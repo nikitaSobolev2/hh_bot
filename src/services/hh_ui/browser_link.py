@@ -39,6 +39,13 @@ def validate_playwright_storage_state(obj: Any) -> dict[str, Any]:
     return obj
 
 
+def validate_logged_in_playwright_storage_state(obj: Any) -> dict[str, Any]:
+    state = validate_playwright_storage_state(obj)
+    if not is_logged_in_storage_state(state):
+        raise ValueError("not-logged-in")
+    return state
+
+
 def _jwt_sub_or_id(token: str) -> str | None:
     try:
         parts = token.strip().split(".")

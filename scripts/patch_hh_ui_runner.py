@@ -6,46 +6,48 @@ corrupt the file. Use version control and review the diff manually after running
 
 Original purpose: extract ``_apply_vacancy_flow_on_page`` and add batch apply.
 """
+from __future__ import annotations
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-path = ROOT / "src" / "services" / "hh_ui" / "runner.py"
-text = path.read_text(encoding="utf-8")
 
-text = text.replace(
-    "from dataclasses import replace",
-    "from dataclasses import dataclass, replace",
-    1,
-)
-text = text.replace(
-    "from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption",
-    """from src.services.hh_ui.apply_retry import (
+
+def build_patched_runner(text: str) -> str:
+    text = text.replace(
+        "from dataclasses import replace",
+        "from dataclasses import dataclass, replace",
+        1,
+    )
+    text = text.replace(
+        "from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption",
+        """from src.services.hh_ui.apply_retry import (
     apply_outcome_is_retryable,
     apply_outcome_is_terminal_no_retry,
     apply_retry_delay_seconds,
 )
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption""",
-    1,
-)
+        1,
+    )
 
-start = text.index("def apply_to_vacancy_ui(")
-end = text.index("\ndef vacancy_url_from_hh_id")
+    start = text.index("def apply_to_vacancy_ui(")
+    end = text.index("\ndef vacancy_url_from_hh_id")
 
-inner_start = text.index("            logger.info(\n                \"apply_to_vacancy_ui_step\",\n                log_user_id=log_user_id,\n                step=\"after_goto\",", start)
-inner_end = text.index(
-    '            return _finish(ApplyResult(outcome=ApplyOutcome.SUCCESS), "success")', start
-) + len('            return _finish(ApplyResult(outcome=ApplyOutcome.SUCCESS), "success")')
+    inner_start = text.index("            logger.info(\n                \"apply_to_vacancy_ui_step\",\n                log_user_id=log_user_id,\n                step=\"after_goto\",", start)
+    inner_end = text.index(
+        '            return _finish(ApplyResult(outcome=ApplyOutcome.SUCCESS), "success")', start
+    ) + len('            return _finish(ApplyResult(outcome=ApplyOutcome.SUCCESS), "success")')
 
-inner_block = text[inner_start:inner_end]
-inner_lines = []
-for line in inner_block.splitlines():
-    if line.startswith("            "):
-        inner_lines.append("        " + line[12:])
-    else:
-        inner_lines.append(line)
-inner_body = "\n".join(inner_lines)
+    inner_block = text[inner_start:inner_end]
+    inner_lines = []
+    for line in inner_block.splitlines():
+        if line.startswith("            "):
+            inner_lines.append("        " + line[12:])
+        else:
+            inner_lines.append(line)
+    inner_body = "\n".join(inner_lines)
 
-prefix = '''def apply_to_vacancy_ui(
+    prefix = '''def apply_to_vacancy_ui(
     *,
     storage_state: dict[str, Any],
     vacancy_url: str,
@@ -168,7 +170,7 @@ def _apply_vacancy_flow_on_page(
     try:
 '''
 
-suffix = '''    except PlaywrightTimeoutError as exc:
+    suffix = '''    except PlaywrightTimeoutError as exc:
         logger.info(
             "apply_to_vacancy_ui_done",
             log_user_id=log_user_id,
@@ -213,7 +215,7 @@ suffix = '''    except PlaywrightTimeoutError as exc:
 
 '''
 
-batch_fn = '''
+    batch_fn = '''
 
 @dataclass(frozen=True)
 class VacancyApplySpec:
@@ -300,7 +302,18 @@ def apply_to_vacancies_ui_batch(
 
 '''
 
-new_apply = prefix + inner_body + suffix + batch_fn
-out = text[:start] + new_apply + text[end:]
-path.write_text(out, encoding="utf-8")
-print("patched", path)
+    new_apply = prefix + inner_body + suffix + batch_fn
+    return text[:start] + new_apply + text[end:]
+
+
+def main() -> int:
+    path = ROOT / "src" / "services" / "hh_ui" / "runner.py"
+    text = path.read_text(encoding="utf-8")
+    out = build_patched_runner(text)
+    path.write_text(out, encoding="utf-8")
+    print("patched", path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

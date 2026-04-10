@@ -12,6 +12,7 @@ from src.config import settings
 from src.core.i18n import get_text
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh.linked_account_browser_storage import (
+    BrowserStoragePersistOutcome,
     persist_browser_storage_for_linked_account,
     persist_browser_storage_state_for_user,
 )
@@ -145,7 +146,7 @@ async def _login_assist_async(
             cipher = HhTokenCipher(settings.hh_token_encryption_key)
             async with session_factory() as session:
                 if hh_linked_account_id is not None:
-                    await persist_browser_storage_for_linked_account(
+                    persist_result = await persist_browser_storage_for_linked_account(
                         session,
                         user_id,
                         hh_linked_account_id,
@@ -153,14 +154,24 @@ async def _login_assist_async(
                         cipher=cipher,
                     )
                 else:
-                    await persist_browser_storage_state_for_user(
+                    persist_result = await persist_browser_storage_state_for_user(
                         session, user_id, state_dict, cipher=cipher
                     )
                 await session.commit()
-            log.info("hh_login_assist persisted", outcome="success")
+            log.info(
+                "hh_login_assist persisted",
+                outcome="success",
+                persist_outcome=persist_result.outcome.value,
+                persisted_account_id=persist_result.account_id,
+                requested_account_id=hh_linked_account_id,
+                hh_user_id=persist_result.hh_user_id,
+            )
+            success_key = "hh-login-assist-success"
+            if persist_result.outcome == BrowserStoragePersistOutcome.UPDATED_OTHER_EXISTING:
+                success_key = "hh-login-assist-success-different-account"
             with contextlib.suppress(Exception):
                 await self.notify_user(
-                    bot, chat_id, message_id, get_text("hh-login-assist-success", locale)
+                    bot, chat_id, message_id, get_text(success_key, locale)
                 )
             return {"status": "success"}
 

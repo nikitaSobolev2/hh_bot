@@ -134,6 +134,14 @@ async def test_browser_import_preserves_autoparse_continue_state(
 
     with (
         patch(
+            "src.services.hh.linked_account_browser_storage.HhLinkedAccountRepository",
+            return_value=MagicMock(
+                get_by_user_and_hh_user_id=AsyncMock(return_value=None),
+                create=AsyncMock(return_value=MagicMock(id=1)),
+                clear_resume_list_cache=AsyncMock(),
+            ),
+        ),
+        patch(
             "src.bot.modules.hh_accounts.handlers._hub_message",
             new_callable=AsyncMock,
             return_value=("hub", MagicMock()),
@@ -144,3 +152,54 @@ async def test_browser_import_preserves_autoparse_continue_state(
     state.clear.assert_not_awaited()
     state.set_state.assert_awaited()
     assert message.answer.await_count >= 3
+
+
+@pytest.mark.asyncio
+async def test_browser_import_rejects_not_logged_in_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.bot.modules.hh_accounts.handlers import hh_browser_import_document
+
+    key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setattr(
+        "src.bot.modules.hh_accounts.handlers.settings.hh_token_encryption_key",
+        key,
+    )
+    monkeypatch.setattr(
+        "src.bot.modules.hh_accounts.handlers.settings.hh_ui_apply_enabled",
+        True,
+    )
+
+    payload = {
+        "cookies": [{"domain": ".hh.ru", "name": "landing", "value": "anon"}],
+        "origins": [],
+    }
+
+    def fake_download(_doc, destination: BytesIO) -> None:
+        destination.write(json.dumps(payload).encode("utf-8"))
+        destination.seek(0)
+
+    message = MagicMock()
+    message.document = MagicMock()
+    message.document.file_name = "hh_browser_storage_state.json"
+    message.bot.download = AsyncMock(side_effect=fake_download)
+    message.answer = AsyncMock()
+
+    user = MagicMock()
+    user.id = 7
+
+    session = MagicMock()
+    session.commit = AsyncMock()
+
+    state = MagicMock()
+    state.clear = AsyncMock()
+    state.get_data = AsyncMock(return_value={})
+    state.set_state = AsyncMock()
+
+    i18n = MagicMock()
+    i18n.get.side_effect = lambda key, **kwargs: key
+
+    await hh_browser_import_document(message, session, user, state, i18n)
+
+    session.commit.assert_not_awaited()
+    message.answer.assert_awaited_once_with("hh-accounts-browser-err-not-logged-in")
