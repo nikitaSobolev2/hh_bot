@@ -816,6 +816,7 @@ async def include_reacted_selected(
         data.get("keyword_filter", ""),
         data.get("skills", ""),
         include_reacted_in_feed=include_reacted,
+        keyword_check_enabled=True,
         parse_mode=data.get("parse_mode", "api"),
         parse_hh_linked_account_id=data.get("parse_hh_linked_account_id"),
     )
@@ -1439,6 +1440,29 @@ async def toggle_company(
         i18n.get("autoparse-toggle-enabled")
         if company.is_enabled
         else i18n.get("autoparse-toggle-disabled")
+    )
+    await callback.answer(msg, show_alert=True)
+    await _render_company_detail_message(callback.message, user, session, i18n, company)
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "toggle_keyword_check"))
+async def toggle_keyword_check(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    company = await ap_service.toggle_autoparse_keyword_check(
+        session, callback_data.company_id, user.id
+    )
+    if not company:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+    msg = (
+        i18n.get("autoparse-toggle-keyword-check-enabled")
+        if company.keyword_check_enabled
+        else i18n.get("autoparse-toggle-keyword-check-disabled")
     )
     await callback.answer(msg, show_alert=True)
     await _render_company_detail_message(callback.message, user, session, i18n, company)

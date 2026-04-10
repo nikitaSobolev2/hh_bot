@@ -32,6 +32,7 @@ __all__ = (
     "mark_parsing_started",
     "reset_company_vacancy_pool",
     "soft_delete_autoparse_company",
+    "toggle_autoparse_keyword_check",
     "toggle_autoparse_company",
     "update_user_autoparse_settings",
 )
@@ -45,6 +46,7 @@ async def create_autoparse_company(
     skills: str,
     *,
     include_reacted_in_feed: bool = False,
+    keyword_check_enabled: bool = True,
     parse_mode: str = "api",
     parse_hh_linked_account_id: int | None = None,
 ) -> AutoparseCompany:
@@ -54,6 +56,7 @@ async def create_autoparse_company(
         vacancy_title=title,
         search_url=url,
         keyword_filter=keywords,
+        keyword_check_enabled=keyword_check_enabled,
         skills=skills,
         include_reacted_in_feed=include_reacted_in_feed,
         parse_mode=parse_mode,
@@ -89,6 +92,24 @@ async def toggle_autoparse_company(
     if not company:
         return None
     await repo.toggle(company)
+    await session.commit()
+    return company
+
+
+async def toggle_autoparse_keyword_check(
+    session: AsyncSession,
+    company_id: int,
+    user_id: int | None = None,
+) -> AutoparseCompany | None:
+    repo = AutoparseCompanyRepository(session)
+    company = (
+        await repo.get_by_id_for_user(company_id, user_id)
+        if user_id is not None
+        else await repo.get_by_id(company_id)
+    )
+    if not company:
+        return None
+    await repo.update(company, keyword_check_enabled=not company.keyword_check_enabled)
     await session.commit()
     return company
 

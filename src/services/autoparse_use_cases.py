@@ -38,6 +38,8 @@ def format_company_detail(
         if company.is_enabled
         else i18n.get("autoparse-status-disabled")
     )
+    keyword_check_enabled = company.keyword_check_enabled is not False
+    keyword_check_status = i18n.get("yes") if keyword_check_enabled else i18n.get("no")
     last_run = company.last_parsed_at.strftime("%Y-%m-%d %H:%M") if company.last_parsed_at else "—"
     url_label = i18n.get("autoparse-detail-url")
     lines = [
@@ -49,6 +51,7 @@ def format_company_detail(
         f"{i18n.get('autoparse-detail-parse-mode')}: "
         f"{i18n.get('autoparse-parse-mode-web-label' if company.parse_mode == 'web' else 'autoparse-parse-mode-api-label')}",
         f"{i18n.get('autoparse-detail-keywords')}: {company.keyword_filter or '—'}",
+        f"{i18n.get('autoparse-detail-keyword-check')}: {keyword_check_status}",
         f"{i18n.get('autoparse-detail-skills')}: {company.skills or '—'}",
         "",
         f"{i18n.get('autoparse-detail-metrics')}:",

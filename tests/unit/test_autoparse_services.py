@@ -112,6 +112,7 @@ class TestCreateAutoparseCompany:
         mock_repo.create.assert_called_once()
         call_kwargs = mock_repo.create.call_args.kwargs
         assert call_kwargs["include_reacted_in_feed"] is True
+        assert call_kwargs["keyword_check_enabled"] is True
 
     @pytest.mark.asyncio
     async def test_create_autoparse_company_default_include_reacted_is_false(self):
@@ -138,6 +139,7 @@ class TestCreateAutoparseCompany:
 
             call_kwargs = mock_repo.create.call_args.kwargs
             assert call_kwargs.get("include_reacted_in_feed", False) is False
+            assert call_kwargs["keyword_check_enabled"] is True
 
 
 class TestGetReactedVacancyIdsForUser:

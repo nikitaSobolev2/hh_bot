@@ -652,6 +652,160 @@ class TestAutoparseTaskProgressIntegration:
         assert inserted_row.ai_stack == ["Python", "FastAPI"]
 
     @pytest.mark.asyncio
+    async def test_does_not_reuse_zero_compatibility_score(self):
+        company = _make_company(company_id=24, vacancy_title="Python Dev")
+        user = _make_user(telegram_id=778)
+        user.autoparse_settings = {"tech_stack": ["Python"]}
+        session = _make_session()
+        session_factory = MagicMock(return_value=session)
+        fake_task = MagicMock()
+        fake_task.request.id = "test-id-zero-reuse"
+        _configure_vacancy_processing_locks(fake_task)
+
+        search_cards = [
+            {
+                "hh_vacancy_id": "123",
+                "url": "https://hh.ru/vacancy/123",
+                "title": "Python Dev",
+                "cached": True,
+            }
+        ]
+        reusable = MagicMock(
+            compatibility_score=0.0,
+            ai_summary="Old zero summary",
+            ai_stack=["Python"],
+        )
+        existing_ap = MagicMock(
+            hh_vacancy_id="123",
+            url="https://hh.ru/vacancy/123",
+            title="Python Dev",
+            description="d",
+            raw_skills=["Python"],
+            company_name="Co",
+            company_url=None,
+            salary=None,
+            compensation_frequency=None,
+            work_experience=None,
+            employment_type=None,
+            work_schedule=None,
+            working_hours=None,
+            work_formats=None,
+            tags=None,
+            snippet_requirement=None,
+            snippet_responsibility=None,
+            experience_id=None,
+            experience_name=None,
+            schedule_id=None,
+            schedule_name=None,
+            employment_id=None,
+            employment_name=None,
+            employment_form_id=None,
+            employment_form_name=None,
+            salary_from=None,
+            salary_to=None,
+            salary_currency=None,
+            salary_gross=None,
+            address_raw=None,
+            address_city=None,
+            address_street=None,
+            address_building=None,
+            address_lat=None,
+            address_lng=None,
+            metro_stations=None,
+            vacancy_type_id=None,
+            published_at=None,
+            work_format=None,
+            professional_roles=None,
+            employer_id=1,
+            area_id=1,
+            compatibility_score=0.0,
+            ai_summary="Old zero summary",
+            ai_stack=["Python"],
+        )
+        progress_mock = AsyncMock()
+
+        base_patches = [
+            patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
+                new=AsyncMock(return_value=search_cards),
+            ),
+            patch(
+                "src.repositories.hh.HHEmployerRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.repositories.hh.HHAreaRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
+            patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
+            patch(
+                "src.worker.tasks.autoparse._send_run_completed_notification",
+                new=AsyncMock(),
+            ),
+            patch("aiogram.Bot", return_value=_make_mock_bot()),
+            patch(
+                "src.services.ai.client.AIClient.analyze_vacancies_batch",
+                new_callable=AsyncMock,
+                return_value={
+                    "123": MagicMock(
+                        compatibility_score=77.0,
+                        summary="Fresh summary",
+                        stack=["Python", "FastAPI"],
+                    )
+                },
+            ),
+        ]
+
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            ai_mock = None
+            for p in (
+                base_patches
+                + _repo_patches(company, user)
+                + _crypto_patches()
+                + _progress_patches(progress_mock)
+            ):
+                result = stack.enter_context(p)
+                if getattr(p, "attribute", None) == "analyze_vacancies_batch":
+                    ai_mock = result
+            vacancy_repo = AsyncMock()
+            vacancy_repo.get_known_hh_ids_for_company = AsyncMock(return_value=set())
+            vacancy_repo.get_all_known_hh_ids = AsyncMock(return_value={"123"})
+            vacancy_repo.get_analyzed_for_user_hh_id = AsyncMock(return_value=reusable)
+            vacancy_repo.get_by_company_hh_id_with_employer = AsyncMock(return_value=existing_ap)
+            stack.enter_context(
+                patch(
+                    "src.repositories.autoparse.AutoparsedVacancyRepository",
+                    return_value=vacancy_repo,
+                )
+            )
+
+            from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+            result = await _run_autoparse_company_async(
+                session_factory,
+                fake_task,
+                company_id=24,
+                notify_user_id=42,
+            )
+
+        assert result["status"] == "completed"
+        assert ai_mock.await_count == 1
+        fake_task.acquire_user_vacancy_processing_lock.assert_awaited()
+        inserted_row = session.add.call_args.args[0]
+        assert inserted_row.compatibility_score == pytest.approx(77.0)
+        assert inserted_row.ai_summary == "Fresh summary"
+        assert inserted_row.ai_stack == ["Python", "FastAPI"]
+
+    @pytest.mark.asyncio
     async def test_does_not_advance_analyzed_progress_for_unanalyzed_locked_vacancy(self):
         company = _make_company(company_id=23, vacancy_title="Python Dev")
         user = _make_user(telegram_id=889)

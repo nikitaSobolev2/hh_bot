@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.services.parser.keyword_match import matches_keyword_expression
+from src.services.autoparse.compatibility import compatibility_score_needs_regeneration
 
 if TYPE_CHECKING:
     from src.models.autoparse import AutoparsedVacancy
@@ -22,7 +23,7 @@ def vacancy_passes_compatibility(
     *,
     allow_missing_score: bool = False,
 ) -> bool:
-    if vacancy.compatibility_score is None:
+    if compatibility_score_needs_regeneration(vacancy.compatibility_score):
         return allow_missing_score
     return float(vacancy.compatibility_score) >= float(min_compat)
 

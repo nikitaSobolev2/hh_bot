@@ -19,6 +19,7 @@ class TestAutoparseCompany:
         assert company.total_runs == 0
         assert company.total_vacancies_found == 0
         assert company.keyword_filter == ""
+        assert company.keyword_check_enabled is None
         assert company.skills == ""
 
     def test_repr(self):

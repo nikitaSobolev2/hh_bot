@@ -110,6 +110,69 @@ async def _load_candidates(
     return [v for v in rows if v.created_at and v.created_at >= task_started_at]
 
 
+async def _regenerate_missing_compatibility_scores(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    user_id: int,
+    vacancies: list[AutoparsedVacancy],
+    user_stack: list[str],
+    user_exp: str,
+) -> None:
+    """Fill stale compatibility scores (NULL/0) before autorespond filtering."""
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+    from src.schemas.vacancy import build_vacancy_api_context_from_orm
+    from src.services.ai.client import AIClient
+    from src.services.ai.prompts import VacancyCompatInput
+    from src.services.autoparse.compatibility import compatibility_score_needs_regeneration
+
+    stale = [v for v in vacancies if compatibility_score_needs_regeneration(v.compatibility_score)]
+    if not stale or not (user_stack or user_exp):
+        return
+
+    ai_client = AIClient()
+    try:
+        analyses = await ai_client.analyze_vacancies_batch(
+            [
+                VacancyCompatInput(
+                    hh_vacancy_id=v.hh_vacancy_id,
+                    title=v.title or "",
+                    skills=v.raw_skills or [],
+                    description=v.description or "",
+                    vacancy_api_context=build_vacancy_api_context_from_orm(v),
+                )
+                for v in stale
+            ],
+            user_tech_stack=user_stack,
+            user_work_experience=user_exp,
+        )
+
+        async with session_factory() as session:
+            repo = AutoparsedVacancyRepository(session)
+            for vacancy in stale:
+                analysis = analyses.get(vacancy.hh_vacancy_id)
+                if analysis is None:
+                    continue
+                await repo.update(
+                    vacancy,
+                    compatibility_score=analysis.compatibility_score,
+                    ai_summary=analysis.summary or None,
+                    ai_stack=analysis.stack or None,
+                )
+                vacancy.compatibility_score = analysis.compatibility_score
+                vacancy.ai_summary = analysis.summary or None
+                vacancy.ai_stack = analysis.stack or None
+            await session.commit()
+    except Exception as exc:
+        logger.warning(
+            "autorespond_pre_filter_compat_regeneration_failed",
+            user_id=user_id,
+            vacancies=len(stale),
+            error=str(exc),
+        )
+    finally:
+        await ai_client.aclose()
+
+
 async def _unreacted_autoparsed_vacancy_ids(
     session_factory: async_sessionmaker[AsyncSession],
     company_id: int,
@@ -402,13 +465,29 @@ async def _run_autorespond_async(
         cover_task_enabled = bool(
             await settings_repo.get_value(AppSettingKey.TASK_COVER_LETTER_ENABLED, default=True)
         )
+        from src.repositories.work_experience import WorkExperienceRepository
+        from src.worker.tasks.autoparse import _build_user_profile
+
+        work_experiences = await WorkExperienceRepository(session).get_active_by_user(user.id)
+        user_stack, user_exp = _build_user_profile(ap_settings, work_experiences)
 
         raw = await _load_candidates(session, company_id, vacancy_ids, task_started_at)
+        await _regenerate_missing_compatibility_scores(
+            session_factory,
+            user_id=user.id,
+            vacancies=raw,
+            user_stack=user_stack,
+            user_exp=user_exp,
+        )
         # Always apply the same keyword_filter as autorespond settings (title / title+desc).
         # The old manual_unreacted exception skipped keywords and only gated on compatibility,
         # which applied to vacancies that never matched the user's keyword rules (e.g. generic
         # or frontend titles).
-        kw_filter = company.keyword_filter or ""
+        kw_filter = (
+            (company.keyword_filter or "")
+            if company.keyword_check_enabled is not False
+            else ""
+        )
         allow_missing_compat = vacancy_ids is not None
         compat_rejected, keyword_rejected = _autorespond_filter_rejection_counts(
             raw,
@@ -436,6 +515,7 @@ async def _run_autorespond_async(
             raw_loaded=len(raw),
             min_compat=company.autorespond_min_compat,
             keyword_mode=company.autorespond_keyword_mode,
+            keyword_check_enabled=(company.keyword_check_enabled is not False),
             keyword_filter_chars=len(kw_filter.strip()),
             keyword_filter_skipped_for_trigger=False,
             allow_missing_compatibility_score=allow_missing_compat,

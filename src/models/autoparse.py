@@ -22,6 +22,7 @@ class AutoparseCompany(Base):
     vacancy_title: Mapped[str] = mapped_column(String(500), nullable=False)
     search_url: Mapped[str] = mapped_column(Text, nullable=False)
     keyword_filter: Mapped[str] = mapped_column(String(500), default="")
+    keyword_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     skills: Mapped[str] = mapped_column(Text, default="")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -447,6 +447,12 @@ def autoparse_detail_keyboard(
         if company.is_enabled
         else i18n.get("autoparse-toggle-enabled")
     )
+    keyword_check_enabled = company.keyword_check_enabled is not False
+    keyword_toggle_text = (
+        i18n.get("autoparse-keyword-check-disable")
+        if keyword_check_enabled
+        else i18n.get("autoparse-keyword-check-enable")
+    )
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
@@ -473,6 +479,14 @@ def autoparse_detail_keyboard(
                     action="edit_parse_mode", company_id=company.id
                 ).pack(),
             ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=keyword_toggle_text,
+                callback_data=AutoparseCallback(
+                    action="toggle_keyword_check", company_id=company.id
+                ).pack(),
+            )
         ],
         [
             InlineKeyboardButton(

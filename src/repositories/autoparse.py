@@ -36,6 +36,15 @@ def _exclude_negotiations_placeholder_compat():
     )
 
 
+def _usable_compatibility_score_clause():
+    """Only treat positive compatibility scores as analyzed/final."""
+    return and_(
+        AutoparsedVacancy.compatibility_score.is_not(None),
+        AutoparsedVacancy.compatibility_score != NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT,
+        AutoparsedVacancy.compatibility_score > 0,
+    )
+
+
 class AutoparseCompanyRepository(BaseRepository[AutoparseCompany]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, AutoparseCompany)
@@ -226,8 +235,7 @@ class AutoparsedVacancyRepository(BaseRepository[AutoparsedVacancy]):
                 AutoparseCompany.user_id == user_id,
                 AutoparseCompany.is_deleted.is_(False),
                 AutoparsedVacancy.hh_vacancy_id == hh_vacancy_id,
-                AutoparsedVacancy.compatibility_score.is_not(None),
-                AutoparsedVacancy.compatibility_score != NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT,
+                _usable_compatibility_score_clause(),
             )
             .order_by(*_feed_order_by_clause())
             .limit(1)

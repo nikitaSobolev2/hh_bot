@@ -259,7 +259,11 @@ def _build_autoparsed_vacancy(
 
 def _reuse_analysis_fields(source) -> tuple[float | None, str | None, list[str] | None]:
     """Copy AI analysis fields from another autoparsed vacancy row."""
+    from src.services.autoparse.compatibility import compatibility_score_is_usable
+
     compat_score = getattr(source, "compatibility_score", None)
+    if not compatibility_score_is_usable(compat_score):
+        compat_score = None
     ai_summary = getattr(source, "ai_summary", None) or None
     ai_stack = getattr(source, "ai_stack", None)
     if isinstance(ai_stack, list):
@@ -273,7 +277,9 @@ def _has_analysis_fields(
     ai_stack: list[str] | None,
 ) -> bool:
     """Return True when compatibility analysis is already available for a vacancy."""
-    return compat_score is not None or ai_summary is not None or ai_stack is not None
+    from src.services.autoparse.compatibility import compatibility_score_is_usable
+
+    return compatibility_score_is_usable(compat_score)
 
 
 async def _resolve_cached_vacancy(
@@ -536,6 +542,7 @@ async def _run_autoparse_company_async(
             "Autoparse company starting",
             company_id=company_id,
             parse_mode=parse_mode,
+            keyword_check_enabled=(company.keyword_check_enabled is not False),
             resume_filter=bool(resume_filter_id),
             hh_linked_account_id=company.parse_hh_linked_account_id,
             has_browser_storage=bool(web_storage),
@@ -551,12 +558,15 @@ async def _run_autoparse_company_async(
         )
         scraper = parser._scraper
         from src.services.parser.hh_parser_service import partition_collected_urls
+        effective_keyword_filter = (
+            company.keyword_filter if company.keyword_check_enabled is not False else ""
+        )
 
         # Reuse only this company's own autoparsed rows plus the shared manual-parse cache.
         # Another autoparse company must never act as a detail cache source here.
         collected_urls = await scraper.collect_vacancy_urls(
             company.search_url,
-            company.keyword_filter,
+            effective_keyword_filter,
             target_count,
             known_ids_to_include=known_ids,
             parse_mode=parse_mode,
