@@ -48,6 +48,8 @@ services:
       target: app
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +72,7 @@ services:
     volumes:
       # Persist Playwright debug screenshots (admin: Debug Playwright Screenshots)
       - ./data/playwright_debug:/app/data/playwright_debug
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,6 +99,7 @@ services:
     env_file: .env
     volumes:
       - ./data/playwright_debug:/app/data/playwright_debug
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,6 +128,8 @@ services:
       target: login_assist
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./logs:/app/logs
     entrypoint: ["/app/docker/entrypoint-login-assist.sh"]
     command:
       - celery

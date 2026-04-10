@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,8 +40,12 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 
-    # Logging
+    # Logging — file logs go to ``log_dir/hh_bot.log`` (see ``setup_logging``); mount ``./logs`` in Docker.
     log_level: str = "INFO"
+    log_dir: Path = Field(
+        default_factory=lambda: BASE_DIR / "logs",
+        validation_alias=AliasChoices("HH_BOT_LOG_DIR", "log_dir"),
+    )
     log_telegram_chat_id: str = ""
     support_chat_id: str = ""
 

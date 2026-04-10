@@ -573,3 +573,29 @@ class TestHHCaptchaAndPublicApiBreaker:
         assert "circuit" in str(exc_info.value).lower()
         client.get.assert_not_called()
         mock_br.record_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_api_page_404_no_retry_single_call(self):
+        calls: list[object] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(
+                404,
+                json={"description": "Not Found", "errors": [{"type": "not_found"}]},
+            )
+
+        transport = httpx.MockTransport(handler)
+        mock_br = MagicMock()
+        mock_br.is_call_allowed.return_value = True
+        scraper = HHScraper(
+            public_api_breaker=mock_br,
+            page_delay=(0, 0),
+            vacancy_delay=(0, 0),
+        )
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/999999999")
+        assert result is None
+        assert len(calls) == 1
+        mock_br.record_success.assert_called_once()
+        mock_br.record_failure.assert_not_called()

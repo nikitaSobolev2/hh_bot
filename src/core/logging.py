@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 
 import structlog
 from rich.console import Console
@@ -9,7 +8,6 @@ from rich.logging import RichHandler
 
 from src.config import settings
 
-_LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
 _CONFIGURED = False
 
 
@@ -54,7 +52,8 @@ def setup_logging() -> None:
         return
     _CONFIGURED = True
 
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_dir = settings.log_dir
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -72,7 +71,7 @@ def setup_logging() -> None:
     root_logger.addHandler(console_handler)
 
     file_handler = RotatingFileHandler(
-        _LOG_DIR / "hh_bot.log",
+        log_dir / "hh_bot.log",
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",

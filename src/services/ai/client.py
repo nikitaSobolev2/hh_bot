@@ -10,11 +10,18 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from openai import APIStatusError, AsyncOpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    RateLimitError,
+)
 
 from src.config import settings
 from src.core.constants import AI_MAX_DESCRIPTION_LENGTH
 from src.core.logging import get_logger
+from src.worker.circuit_breaker import CircuitBreaker
 from src.schemas.ai import QAPair
 from src.schemas.vacancy import VacancyApiContext
 from src.services.ai.prompts import (
@@ -45,11 +52,73 @@ logger = get_logger(__name__)
 
 MAX_DESCRIPTION_LENGTH = AI_MAX_DESCRIPTION_LENGTH
 
+
+def _short_error(exc: BaseException, *, max_len: int = 480) -> str:
+    """Avoid multi-KB Cloudflare HTML blobs in log files and Docker output."""
+    s = str(exc)
+    if len(s) <= max_len:
+        return s
+    return f"{s[:max_len]}… [truncated, {len(s)} chars]"
+
 # 429 rate limit retry: Cloudflare recommends 30s minimum, exponential backoff
 _RATE_LIMIT_MIN_WAIT = 10
 _RATE_LIMIT_MAX_RETRIES = 5
+# Transient 5xx / Cloudflare 524 / timeouts: bounded retries with backoff (per logical call)
+_TRANSIENT_MAX_ATTEMPTS = 5
 # Matches retry_after in JSON-like strings: "retry_after": 30 or 'retry_after': 30
 _RETRY_AFTER_RE = re.compile(r"retry_after['\"]?\s*:\s*(\d+)", re.IGNORECASE)
+
+# 500–599: overloaded origin, bad gateway, Cloudflare 520–524, etc.
+_TRANSIENT_HTTP_STATUSES = frozenset(range(500, 600))
+
+_ai_gateway_breaker: CircuitBreaker | None = None
+
+
+class AIGatewayCircuitOpenError(RuntimeError):
+    """Redis circuit breaker open: recent AI gateway failures; avoid hammering upstream."""
+
+
+def _get_ai_gateway_circuit_breaker() -> CircuitBreaker:
+    global _ai_gateway_breaker
+    if _ai_gateway_breaker is None:
+        _ai_gateway_breaker = CircuitBreaker("ai_openai_gateway")
+    return _ai_gateway_breaker
+
+
+def _cb_allow_or_fail_open(cb: CircuitBreaker) -> bool:
+    """Return whether calls are allowed; on Redis errors, allow (degraded fail-open)."""
+    try:
+        return cb.is_call_allowed()
+    except Exception as exc:
+        logger.warning(
+            "AI gateway circuit breaker unavailable, allowing call",
+            error=_short_error(exc)[:240],
+        )
+        return True
+
+
+def _cb_record_success_safe(cb: CircuitBreaker) -> None:
+    try:
+        cb.record_success()
+    except Exception:
+        pass
+
+
+def _cb_record_failure_safe(cb: CircuitBreaker) -> None:
+    try:
+        cb.record_failure()
+    except Exception:
+        pass
+
+
+def _is_transient_http_status(status_code: int | None) -> bool:
+    if status_code is None:
+        return False
+    if status_code == 408:
+        return True
+    if status_code == 429:
+        return False
+    return status_code in _TRANSIENT_HTTP_STATUSES
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -104,10 +173,79 @@ def _extract_retry_after(exc: Exception) -> int:
     return _RATE_LIMIT_MIN_WAIT
 
 
+async def _call_with_transient_retry_inner[T](
+    coro_fn: Callable[[], Coroutine[Any, Any, T]],
+) -> T:
+    """Retries timeouts, connection blips, and HTTP 5xx/524 from the gateway/proxy.
+
+    Uses a shared Redis circuit breaker so workers back off when upstream stays unhealthy.
+    """
+    cb = _get_ai_gateway_circuit_breaker()
+    if not _cb_allow_or_fail_open(cb):
+        raise AIGatewayCircuitOpenError("AI gateway circuit breaker is open; skipping upstream call")
+
+    last_exc: Exception | None = None
+    for attempt in range(_TRANSIENT_MAX_ATTEMPTS):
+        try:
+            result = await coro_fn()
+            _cb_record_success_safe(cb)
+            return result
+        except RateLimitError:
+            raise
+        except APIStatusError as exc:
+            if _is_transient_http_status(exc.status_code):
+                last_exc = exc
+                if attempt >= _TRANSIENT_MAX_ATTEMPTS - 1:
+                    break
+                wait = min(8 * (2**attempt), 120)
+                logger.warning(
+                    "AI upstream transient error, retrying",
+                    status_code=exc.status_code,
+                    attempt=attempt + 1,
+                    max_attempts=_TRANSIENT_MAX_ATTEMPTS,
+                    wait_seconds=wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+            raise
+        except APITimeoutError as exc:
+            last_exc = exc
+            if attempt >= _TRANSIENT_MAX_ATTEMPTS - 1:
+                break
+            wait = min(10 * (2**attempt), 90)
+            logger.warning(
+                "AI request timed out, retrying",
+                attempt=attempt + 1,
+                max_attempts=_TRANSIENT_MAX_ATTEMPTS,
+                wait_seconds=wait,
+            )
+            await asyncio.sleep(wait)
+            continue
+        except APIConnectionError as exc:
+            last_exc = exc
+            if attempt >= _TRANSIENT_MAX_ATTEMPTS - 1:
+                break
+            wait = min(5 * (2**attempt), 60)
+            logger.warning(
+                "AI connection error, retrying",
+                attempt=attempt + 1,
+                max_attempts=_TRANSIENT_MAX_ATTEMPTS,
+                wait_seconds=wait,
+                error_short=str(exc)[:240],
+            )
+            await asyncio.sleep(wait)
+            continue
+
+    _cb_record_failure_safe(cb)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("AI transient retry exhausted without exception")
+
+
 async def _call_with_rate_limit_retry[T](
     coro_fn: Callable[[], Coroutine[Any, Any, T]],
 ) -> T:
-    """Execute an AI API call, retrying on 429 with exponential backoff.
+    """Execute an AI API call: transient retries (5xx/timeout), then 429 with long backoff.
 
     Catches RateLimitError and APIStatusError (status 429) including Cloudflare-style
     proxy errors. Uses retry_after from response when available; otherwise 30s minimum.
@@ -115,7 +253,9 @@ async def _call_with_rate_limit_retry[T](
     last_exc: Exception | None = None
     for attempt in range(_RATE_LIMIT_MAX_RETRIES):
         try:
-            return await coro_fn()
+            return await _call_with_transient_retry_inner(coro_fn)
+        except AIGatewayCircuitOpenError:
+            raise
         except (RateLimitError, APIStatusError) as exc:
             if not _is_rate_limit_error(exc):
                 raise
@@ -231,7 +371,7 @@ def _parse_batch_vacancy_analysis(raw: str) -> dict[str, VacancyAnalysis]:
             logger.warning(
                 "Batch vacancy analysis parse failed for hh_id",
                 hh_id=hh_id,
-                error=str(exc),
+                error=_short_error(exc),
             )
             result[hh_id] = VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
         i += 2
@@ -310,7 +450,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("OpenAI keyword extraction failed", error=str(exc))
+            logger.error("OpenAI keyword extraction failed", error=_short_error(exc))
             return []
 
     async def extract_keywords_batch(
@@ -355,7 +495,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("OpenAI batch keyword extraction failed", error=str(exc))
+            logger.error("OpenAI batch keyword extraction failed", error=_short_error(exc))
             return {v.hh_vacancy_id: [] for v in vacancies}
 
     async def analyze_vacancy(
@@ -404,7 +544,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("Vacancy analysis failed", error=str(exc))
+            logger.error("Vacancy analysis failed", error=_short_error(exc))
             return VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
 
     async def calculate_compatibility(
@@ -445,7 +585,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("Compatibility scoring failed", error=str(exc))
+            logger.error("Compatibility scoring failed", error=_short_error(exc))
             return 0.0
 
     async def calculate_compatibility_batch(
@@ -494,7 +634,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("Batch compatibility scoring failed", error=str(exc))
+            logger.error("Batch compatibility scoring failed", error=_short_error(exc))
             return {v.hh_vacancy_id: 0.0 for v in vacancies}
 
     async def analyze_vacancies_batch(
@@ -543,7 +683,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("Batch vacancy analysis failed", error=str(exc))
+            logger.error("Batch vacancy analysis failed", error=_short_error(exc))
             return {
                 v.hh_vacancy_id: VacancyAnalysis(summary="", stack=[], compatibility_score=0.0)
                 for v in vacancies
@@ -567,7 +707,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("OpenAI key phrases generation failed", error=str(exc))
+            logger.error("OpenAI key phrases generation failed", error=_short_error(exc))
             raise
 
     async def analyze_interview(
@@ -616,7 +756,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("Interview analysis failed", error=str(exc))
+            logger.error("Interview analysis failed", error=_short_error(exc))
             return ""
 
     async def generate_improvement_flow(
@@ -657,7 +797,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("Improvement flow generation failed", error=str(exc))
+            logger.error("Improvement flow generation failed", error=_short_error(exc))
             return ""
 
     async def generate_employer_question_answer(
@@ -733,7 +873,7 @@ class AIClient:
         try:
             return await _call_with_rate_limit_retry(_call)
         except Exception as exc:
-            logger.error("OpenAI generate_text failed", error=str(exc))
+            logger.error("OpenAI generate_text failed", error=_short_error(exc))
             raise
 
     async def stream_text(
@@ -768,7 +908,7 @@ class AIClient:
         try:
             stream = await _call_with_rate_limit_retry(_create_stream)
         except Exception as exc:
-            logger.error("OpenAI stream_text create failed", error=str(exc))
+            logger.error("OpenAI stream_text create failed", error=_short_error(exc))
             raise
 
         try:
@@ -804,7 +944,7 @@ class AIClient:
         try:
             stream = await _call_with_rate_limit_retry(_create_stream)
         except Exception as exc:
-            logger.error("OpenAI stream_key_phrases create failed", error=str(exc))
+            logger.error("OpenAI stream_key_phrases create failed", error=_short_error(exc))
             return
 
         try:

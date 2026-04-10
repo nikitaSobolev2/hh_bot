@@ -38,6 +38,11 @@ def _register_worker_managed_settings_loader() -> None:
 
     @worker_process_init.connect
     def _load_managed_settings_on_worker_start(**_kwargs: object) -> None:
+        # File + structlog (``logs/hh_bot.log``); Celery's ``--loglevel`` only affects its own stdout.
+        from src.core.logging import setup_logging
+
+        setup_logging()
+
         import asyncio
 
         from src.core.db_managed_settings import load_managed_settings_to_runtime

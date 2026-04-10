@@ -538,6 +538,13 @@ class HHScraper:
                 br.record_success()
                 return resp.json()
             except httpx.HTTPStatusError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    logger.info(
+                        "HH API vacancy not found (404), not retrying",
+                        url=url,
+                    )
+                    br.record_success()
+                    return None
                 body = ""
                 if exc.response is not None:
                     body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]

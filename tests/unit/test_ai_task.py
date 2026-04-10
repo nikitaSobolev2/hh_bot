@@ -227,3 +227,22 @@ class TestRateLimiter:
             await limiter.acquire()
 
         assert call_count == 2
+
+
+class TestAIGatewayTransientClassification:
+    """Guards for Cloudflare 5xx/524 and rate-limit vs transient split."""
+
+    def test_transient_http_includes_524_and_5xx(self):
+        from src.services.ai.client import _is_transient_http_status
+
+        assert _is_transient_http_status(524) is True
+        assert _is_transient_http_status(502) is True
+        assert _is_transient_http_status(503) is True
+        assert _is_transient_http_status(500) is True
+
+    def test_non_transient_client_errors(self):
+        from src.services.ai.client import _is_transient_http_status
+
+        assert _is_transient_http_status(404) is False
+        assert _is_transient_http_status(429) is False
+        assert _is_transient_http_status(408) is True
