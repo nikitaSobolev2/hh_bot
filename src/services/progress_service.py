@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+from html import escape
 import json
 
 from src.core.celery_async import normalize_celery_task_id
@@ -797,7 +798,7 @@ class ProgressService:
 
     def _render_task_section(self, state: dict, task_number: int = 1) -> str:
         """Render a single task block: number and title, optional group/steps, then bars."""
-        title = state["title"]
+        title = self._escape_html(state["title"])
         status = state.get("status", "running")
         is_done = status == "completed"
         is_retrying = status == "retrying"
@@ -809,7 +810,7 @@ class ProgressService:
         if isinstance(grp, dict) and grp.get("total", 0) > 0:
             gc = int(grp.get("current") or 0)
             gt = int(grp.get("total") or 0)
-            glabel = (grp.get("label") or "").strip()
+            glabel = self._escape_html((grp.get("label") or "").strip())
             part2 = f" — {glabel}" if glabel else ""
             lines.append(
                 get_text(
@@ -828,14 +829,14 @@ class ProgressService:
             )
             lines.extend(self._render_nested_steps_lines(state, is_done))
         if state.get("footer_lines"):
-            lines.extend(state["footer_lines"])
+            lines.extend(self._escape_html(line) for line in state["footer_lines"])
         if is_done and state.get("note"):
-            lines.append(state["note"])
+            lines.append(self._escape_html(state["note"]))
         for bar in state["bars"]:
             total = bar["total"]
             if total <= 0:
                 continue
-            lines.append(bar["label"])
+            lines.append(self._escape_html(bar["label"]))
             bar_line = render_bar(bar["current"], total)
             lines.append(f"{bar_line} ✅" if is_done else bar_line)
         return "\n".join(lines)
@@ -860,7 +861,7 @@ class ProgressService:
                         break
         for i, s in enumerate(steps):
             st = s.get("state") or "pending"
-            label = s.get("label") or s.get("id") or "?"
+            label = self._escape_html(s.get("label") or s.get("id") or "?")
             if st == "done" or (is_done and st != "skipped"):
                 mark = "✓"
             elif st == "skipped":
@@ -892,7 +893,7 @@ class ProgressService:
                         break
         for i, s in enumerate(steps):
             st = s.get("state") or "pending"
-            label = s.get("label") or s.get("id") or "?"
+            label = self._escape_html(s.get("label") or s.get("id") or "?")
             if st == "done" or (is_done and st != "skipped"):
                 mark = "✓"
             elif st == "skipped":
@@ -907,5 +908,10 @@ class ProgressService:
     def _render_summary(self, tasks: dict[str, dict]) -> str:
         """Render the all-done summary message sent after the pinned message is removed."""
         title = get_text("progress-completed-title", self._locale)
-        task_lines = "\n".join(f"• {state['title']}" for state in tasks.values())
+        task_lines = "\n".join(f"• {self._escape_html(state['title'])}" for state in tasks.values())
         return f"<b>{title}</b>\n\n{task_lines}"
+
+    @staticmethod
+    def _escape_html(value: object) -> str:
+        """Escape dynamic text before embedding it into Telegram HTML."""
+        return escape(str(value), quote=False)

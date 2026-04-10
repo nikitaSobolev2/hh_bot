@@ -619,6 +619,13 @@ class TestRenderProgressText:
         text = svc._render_progress_text(tasks)
         assert "Python Dev" in text
 
+    def test_escapes_html_unsafe_task_title(self):
+        svc, _, _ = _make_service()
+        tasks = {"parse:1": _task_state(title="C# / .NET <Lead> & Platform")}
+        text = svc._render_progress_text(tasks)
+        assert "C# / .NET &lt;Lead&gt; &amp; Platform" in text
+        assert "C# / .NET <Lead> & Platform" not in text
+
     def test_includes_task_number_in_message(self):
         svc, _, _ = _make_service()
         tasks = {
