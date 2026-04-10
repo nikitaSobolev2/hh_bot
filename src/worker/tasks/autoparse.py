@@ -14,6 +14,7 @@ from src.core.logging import get_logger
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.hh_captcha_retry import celery_captcha_retry_countdown
+from src.services.celery_active import celery_task_id_known_to_workers
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -348,8 +349,28 @@ async def _run_autoparse_company_async(
     lock_ttl = str(settings.autoparse_run_company_lock_ttl_seconds)
     acquired = r.eval(_ACQUIRE_LOCK_SCRIPT, 1, lock_key, task_id, lock_ttl)
     if not acquired:
-        logger.info("Autoparse company already running", company_id=company_id)
-        return {"status": "locked", "company_id": company_id}
+        holder_raw = r.get(lock_key)
+        if isinstance(holder_raw, (bytes, bytearray)):
+            holder = holder_raw.decode()
+        elif isinstance(holder_raw, str):
+            holder = holder_raw
+        else:
+            holder = ""
+        # Lock is Redis-only; after a worker crash the key can outlive the Celery task until TTL.
+        # If the stored task id is not active/reserved anywhere, clear and retry once.
+        if holder:
+            liveness = celery_task_id_known_to_workers(holder)
+            if liveness is False:
+                logger.warning(
+                    "Autoparse run lock stale (holder task not on workers), clearing",
+                    company_id=company_id,
+                    stale_task_id=holder[:12],
+                )
+                r.delete(lock_key)
+                acquired = r.eval(_ACQUIRE_LOCK_SCRIPT, 1, lock_key, task_id, lock_ttl)
+        if not acquired:
+            logger.info("Autoparse company already running", company_id=company_id)
+            return {"status": "locked", "company_id": company_id}
 
     _progress_bot = None
     progress = None

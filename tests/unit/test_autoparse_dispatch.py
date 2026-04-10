@@ -453,11 +453,16 @@ class TestRunAutoparseCompanyLock:
 
         redis_mock = MagicMock()
         redis_mock.eval = MagicMock(return_value=0)  # Lua script: lock held by different task
+        redis_mock.get = MagicMock(return_value=b"other-celery-task-id")
         redis_mock.delete = MagicMock()
 
         with (
             _crypto_patch(),
             patch("src.worker.tasks.autoparse._redis_client", return_value=redis_mock),
+            patch(
+                "src.worker.tasks.autoparse.celery_task_id_known_to_workers",
+                return_value=True,
+            ),
         ):
             result = asyncio.run(
                 _run_autoparse_company_async(
@@ -467,3 +472,30 @@ class TestRunAutoparseCompanyLock:
 
         assert result == {"status": "locked", "company_id": 7}
         redis_mock.delete.assert_not_called()
+
+    def test_stale_run_lock_cleared_when_holder_not_on_workers(self):
+        """After crash, lock key can outlive the task; clear if Celery no longer lists that id."""
+        from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+        redis_mock = MagicMock()
+        redis_mock.eval = MagicMock(side_effect=[0, 1])
+        redis_mock.get = MagicMock(return_value=b"dead-task-id")
+        redis_mock.delete = MagicMock()
+
+        with (
+            _crypto_patch(),
+            patch("src.worker.tasks.autoparse._redis_client", return_value=redis_mock),
+            patch(
+                "src.worker.tasks.autoparse.celery_task_id_known_to_workers",
+                return_value=False,
+            ),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=False),
+        ):
+            result = asyncio.run(
+                _run_autoparse_company_async(
+                    _make_session_factory(self._make_session()), MagicMock(), company_id=7
+                )
+            )
+
+        assert result == {"status": "circuit_open"}
+        redis_mock.delete.assert_any_call("lock:autoparse:run:7")
