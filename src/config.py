@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     autoparse_run_company_lock_renew_interval_seconds: int = Field(default=120, ge=30, le=3600)
     # DB-synced via admin toggle (see AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS)
     hh_ui_debug_playwright_screenshots: bool = False
+    negotiations_sync_fetch_vacancy_details: bool = False
     hh_ui_debug_screenshot_dir: str = str(_DEFAULT_PLAYWRIGHT_DEBUG_DIR)
 
     # HH server-side login assist (Playwright; optional noVNC — docs/HH_LOGIN_ASSIST.md)

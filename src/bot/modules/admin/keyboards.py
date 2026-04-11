@@ -49,6 +49,11 @@ MANAGED_SETTINGS = [
         "HH UI: send error screenshot to user (Telegram)",
         "toggle",
     ),
+    (
+        "negotiations_sync_fetch_vacancy_details",
+        "Negotiations Sync: fetch vacancy details via public API",
+        "toggle",
+    ),
 ]
 
 AUTOPARSE_TARGET_VALID = {10, 30, 50, 5000}

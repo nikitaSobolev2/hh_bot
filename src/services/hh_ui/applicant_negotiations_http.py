@@ -6,7 +6,7 @@ import random
 import re
 import time
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -25,7 +25,11 @@ logger = get_logger(__name__)
 NegotiationsSessionAvailability = Literal["ok", "login", "unexpected_url", "error"]
 
 _NEGOTIATIONS_PAGE_DELAY_FLOOR_S = 1.0
+_NEGOTIATIONS_ITEM_SELECTOR = '[data-qa="negotiations-item"]'
+_NEGOTIATIONS_ITEM_TITLE_SELECTOR = '[data-qa="negotiations-item-vacancy"]'
+_NEGOTIATIONS_ITEM_COMPANY_SELECTOR = '[data-qa="negotiations-item-company"]'
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)")
+_VACANCY_QUERY_ID_RE = re.compile(r"[?&]vacancyId=(\d+)")
 # Embedded JSON in Magritte / state blobs (6+ digits — HH vacancy ids are long).
 _JSON_VACANCY_ID_RE = re.compile(r'"vacancyId"\s*:\s*"?(\d{6,})"?')
 _JSON_VACANCY_ID_ALT_RE = re.compile(r'"vacancy_id"\s*:\s*"?(\d{6,})"?')
@@ -56,6 +60,75 @@ def _negotiations_page_delay_seconds(config: HhUiApplyConfig) -> float:
     lo = max(config.min_action_delay_ms / 1000.0, _NEGOTIATIONS_PAGE_DELAY_FLOOR_S)
     hi = max(config.max_action_delay_ms / 1000.0, lo)
     return random.uniform(lo, hi)
+
+
+def _clean_text(text: str | None) -> str:
+    return " ".join((text or "").replace("\xa0", " ").split())
+
+
+def _append_unique_vacancy_ids(out: list[str], seen: set[str], text: str) -> None:
+    for rx in (_VACANCY_QUERY_ID_RE, _VACANCY_ID_RE, _JSON_VACANCY_ID_RE, _JSON_VACANCY_ID_ALT_RE):
+        for match in rx.finditer(text):
+            vacancy_id = match.group(1)
+            if vacancy_id in seen:
+                continue
+            seen.add(vacancy_id)
+            out.append(vacancy_id)
+
+
+def _ordered_negotiation_vacancy_ids_from_html(html: str, soup: BeautifulSoup | None = None) -> list[str]:
+    soup = soup or BeautifulSoup(html, "html.parser")
+    seen: set[str] = set()
+    ordered: list[str] = []
+    items = soup.select(_NEGOTIATIONS_ITEM_SELECTOR)
+    for item in items:
+        _append_unique_vacancy_ids(ordered, seen, str(item))
+    scope = soup.select_one("main") or soup.select_one('[data-qa="negotiations-list"]')
+    if scope is None:
+        scope = soup
+    _append_unique_vacancy_ids(ordered, seen, str(scope))
+    for script in soup.find_all("script"):
+        _append_unique_vacancy_ids(ordered, seen, script.string or script.get_text() or "")
+    if not ordered:
+        _append_unique_vacancy_ids(ordered, seen, html)
+    return ordered
+
+
+def _extract_negotiation_item_vacancy_id(item: BeautifulSoup) -> str | None:
+    for attr in ("data-vacancy-id", "data-hh-vacancy-id", "data-vacancyId"):
+        value = item.get(attr)
+        if value and str(value).strip().isdigit():
+            return str(value).strip()
+    ordered = _ordered_negotiation_vacancy_ids_from_html(str(item))
+    return ordered[0] if ordered else None
+
+
+def _extract_negotiation_company_url(item: BeautifulSoup, final_url: str | None) -> str | None:
+    base_url = final_url or "https://hh.ru"
+    for link in item.find_all("a", href=True):
+        href = str(link.get("href") or "")
+        if "/employer/" not in href:
+            continue
+        return urljoin(base_url, href)
+    return None
+
+
+def _negotiation_card_dict(
+    item: BeautifulSoup,
+    vacancy_id: str | None,
+    final_url: str | None,
+) -> dict[str, str | None]:
+    title_el = item.select_one(_NEGOTIATIONS_ITEM_TITLE_SELECTOR)
+    company_el = item.select_one(_NEGOTIATIONS_ITEM_COMPANY_SELECTOR)
+    title = _clean_text(title_el.get_text(" ", strip=True) if title_el else "")
+    company_name = _clean_text(company_el.get_text(" ", strip=True) if company_el else "")
+    return {
+        "hh_vacancy_id": vacancy_id,
+        "url": f"https://hh.ru/vacancy/{vacancy_id}" if vacancy_id else "",
+        "title": title,
+        "company_name": company_name or None,
+        "company_url": _extract_negotiation_company_url(item, final_url),
+    }
 
 
 def fetch_applicant_negotiations_html(
@@ -164,6 +237,47 @@ def parse_negotiation_vacancy_ids_from_html(html: str) -> set[str]:
     return seen
 
 
+def parse_negotiation_vacancy_cards_from_html(
+    html: str,
+    final_url: str | None = None,
+) -> tuple[dict[str, dict[str, str | None]], set[str]]:
+    """Extract basic negotiations-card data keyed by HH vacancy id.
+
+    Returns ``(cards_by_hh_id, all_detected_hh_ids)``. When a saved DOM card does not expose its
+    own vacancy id, the parser falls back to ordered page-level ids only when counts line up.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    items = soup.select(_NEGOTIATIONS_ITEM_SELECTOR)
+    ordered_page_ids = _ordered_negotiation_vacancy_ids_from_html(html, soup)
+    cards = [
+        _negotiation_card_dict(item, _extract_negotiation_item_vacancy_id(item), final_url)
+        for item in items
+    ]
+    if cards and ordered_page_ids and len(ordered_page_ids) == len(cards):
+        for card, vacancy_id in zip(cards, ordered_page_ids, strict=False):
+            if card["hh_vacancy_id"]:
+                continue
+            card["hh_vacancy_id"] = vacancy_id
+            card["url"] = f"https://hh.ru/vacancy/{vacancy_id}"
+
+    cards_by_id: dict[str, dict[str, str | None]] = {}
+    unresolved_cards = 0
+    for card in cards:
+        vacancy_id = card.get("hh_vacancy_id")
+        if not vacancy_id:
+            unresolved_cards += 1
+            continue
+        cards_by_id.setdefault(str(vacancy_id), card)
+    if items:
+        logger.info(
+            "negotiations_parse_cards",
+            cards=len(items),
+            mapped_cards=len(cards_by_id),
+            unresolved_cards=unresolved_cards,
+        )
+    return cards_by_id, set(ordered_page_ids)
+
+
 def fetch_all_negotiation_vacancy_ids(
     storage_state: dict[str, Any],
     config: HhUiApplyConfig,
@@ -202,3 +316,47 @@ def fetch_all_negotiation_vacancy_ids(
         if page < max_pages:
             time.sleep(_negotiations_page_delay_seconds(config))
     return all_ids, None
+
+
+def fetch_all_negotiation_vacancy_cards(
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+    *,
+    max_pages: int = 100,
+) -> tuple[dict[str, dict[str, str | None]], set[str], str | None]:
+    """Fetch all negotiations pages and return basic card data plus all detected HH ids."""
+    all_ids: set[str] = set()
+    cards_by_id: dict[str, dict[str, str | None]] = {}
+    for page in range(1, max_pages + 1):
+        html, err, final_url = fetch_applicant_negotiations_html(storage_state, config, page=page)
+        if err:
+            return cards_by_id, all_ids, err
+        if not html:
+            break
+        if final_url and url_suggests_login_page(final_url):
+            return cards_by_id, all_ids, "login_redirect"
+        try:
+            path = urlparse(final_url or "").path.lower()
+            if APPLICANT_NEGOTIATIONS_PATH.rstrip("/") not in path and page == 1:
+                return cards_by_id, all_ids, "unexpected_url"
+        except Exception:
+            pass
+        page_cards, page_ids = parse_negotiation_vacancy_cards_from_html(html, final_url)
+        logger.info(
+            "negotiations_parse_cards_page",
+            page=page,
+            page_cards=len(page_cards),
+            page_unique_ids=len(page_ids),
+            cumulative_unique=len(all_ids | page_ids),
+        )
+        if not page_ids:
+            break
+        new_only = page_ids - all_ids
+        all_ids |= page_ids
+        for vacancy_id, card in page_cards.items():
+            cards_by_id.setdefault(vacancy_id, card)
+        if not new_only and page > 1:
+            break
+        if page < max_pages:
+            time.sleep(_negotiations_page_delay_seconds(config))
+    return cards_by_id, all_ids, None

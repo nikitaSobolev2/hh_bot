@@ -9,9 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import settings
+from src.core.constants import AppSettingKey
 from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.models.autoparse import NEGOTIATIONS_SYNC_PLACEHOLDER_COMPAT, AutoparsedVacancy
+from src.repositories.app_settings import AppSettingRepository
 from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
 from src.repositories.hh import HHAreaRepository, HHEmployerRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
@@ -19,7 +21,10 @@ from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.services.autoparse.negotiations_liked_merge import merge_liked_from_negotiations_sync
 from src.services.hh.crypto import HhTokenCipher
-from src.services.hh_ui.applicant_negotiations_http import fetch_all_negotiation_vacancy_ids
+from src.services.hh_ui.applicant_negotiations_http import (
+    fetch_all_negotiation_vacancy_cards,
+    fetch_all_negotiation_vacancy_ids,
+)
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.storage import decrypt_browser_storage
 from src.services.parser.scraper import HHCaptchaRequiredError
@@ -30,6 +35,23 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 _SYNC_RESUME_PLACEHOLDER = "sync"
+
+
+def _basic_negotiations_vacancy_dict(hh_vacancy_id: str, card: dict[str, str | None] | None) -> dict:
+    card = card or {}
+    return {
+        "hh_vacancy_id": hh_vacancy_id,
+        "url": card.get("url") or f"https://hh.ru/vacancy/{hh_vacancy_id}",
+        "title": card.get("title") or "",
+        "description": "",
+        "raw_skills": [],
+        "company_name": card.get("company_name"),
+        "company_url": card.get("company_url"),
+        "salary": None,
+        "orm_fields": {},
+        "employer_data": {},
+        "area_data": {},
+    }
 
 
 async def _sync_negotiations_async(
@@ -44,7 +66,17 @@ async def _sync_negotiations_async(
     notify_user: bool = True,
     prefetched_vacancy_ids: set[str] | None = None,
 ) -> dict:
+    basic_cards_by_id: dict[str, dict[str, str | None]] = {}
     vacancy_ids = prefetched_vacancy_ids
+    enrich_vacancy_details = False
+    async with session_factory() as session:
+        settings_repo = AppSettingRepository(session)
+        enrich_vacancy_details = bool(
+            await settings_repo.get_value(
+                AppSettingKey.NEGOTIATIONS_SYNC_FETCH_VACANCY_DETAILS,
+                default=False,
+            )
+        )
     if vacancy_ids is None:
         async with session_factory() as session:
             acc_repo = HhLinkedAccountRepository(session)
@@ -63,11 +95,18 @@ async def _sync_negotiations_async(
             return {"status": "error", "reason": "no_browser_session"}
 
         config = HhUiApplyConfig.from_settings()
-        vacancy_ids, fetch_err = await asyncio.to_thread(
-            fetch_all_negotiation_vacancy_ids,
-            storage,
-            config,
-        )
+        if enrich_vacancy_details:
+            vacancy_ids, fetch_err = await asyncio.to_thread(
+                fetch_all_negotiation_vacancy_ids,
+                storage,
+                config,
+            )
+        else:
+            basic_cards_by_id, vacancy_ids, fetch_err = await asyncio.to_thread(
+                fetch_all_negotiation_vacancy_cards,
+                storage,
+                config,
+            )
         if fetch_err:
             logger.info(
                 "negotiations_sync_fetch_issue",
@@ -75,6 +114,7 @@ async def _sync_negotiations_async(
                 hh_linked_account_id=hh_linked_account_id,
                 reason=fetch_err,
                 parsed_count=len(vacancy_ids),
+                enrich_vacancy_details=enrich_vacancy_details,
             )
             if fetch_err == "login_redirect" and not vacancy_ids:
                 return {"status": "error", "reason": "login_redirect"}
@@ -116,24 +156,33 @@ async def _sync_negotiations_async(
     missing = sorted(vacancy_ids - already)
     fetched: dict[str, dict] = {}
     if missing:
-        from src.services.autoparse.negotiations_vacancy_import import fetch_merged_vac_dicts_for_hh_ids
+        if enrich_vacancy_details:
+            from src.services.autoparse.negotiations_vacancy_import import fetch_merged_vac_dicts_for_hh_ids
 
-        try:
-            fetched = await fetch_merged_vac_dicts_for_hh_ids(missing)
-        except HHCaptchaRequiredError as exc:
-            logger.warning(
-                "negotiations_sync_fetch_aborted_captcha",
-                user_id=user_id,
-                hh_linked_account_id=hh_linked_account_id,
-                autoparse_company_id=autoparse_company_id,
-                missing=len(missing),
-                total_parsed=len(vacancy_ids),
-                error=str(exc)[:200],
-            )
-            return {
-                "status": "error",
-                "reason": "captcha_required",
-                "vacancy_ids": sorted(vacancy_ids),
+            try:
+                fetched = await fetch_merged_vac_dicts_for_hh_ids(missing)
+            except HHCaptchaRequiredError as exc:
+                logger.warning(
+                    "negotiations_sync_fetch_aborted_captcha",
+                    user_id=user_id,
+                    hh_linked_account_id=hh_linked_account_id,
+                    autoparse_company_id=autoparse_company_id,
+                    missing=len(missing),
+                    total_parsed=len(vacancy_ids),
+                    error=str(exc)[:200],
+                )
+                return {
+                    "status": "error",
+                    "reason": "captcha_required",
+                    "vacancy_ids": sorted(vacancy_ids),
+                }
+        else:
+            fetched = {
+                hh_vacancy_id: _basic_negotiations_vacancy_dict(
+                    hh_vacancy_id,
+                    basic_cards_by_id.get(hh_vacancy_id),
+                )
+                for hh_vacancy_id in missing
             }
 
     async with session_factory() as session:
@@ -260,6 +309,7 @@ async def _sync_negotiations_async(
         user_id=user_id,
         hh_linked_account_id=hh_linked_account_id,
         autoparse_company_id=autoparse_company_id,
+        enrich_vacancy_details=enrich_vacancy_details,
         inserted=inserted,
         skipped_existing=skipped_existing,
         total_parsed=len(vacancy_ids),

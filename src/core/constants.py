@@ -192,6 +192,7 @@ class AppSettingKey(StrEnum):
     HH_UI_DEBUG_SEND_ERROR_SCREENSHOT_TO_USER = "hh_ui_debug_send_error_screenshot_to_user"
     # Per-user daily cap for UI applies (Redis counter); 0 = unlimited (admin)
     HH_UI_APPLY_MAX_PER_DAY = "hh_ui_apply_max_per_day"
+    NEGOTIATIONS_SYNC_FETCH_VACANCY_DETAILS = "negotiations_sync_fetch_vacancy_details"
 
 
 # ---------------------------------------------------------------------------
