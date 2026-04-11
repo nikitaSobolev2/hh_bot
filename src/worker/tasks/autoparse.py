@@ -1057,7 +1057,12 @@ async def _run_autoparse_company_async(
             with contextlib.suppress(Exception):
                 if pipeline_progress is None:
                     await progress.finish_task(progress_task_key)
-        return {"status": "completed", "new_count": new_count, "company_id": company_id}
+        return {
+            "status": "completed",
+            "new_count": new_count,
+            "company_id": company_id,
+            "new_vacancy_ids": list(new_autorespond_vacancy_ids),
+        }
 
     except HHCaptchaRequiredError:
         if progress:

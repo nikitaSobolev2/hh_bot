@@ -1,0 +1,47 @@
+2026-04-10 19:35:59 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-10T19:35:59.407656Z'}
+2026-04-10 19:36:25 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-10T19:36:25.315299Z'}
+2026-04-10 19:36:26 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-10T19:36:26.427461Z'}
+2026-04-10 19:36:32 | INFO     | src.services.progress_service | {'chats': 1, 'event': 'progress_pins_refreshed_after_restart', 'logger': 'src.services.progress_service', 'level': 'info', 'timestamp': '2026-04-10T19:36:32.209336Z'}
+2026-04-10 19:36:32 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-10T19:36:32.256504Z'}
+2026-04-10 19:36:32 | INFO     | aiogram.dispatcher | Start polling
+2026-04-10 19:36:32 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-10 19:49:20 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-10 19:49:20 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-10 19:49:20 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-10 19:49:42 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-10T19:49:42.531094Z'}
+2026-04-10 19:50:09 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-10T19:50:09.629977Z'}
+2026-04-10 19:50:10 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-10T19:50:10.589261Z'}
+2026-04-10 19:50:17 | INFO     | src.services.progress_service | {'chats': 1, 'event': 'progress_pins_refreshed_after_restart', 'logger': 'src.services.progress_service', 'level': 'info', 'timestamp': '2026-04-10T19:50:17.460646Z'}
+2026-04-10 19:50:17 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-10T19:50:17.511736Z'}
+2026-04-10 19:50:17 | INFO     | aiogram.dispatcher | Start polling
+2026-04-10 19:50:17 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-10 20:04:25 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-10 20:04:25 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-10 20:04:25 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 12:55:23 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T12:55:23.237829Z'}
+2026-04-11 12:55:49 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T12:55:49.855785Z'}
+2026-04-11 12:55:51 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T12:55:51.042452Z'}
+2026-04-11 12:55:59 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T12:55:59.203467Z'}
+2026-04-11 12:55:59 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 12:55:59 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 13:05:28 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 13:05:28 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 13:05:28 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 13:05:49 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T13:05:49.133553Z'}
+2026-04-11 13:06:14 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T13:06:14.014370Z'}
+2026-04-11 13:06:15 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T13:06:15.051242Z'}
+2026-04-11 13:06:21 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T13:06:21.514317Z'}
+2026-04-11 13:06:21 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 13:06:21 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 13:09:20 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 13:09:20 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 13:09:20 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 13:17:11 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T13:17:11.348070Z'}
+2026-04-11 13:17:38 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T13:17:38.426037Z'}
+2026-04-11 13:17:39 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T13:17:39.585706Z'}
+2026-04-11 13:17:45 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T13:17:45.887644Z'}
+2026-04-11 13:17:45 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 13:17:45 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 13:23:12 | INFO     | src.services.hh_ui.runner | {'log_user_id': 1, 'branch': 'applicant', 'event': 'list_resumes_ui_start', 'logger': 'src.services.hh_ui.runner', 'level': 'info', 'timestamp': '2026-04-11T13:23:12.812746Z'}
+2026-04-11 13:23:16 | INFO     | src.services.hh_ui.runner | {'log_user_id': 1, 'branch': 'applicant', 'resume_count': 3, 'outcome': 'success', 'detail': None, 'event': 'list_resumes_ui_done', 'logger': 'src.services.hh_ui.runner', 'level': 'info', 'timestamp': '2026-04-11T13:23:16.396102Z'}
+2026-04-11 13:23:16 | INFO     | src.bot.modules.autoparse.autorespond_handlers | {'user_id': 1, 'hh_linked_account_id': 9, 'resume_count': 3, 'event': 'autorespond_resume_cache_miss', 'logger': 'src.bot.modules.autoparse.autorespond_handlers', 'level': 'info', 'timestamp': '2026-04-11T13:23:16.404332Z'}

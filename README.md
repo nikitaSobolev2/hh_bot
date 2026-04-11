@@ -305,6 +305,59 @@ docker compose logs -f bot
 docker compose logs -f celery_worker
 ```
 
+### Useful Docker commands
+
+Connect to PostgreSQL inside the container:
+
+```bash
+docker compose exec postgres psql -U ${POSTGRES_USER:-hh_bot} -d ${POSTGRES_DB:-hh_bot}
+```
+
+Connect to Redis inside the container:
+
+```bash
+docker compose exec redis redis-cli
+```
+
+Open a shell in the main Celery worker container:
+
+```bash
+docker compose exec celery_worker sh
+```
+
+Inspect Celery queues and active tasks:
+
+```bash
+docker compose exec celery_worker celery -A src.worker.app inspect active
+docker compose exec celery_worker celery -A src.worker.app inspect reserved
+docker compose exec celery_worker celery -A src.worker.app inspect scheduled
+```
+
+Remove all queued Celery tasks:
+
+```bash
+docker compose exec celery_worker celery -A src.worker.app purge -f
+```
+
+Stop current Celery workers and start them again:
+
+```bash
+docker compose restart celery_worker celery_worker_hh_ui celery_worker_login_assist
+```
+
+If you want to clear queued tasks and restart all workers in one go:
+
+```bash
+docker compose exec celery_worker celery -A src.worker.app purge -f
+docker compose restart celery_worker celery_worker_hh_ui celery_worker_login_assist
+```
+
+Notes:
+
+- `purge` removes queued tasks from the broker; it does not kill a task that is already running inside a worker process.
+- `restart` stops the current worker containers, which also interrupts in-flight tasks.
+- If you want to inspect worker health first, run `docker compose ps` and `docker compose logs -f celery_worker`.
+
 ---
 
 ## Deploying to Ubuntu Server

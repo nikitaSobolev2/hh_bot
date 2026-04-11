@@ -95,7 +95,7 @@ async def _load_candidates(
     task_started_at: datetime | None,
 ) -> list[AutoparsedVacancy]:
     repo = AutoparsedVacancyRepository(session)
-    if vacancy_ids:
+    if vacancy_ids is not None:
         return await repo.get_by_ids_for_company(company_id, vacancy_ids)
     stmt = (
         select(AutoparsedVacancy)
@@ -190,6 +190,40 @@ async def _unreacted_autoparsed_vacancy_ids(
         stmt = stmt.order_by(AutoparsedVacancy.id.desc())
         result = await session.execute(stmt)
         return [int(row[0]) for row in result.all()]
+
+
+def _merge_manual_pipeline_vacancy_ids(
+    new_vacancy_ids: list[int],
+    old_unreacted_ids: list[int],
+) -> list[int]:
+    """Combine newly parsed IDs with older unreacted company rows newest-first."""
+    if not new_vacancy_ids and not old_unreacted_ids:
+        return []
+    merged_ids = {int(vacancy_id) for vacancy_id in [*new_vacancy_ids, *old_unreacted_ids]}
+    return sorted(merged_ids, reverse=True)
+
+
+async def _manual_pipeline_autorespond_vacancy_ids(
+    session_factory: async_sessionmaker[AsyncSession],
+    company_id: int,
+    user_id: int,
+    new_vacancy_ids: list[int],
+) -> list[int]:
+    old_unreacted_ids = await _unreacted_autoparsed_vacancy_ids(
+        session_factory,
+        company_id,
+        user_id,
+    )
+    merged_ids = _merge_manual_pipeline_vacancy_ids(new_vacancy_ids, old_unreacted_ids)
+    logger.info(
+        "manual_pipeline_candidate_ids",
+        company_id=company_id,
+        user_id=user_id,
+        new_ids=len(new_vacancy_ids),
+        old_unreacted_ids=len(old_unreacted_ids),
+        merged_ids=len(merged_ids),
+    )
+    return merged_ids
 
 
 async def _run_autorespond_after_manual_parse_async(
@@ -511,7 +545,7 @@ async def _run_autorespond_async(
             company_id=company_id,
             trigger=trigger,
             user_id=user.id,
-            vacancy_ids_requested=len(vacancy_ids) if vacancy_ids else None,
+            vacancy_ids_requested=len(vacancy_ids) if vacancy_ids is not None else None,
             raw_loaded=len(raw),
             min_compat=company.autorespond_min_compat,
             keyword_mode=company.autorespond_keyword_mode,
@@ -1105,11 +1139,18 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
         await svc.set_step_state(pk, "negotiations", "running")
         await svc.set_active_step_index(pk, 1)
 
+        manual_vacancy_ids = await _manual_pipeline_autorespond_vacancy_ids(
+            session_factory,
+            company_id,
+            user_id,
+            list(ap_res.get("new_vacancy_ids") or []),
+        )
+
         return await _run_autorespond_async(
             session_factory,
             task,
             company_id,
-            None,
+            manual_vacancy_ids,
             "manual_pipeline",
             None,
             pipeline_context={

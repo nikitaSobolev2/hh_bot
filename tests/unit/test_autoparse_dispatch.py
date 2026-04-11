@@ -4,7 +4,7 @@ import asyncio
 import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -395,6 +395,108 @@ class TestRunAutoparseCompanyLock:
             )
 
         assert collect_mock.await_args.args[1] == ""
+
+    @pytest.mark.asyncio
+    async def test_completed_result_includes_new_vacancy_ids(self):
+        from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+        company = self._make_company()
+
+        vacancy_repo = MagicMock()
+        vacancy_repo.get_known_hh_ids_for_company = AsyncMock(return_value=set())
+        vacancy_repo.get_all_known_hh_ids = AsyncMock(return_value=set())
+        vacancy_repo.get_analyzed_for_user_hh_id = AsyncMock(return_value=None)
+
+        parsed_repo = MagicMock()
+        parsed_repo.get_all_hh_ids = AsyncMock(return_value=set())
+
+        settings_repo = MagicMock()
+        settings_repo.get_value = AsyncMock(return_value=50)
+
+        user_repo = MagicMock()
+        user_repo.get_by_id = AsyncMock(return_value=None)
+
+        we_repo = MagicMock()
+        we_repo.get_active_by_user = AsyncMock(return_value=[])
+
+        company_repo = MagicMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+
+        redis_mock = _make_redis_mock()
+        fake_task = MagicMock()
+        fake_task.request.id = "task-new-ids"
+        fake_row = SimpleNamespace(id=321)
+        merged_vacancy = {
+            "hh_vacancy_id": "vac-1",
+            "title": "Backend Developer",
+            "raw_skills": [],
+            "description": "desc",
+            "vacancy_api_context": None,
+            "employer_data": {},
+            "area_data": {},
+        }
+
+        @asynccontextmanager
+        async def fake_client_cm():
+            yield MagicMock()
+
+        with (
+            _crypto_patch(),
+            patch("src.worker.tasks.autoparse._redis_client", return_value=redis_mock),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.repositories.app_settings.AppSettingRepository",
+                return_value=settings_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch(
+                "src.repositories.autoparse.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+            patch("src.repositories.parsing.ParsedVacancyRepository", return_value=parsed_repo),
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.work_experience.WorkExperienceRepository",
+                return_value=we_repo,
+            ),
+            patch(
+                "src.services.parser.scraper.HHScraper.collect_vacancy_urls",
+                new_callable=AsyncMock,
+                return_value=[
+                    {
+                        "hh_vacancy_id": "vac-1",
+                        "url": "https://hh.ru/vacancy/vac-1",
+                        "title": "Backend Developer",
+                    }
+                ],
+            ),
+            patch(
+                "src.services.parser.hh_parser_service.HHParserService.fetch_details_batch_slice",
+                new=AsyncMock(return_value=[merged_vacancy]),
+            ),
+            patch(
+                "src.services.parser.hh_parser_service.HHParserService.build_client",
+                return_value=fake_client_cm(),
+            ),
+            patch("src.worker.tasks.autoparse._build_autoparsed_vacancy", return_value=fake_row),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
+        ):
+            result = await _run_autoparse_company_async(
+                _make_session_factory(self._make_session()),
+                fake_task,
+                company_id=1,
+            )
+
+        assert result["status"] == "completed"
+        assert result["new_vacancy_ids"] == [321]
 
     @pytest.mark.asyncio
     async def test_lock_released_after_task_raises_exception(self):

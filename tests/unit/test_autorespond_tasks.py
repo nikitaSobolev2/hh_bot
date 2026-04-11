@@ -197,3 +197,93 @@ async def test_disables_keyword_filter_during_autorespond_when_company_toggle_is
 
     assert result["status"] == "ok"
     assert filter_mock.call_args.kwargs["company_keyword_filter"] == ""
+
+
+def test_merge_manual_pipeline_vacancy_ids_deduplicates_and_orders_newest_first():
+    sys.modules.pop("src.worker.tasks.autorespond", None)
+
+    with _stub_hh_modules():
+        from src.worker.tasks.autorespond import _merge_manual_pipeline_vacancy_ids
+
+    assert _merge_manual_pipeline_vacancy_ids([205, 204, 203], [205, 204, 202, 201]) == [
+        205,
+        204,
+        203,
+        202,
+        201,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_pipeline_passes_new_and_old_unreacted_ids_to_autorespond():
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    company = SimpleNamespace(id=7, user_id=42, is_deleted=False, is_enabled=True)
+    user = SimpleNamespace(id=42, language_code="ru", telegram_id=123456)
+
+    company_repo = MagicMock()
+    company_repo.get_by_id = AsyncMock(return_value=company)
+
+    user_repo = MagicMock()
+    user_repo.get_by_id = AsyncMock(return_value=user)
+
+    progress_service = MagicMock()
+    progress_service.start_task = AsyncMock()
+    progress_service.set_step_state = AsyncMock()
+    progress_service.set_active_step_index = AsyncMock()
+
+    bot = MagicMock()
+    bot.session.close = AsyncMock()
+
+    task = MagicMock()
+    task.request.id = "task-123"
+    task.create_bot.return_value = bot
+
+    sys.modules.pop("src.worker.tasks.autorespond", None)
+
+    with _stub_hh_modules():
+        from src.worker.tasks import autorespond as autorespond_module
+
+        with (
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch("src.services.progress_service.ProgressService", return_value=progress_service),
+            patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+            patch("src.core.i18n.get_text", side_effect=lambda key, locale: key),
+            patch(
+                "src.worker.tasks.autoparse._run_autoparse_company_async",
+                new=AsyncMock(
+                    return_value={
+                        "status": "completed",
+                        "company_id": company.id,
+                        "new_count": 3,
+                        "new_vacancy_ids": [205, 204, 203],
+                    }
+                ),
+            ),
+            patch.object(
+                autorespond_module,
+                "_unreacted_autoparsed_vacancy_ids",
+                new=AsyncMock(return_value=[205, 204, 202, 201]),
+            ),
+            patch.object(
+                autorespond_module,
+                "_run_autorespond_async",
+                new=AsyncMock(return_value={"status": "ok"}),
+            ) as run_autorespond_mock,
+        ):
+            result = await autorespond_module._run_manual_autoparse_autorespond_pipeline_async(
+                _make_session_factory(session),
+                task,
+                company.id,
+                user.id,
+            )
+
+    assert result == {"status": "ok"}
+    assert run_autorespond_mock.await_args.args[3] == [205, 204, 203, 202, 201]
+    assert run_autorespond_mock.await_args.args[4] == "manual_pipeline"
