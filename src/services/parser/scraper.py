@@ -18,7 +18,9 @@ from bs4 import BeautifulSoup, Tag
 
 from src.config import settings
 from src.core.logging import get_logger
-from src.services.hh_ui.applicant_http import httpx_cookies_from_storage_state, url_suggests_login_page
+from src.services.hh_ui.applicant_http import url_suggests_login_page
+from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.runner import render_search_page_with_storage
 from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 from src.services.parser.keyword_match import matches_keyword_expression
 from src.worker.circuit_breaker import CircuitBreaker
@@ -322,7 +324,7 @@ def _map_api_vacancy_to_page_data(api_response: dict, list_item: dict | None = N
     return result
 
 
-def _map_html_vacancy_to_page_data(soup: BeautifulSoup, url: str) -> dict:
+def _map_html_vacancy_to_page_data(soup: BeautifulSoup, _url: str) -> dict:
     title_tag = soup.find("title")
     meta_desc = soup.find("meta", attrs={"name": "description"})
     title_text = _clean_text(title_tag.get_text(strip=True) if title_tag else "")
@@ -906,59 +908,51 @@ class HHScraper:
         new_collected_count = 0
         page = 0
         last_total_pages: int | None = None
-
-        client_kwargs: dict = {}
-        if parse_mode == "web" and storage_state:
-            client_kwargs["cookies"] = httpx_cookies_from_storage_state(storage_state)
-            client_kwargs["follow_redirects"] = True
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        if parse_mode == "web":
+            cfg = HhUiApplyConfig.from_settings()
             while new_collected_count < target_count:
                 if page >= _MAX_PAGES:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES, parse_mode=parse_mode)
                     break
-                if (
-                    last_total_pages is not None
-                    and last_total_pages > 0
-                    and page >= last_total_pages
-                ):
+
+                url = self._build_page_url(base_url, page)
+                logger.info(
+                    "Fetching search page",
+                    url=url,
+                    page=page + 1,
+                    parse_mode=parse_mode,
+                    has_cookies=bool(storage_state),
+                )
+                rendered = await asyncio.to_thread(
+                    render_search_page_with_storage,
+                    storage_state=storage_state,
+                    config=cfg,
+                    url=url,
+                )
+                if rendered.html is None:
+                    logger.warning(
+                        "Web vacancy search browser fetch failed",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        has_cookies=bool(storage_state),
+                        error=rendered.error,
+                    )
                     break
-
-                if parse_mode == "web":
-                    url = self._build_page_url(base_url, page)
-                    logger.info("Fetching search page", url=url, page=page + 1, parse_mode=parse_mode)
-                    soup, final_url = await self._fetch_page_with_meta(client, url)
-                    if soup is None:
-                        break
-                    if final_url and url_suggests_login_page(final_url):
-                        logger.warning(
-                            "Web vacancy search redirected to login",
-                            page=page + 1,
-                            url=url,
-                            final_url=final_url,
-                            parse_mode=parse_mode,
-                            has_cookies=bool(storage_state),
-                        )
-                        break
-                    page_results = self._extract_vacancies_from_page(soup, keyword)
-                    raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
-                    page_had_results = bool(page_results) or raw_blocks > 0
-                else:
-                    url = self._build_api_url(base_url, page)
-                    logger.info("Fetching search page", url=url, page=page + 1, parse_mode=parse_mode)
-                    data = await self._fetch_vacancy_search_page(client, url)
-                    if data is None:
-                        break
-
-                    items = data.get("items", [])
-                    if not items:
-                        logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
-                        break
-
-                    last_total_pages = int(data.get("pages", 0) or 0)
-                    page_results = self._extract_vacancies_from_api_response(data, keyword)
-                    raw_blocks = len(items)
-                    page_had_results = bool(items)
+                if rendered.final_url and url_suggests_login_page(rendered.final_url):
+                    logger.warning(
+                        "Web vacancy search redirected to login",
+                        page=page + 1,
+                        url=url,
+                        final_url=rendered.final_url,
+                        parse_mode=parse_mode,
+                        has_cookies=bool(storage_state),
+                    )
+                    break
+                soup = BeautifulSoup(rendered.html, "html.parser")
+                page_results = self._extract_vacancies_from_page(soup, keyword)
+                raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
+                page_had_results = bool(page_results) or raw_blocks > 0
 
                 if not page_had_results:
                     logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
@@ -978,8 +972,11 @@ class HHScraper:
                     "Search page scraped",
                     page=page + 1,
                     url=url,
+                    final_url=rendered.final_url,
                     parse_mode=parse_mode,
                     raw_blocks=raw_blocks,
+                    cards_before_scroll=rendered.cards_before_scroll,
+                    cards_after_scroll=rendered.cards_after_scroll,
                     keyword_matched=len(page_results),
                     blacklisted_skipped=blacklisted_skipped,
                     new=new_count,
@@ -987,11 +984,65 @@ class HHScraper:
                     target=target_count,
                     has_cookies=bool(storage_state),
                 )
-
-                if parse_mode == "web" and raw_blocks == 0:
-                    break
-
                 page += 1
+        else:
+            async with httpx.AsyncClient() as client:
+                while new_collected_count < target_count:
+                    if page >= _MAX_PAGES:
+                        logger.warning("Reached max page limit", limit=_MAX_PAGES, parse_mode=parse_mode)
+                        break
+                    if (
+                        last_total_pages is not None
+                        and last_total_pages > 0
+                        and page >= last_total_pages
+                    ):
+                        break
+
+                    url = self._build_api_url(base_url, page)
+                    logger.info("Fetching search page", url=url, page=page + 1, parse_mode=parse_mode)
+                    data = await self._fetch_vacancy_search_page(client, url)
+                    if data is None:
+                        break
+
+                    items = data.get("items", [])
+                    if not items:
+                        logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
+                        break
+
+                    last_total_pages = int(data.get("pages", 0) or 0)
+                    page_results = self._extract_vacancies_from_api_response(data, keyword)
+                    raw_blocks = len(items)
+                    page_had_results = bool(items)
+
+                    if not page_had_results:
+                        logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
+                        break
+
+                    new_count, _, blacklisted_skipped = self._collect_new_from_page(
+                        page_results,
+                        seen_urls,
+                        blacklisted,
+                        known,
+                        collected,
+                        target_count,
+                    )
+                    new_collected_count += new_count
+
+                    logger.info(
+                        "Search page scraped",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        raw_blocks=raw_blocks,
+                        keyword_matched=len(page_results),
+                        blacklisted_skipped=blacklisted_skipped,
+                        new=new_count,
+                        total=len(collected),
+                        target=target_count,
+                        has_cookies=False,
+                    )
+
+                    page += 1
 
         if not known:
             return collected[:target_count]

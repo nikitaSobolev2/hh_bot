@@ -56,6 +56,7 @@ _HH_UI_BATCH_XSRF_COOLDOWN_CAP_S = 300.0
 _HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM = 8
 _XSRF_POLL_INTERVAL_S = 0.25
 _XSRF_WAIT_CAP_MS = 15_000
+_SEARCH_RESULTS_CARD_SELECTOR = '[data-qa="vacancy-serp__vacancy"]'
 
 
 def _wait_for_xsrf_for_popup(
@@ -203,6 +204,118 @@ def _screenshot_page_captcha(page: Any) -> bytes | None:
         return page.screenshot(type="png", full_page=True)
     except Exception:
         return None
+
+
+@dataclass(frozen=True)
+class SearchPageRenderResult:
+    html: str | None
+    final_url: str | None
+    cards_before_scroll: int
+    cards_after_scroll: int
+    error: str | None = None
+
+
+def _count_search_cards(page: Any) -> int:
+    try:
+        return int(page.locator(_SEARCH_RESULTS_CARD_SELECTOR).count())
+    except Exception:
+        return 0
+
+
+def render_search_page_with_storage(
+    *,
+    storage_state: dict[str, Any] | None,
+    config: HhUiApplyConfig,
+    url: str,
+    log_user_id: int | None = None,
+) -> SearchPageRenderResult:
+    """Open HH search page in Chromium, scroll once, and return rendered HTML."""
+    logger.info(
+        "render_search_page_start",
+        log_user_id=log_user_id,
+        url=url,
+        has_storage=bool(storage_state),
+    )
+    with sync_playwright() as p:
+        browser = None
+        context = None
+        try:
+            browser = p.chromium.launch(
+                headless=config.headless,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
+            context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
+            if storage_state:
+                context_kwargs["storage_state"] = storage_state
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=config.navigation_timeout_ms,
+            )
+            try:
+                page.locator(_SEARCH_RESULTS_CARD_SELECTOR).first.wait_for(
+                    state="attached",
+                    timeout=min(config.action_timeout_ms, config.navigation_timeout_ms),
+                )
+            except Exception:
+                pass
+            _jitter(config)
+            cards_before = _count_search_cards(page)
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(max(config.min_action_delay_ms, 1000))
+            cards_after = _count_search_cards(page)
+            final_url = page.url
+            logger.info(
+                "render_search_page_done",
+                log_user_id=log_user_id,
+                url=url,
+                final_url=final_url,
+                has_storage=bool(storage_state),
+                cards_before_scroll=cards_before,
+                cards_after_scroll=cards_after,
+                login_detected=url_suggests_login_page(final_url),
+                captcha_detected=_detect_captcha(page),
+            )
+            return SearchPageRenderResult(
+                html=page.content(),
+                final_url=final_url,
+                cards_before_scroll=cards_before,
+                cards_after_scroll=cards_after,
+            )
+        except PlaywrightTimeoutError as exc:
+            logger.warning(
+                "render_search_page_timeout",
+                log_user_id=log_user_id,
+                url=url,
+                has_storage=bool(storage_state),
+                error=str(exc)[:200],
+            )
+            return SearchPageRenderResult(
+                html=None,
+                final_url=None,
+                cards_before_scroll=0,
+                cards_after_scroll=0,
+                error="timeout",
+            )
+        except Exception as exc:
+            logger.warning(
+                "render_search_page_failed",
+                log_user_id=log_user_id,
+                url=url,
+                has_storage=bool(storage_state),
+                error=str(exc)[:200],
+            )
+            return SearchPageRenderResult(
+                html=None,
+                final_url=None,
+                cards_before_scroll=0,
+                cards_after_scroll=0,
+                error=str(exc)[:200],
+            )
+        finally:
+            dispose_sync_browser_context(context, browser)
 
 
 def _screenshot_url_with_storage(

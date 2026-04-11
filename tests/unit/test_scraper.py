@@ -11,6 +11,7 @@ from src.services.parser.scraper import (
     _map_html_vacancy_to_page_data,
     _hh_error_body_has_captcha,
 )
+from src.services.hh_ui.runner import SearchPageRenderResult
 
 
 class TestExtractVacanciesFromPage:
@@ -179,12 +180,23 @@ class TestCollectVacancyUrls:
         html = (
             Path(__file__).resolve().parents[2] / "docs" / "vacancies-list-page.html"
         ).read_text(encoding="utf-8")
-        soup = BeautifulSoup(html, "html.parser")
+        render_result = SearchPageRenderResult(
+            html=html,
+            final_url="https://hh.ru/search/vacancy",
+            cards_before_scroll=20,
+            cards_after_scroll=50,
+        )
 
-        with patch.object(
-            scraper,
-            "_fetch_page_with_meta",
-            new=AsyncMock(return_value=(soup, "https://hh.ru/search/vacancy")),
+        with (
+            patch(
+                "src.services.parser.scraper.render_search_page_with_storage",
+                return_value=render_result,
+            ) as mock_render,
+            patch(
+                "src.services.parser.scraper.asyncio.to_thread",
+                new=AsyncMock(side_effect=lambda fn, **kwargs: fn(**kwargs)),
+            ) as mock_to_thread,
+            patch.object(scraper, "_fetch_page_with_meta", new=AsyncMock()) as mock_http_fetch,
         ):
             result = await scraper.collect_vacancy_urls(
                 "https://hh.ru/search/vacancy?text=python",
@@ -196,6 +208,9 @@ class TestCollectVacancyUrls:
         assert result
         assert all(item["hh_vacancy_id"] for item in result)
         assert all(item["url"].startswith("https://") for item in result)
+        mock_to_thread.assert_awaited()
+        mock_render.assert_called()
+        mock_http_fetch.assert_not_called()
 
 
 class TestCollectVacancyUrlsBatch:
@@ -254,7 +269,7 @@ class TestCollectVacancyUrlsBatch:
         mock_fetch = AsyncMock(return_value=empty_api_response)
 
         with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
-            urls, next_page, has_more = await scraper.collect_vacancy_urls_batch(
+            urls, _, has_more = await scraper.collect_vacancy_urls_batch(
                 base_url="https://hh.ru/search/vacancy?text=python",
                 keyword="",
                 batch_size=10,
