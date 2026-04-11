@@ -88,6 +88,48 @@ def _autorespond_filter_rejection_counts(
     return compat_rejected, keyword_rejected
 
 
+def _compatibility_score_value(score: object) -> float | None:
+    """Return a usable compatibility score for logging, or None for missing/stale values."""
+    if score is None:
+        return None
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _compatibility_bucket_label(score: float) -> str:
+    if score < 25:
+        return "0_24"
+    if score < 50:
+        return "25_49"
+    if score < 75:
+        return "50_74"
+    return "75_100"
+
+
+def _compatibility_log_metrics(vacancies: list[AutoparsedVacancy]) -> dict[str, object]:
+    histogram = {"0_24": 0, "25_49": 0, "50_74": 0, "75_100": 0}
+    scores: list[float] = []
+    missing = 0
+    for vacancy in vacancies:
+        score = _compatibility_score_value(getattr(vacancy, "compatibility_score", None))
+        if score is None:
+            missing += 1
+            continue
+        scores.append(score)
+        histogram[_compatibility_bucket_label(score)] += 1
+    average = round(sum(scores) / len(scores), 2) if scores else None
+    return {
+        "average_percent": average,
+        "missing_count": missing,
+        "histogram": histogram,
+    }
+
+
 async def _load_candidates(
     session: AsyncSession,
     company_id: int,
@@ -539,6 +581,8 @@ async def _run_autorespond_async(
         )
         filtered.sort(key=lambda v: -v.id)
         capped = autorespond_logic.apply_max_cap(filtered, company.autorespond_max_per_run)
+        raw_compat_metrics = _compatibility_log_metrics(raw)
+        filtered_compat_metrics = _compatibility_log_metrics(filtered)
 
         logger.info(
             "autorespond_selection_breakdown",
@@ -558,6 +602,12 @@ async def _run_autorespond_async(
             after_filter=len(filtered),
             max_per_run=company.autorespond_max_per_run,
             after_cap=len(capped),
+            compatibility_avg_percent_raw=raw_compat_metrics["average_percent"],
+            compatibility_missing_raw=raw_compat_metrics["missing_count"],
+            compatibility_histogram_raw=raw_compat_metrics["histogram"],
+            compatibility_avg_percent_filtered=filtered_compat_metrics["average_percent"],
+            compatibility_missing_filtered=filtered_compat_metrics["missing_count"],
+            compatibility_histogram_filtered=filtered_compat_metrics["histogram"],
             hh_ui_apply_enabled=settings.hh_ui_apply_enabled,
             cover_task_enabled=cover_task_enabled,
         )
