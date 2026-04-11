@@ -380,6 +380,48 @@ def test_merge_manual_pipeline_vacancy_ids_deduplicates_and_orders_newest_first(
 
 
 @pytest.mark.asyncio
+async def test_negotiations_sync_retries_on_captcha_required():
+    sys.modules.pop("src.worker.tasks.autorespond", None)
+
+    with _stub_hh_modules():
+        from src.worker.tasks import autorespond as autorespond_module
+
+        with (
+            patch.object(
+                autorespond_module,
+                "_sync_negotiations_async",
+                new=AsyncMock(
+                    side_effect=[
+                        {"status": "error", "reason": "captcha_required"},
+                        {"status": "error", "reason": "captcha_required"},
+                        {"status": "ok", "inserted": 1},
+                    ]
+                ),
+            ) as sync_mock,
+            patch(
+                "src.worker.hh_captcha_retry.hh_captcha_retry_delay",
+                side_effect=[300, 300],
+            ) as delay_mock,
+            patch("src.worker.tasks.autorespond.asyncio.sleep", new=AsyncMock()) as sleep_mock,
+        ):
+            result = await autorespond_module._run_negotiations_sync_with_retry(
+                MagicMock(),
+                None,
+                user_id=42,
+                hh_acc_id=55,
+                company_id=7,
+                telegram_id=123,
+                locale="ru",
+                trigger="manual_pipeline",
+            )
+
+    assert result == {"status": "ok", "inserted": 1}
+    assert sync_mock.await_count == 3
+    assert delay_mock.call_count == 2
+    assert [call.args[0] for call in sleep_mock.await_args_list] == [300, 300]
+
+
+@pytest.mark.asyncio
 async def test_manual_pipeline_passes_new_and_old_unreacted_ids_to_autorespond():
     session = MagicMock()
     session.__aenter__ = AsyncMock(return_value=session)

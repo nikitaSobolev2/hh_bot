@@ -14,12 +14,8 @@ _CAPTCHA_RETRY_MAX_SECONDS = 300
 _CAPTCHA_EXPONENT_CYCLE_LENGTH = 6
 
 
-def celery_captcha_retry_countdown(task, *, circuit_recovery_seconds: int | None = None) -> int:
-    """Seconds until next Celery attempt.
-
-    Returns max(exponential, redis_recovery) so the HH public API circuit can leave
-    OPEN before we retry. Exponential backoff resets after the 300s step.
-    """
+def hh_captcha_retry_delay(retries: int, *, circuit_recovery_seconds: int | None = None) -> int:
+    """Seconds until next HH public API retry for a given retry count."""
     from src.config import settings
 
     recovery = circuit_recovery_seconds
@@ -27,9 +23,16 @@ def celery_captcha_retry_countdown(task, *, circuit_recovery_seconds: int | None
         recovery = int(settings.hh_public_api_circuit_recovery_seconds)
     recovery = int(recovery)
 
-    retries = getattr(task.request, "retries", None) or 0
-    # Cycle exponent so delays do not stay at 300 forever: ... 300 → next retry uses 10 again.
-    exp = retries % _CAPTCHA_EXPONENT_CYCLE_LENGTH
+    exp = int(retries) % _CAPTCHA_EXPONENT_CYCLE_LENGTH
     exponential = min(_CAPTCHA_RETRY_BASE_SECONDS * (2**exp), _CAPTCHA_RETRY_MAX_SECONDS)
-    # Do not cap recovery at 300: env may set a longer Redis TTL than the exponential cap.
     return max(exponential, recovery)
+
+
+def celery_captcha_retry_countdown(task, *, circuit_recovery_seconds: int | None = None) -> int:
+    """Seconds until next Celery attempt.
+
+    Returns max(exponential, redis_recovery) so the HH public API circuit can leave
+    OPEN before we retry. Exponential backoff resets after the 300s step.
+    """
+    retries = getattr(task.request, "retries", None) or 0
+    return hh_captcha_retry_delay(retries, circuit_recovery_seconds=circuit_recovery_seconds)

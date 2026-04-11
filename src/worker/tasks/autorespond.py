@@ -268,6 +268,46 @@ async def _manual_pipeline_autorespond_vacancy_ids(
     return merged_ids
 
 
+async def _run_negotiations_sync_with_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+    sync_task: HHBotTask | None,
+    *,
+    user_id: int,
+    hh_acc_id: int,
+    company_id: int,
+    telegram_id: int,
+    locale: str,
+    trigger: str,
+) -> dict:
+    from src.worker.hh_captcha_retry import hh_captcha_retry_delay
+
+    attempt = 0
+    while True:
+        sync_res = await _sync_negotiations_async(
+            session_factory,
+            sync_task,
+            user_id,
+            hh_acc_id,
+            company_id,
+            telegram_id,
+            locale,
+            notify_user=False,
+        )
+        if sync_res.get("status") != "error" or sync_res.get("reason") != "captcha_required":
+            return sync_res
+        wait_seconds = hh_captcha_retry_delay(attempt)
+        logger.warning(
+            "autorespond_negotiations_sync_retry_wait",
+            company_id=company_id,
+            user_id=user_id,
+            trigger=trigger,
+            attempt=attempt + 1,
+            wait_seconds=wait_seconds,
+        )
+        await asyncio.sleep(wait_seconds)
+        attempt += 1
+
+
 async def _run_autorespond_after_manual_parse_async(
     session_factory: async_sessionmaker[AsyncSession],
     company_id: int,
@@ -496,15 +536,15 @@ async def _run_autorespond_async(
             await progress.update_bar(task_key, progress_bar_index, 0, 1)
 
         sync_task = celery_task if isinstance(celery_task, HHBotTask) else None
-        sync_res = await _sync_negotiations_async(
+        sync_res = await _run_negotiations_sync_with_retry(
             session_factory,
             sync_task,
-            user.id,
-            hh_acc_id,
-            company_id,
-            user.telegram_id,
-            locale,
-            notify_user=False,
+            user_id=user.id,
+            hh_acc_id=hh_acc_id,
+            company_id=company_id,
+            telegram_id=user.telegram_id,
+            locale=locale,
+            trigger=trigger,
         )
         if sync_res.get("status") == "error":
             reason = sync_res.get("reason")

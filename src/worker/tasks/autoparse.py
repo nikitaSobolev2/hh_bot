@@ -889,6 +889,16 @@ async def _run_autoparse_company_async(
                         hh_vacancy_id,
                     )
 
+            logger.info(
+                "Autoparse compatibility batch completed",
+                company_id=company_id,
+                parse_mode=parse_mode,
+                batch_size=len(rows_to_insert),
+                compatibility_scores=[
+                    f"{vac_dict.get('hh_vacancy_id')}:{compat_score}"
+                    for vac_dict, compat_score, _, _ in rows_to_insert
+                ],
+            )
             new_count += len(rows_to_insert)
             if ai_client:
                 analyzed_rows = sum(
