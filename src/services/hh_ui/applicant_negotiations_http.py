@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import random
 import re
+import time
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -22,6 +24,7 @@ logger = get_logger(__name__)
 
 NegotiationsSessionAvailability = Literal["ok", "login", "unexpected_url", "error"]
 
+_NEGOTIATIONS_PAGE_DELAY_FLOOR_S = 1.0
 _VACANCY_ID_RE = re.compile(r"/vacancy/(\d+)")
 # Embedded JSON in Magritte / state blobs (6+ digits — HH vacancy ids are long).
 _JSON_VACANCY_ID_RE = re.compile(r'"vacancyId"\s*:\s*"?(\d{6,})"?')
@@ -47,6 +50,12 @@ def _negotiations_base_url(storage_state: dict[str, Any]) -> str:
         if d.endswith("hh.ru") and d != "hh.ru":
             return f"https://{d}"
     return "https://hh.ru"
+
+
+def _negotiations_page_delay_seconds(config: HhUiApplyConfig) -> float:
+    lo = max(config.min_action_delay_ms / 1000.0, _NEGOTIATIONS_PAGE_DELAY_FLOOR_S)
+    hi = max(config.max_action_delay_ms / 1000.0, lo)
+    return random.uniform(lo, hi)
 
 
 def fetch_applicant_negotiations_html(
@@ -190,4 +199,6 @@ def fetch_all_negotiation_vacancy_ids(
         if not new_only and page > 1:
             break
         all_ids |= page_ids
+        if page < max_pages:
+            time.sleep(_negotiations_page_delay_seconds(config))
     return all_ids, None
