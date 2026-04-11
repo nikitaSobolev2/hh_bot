@@ -154,7 +154,7 @@ class TestRebuildPoolHandlers:
         callback.answer.assert_awaited_once_with()
 
     @pytest.mark.asyncio
-    async def test_confirm_rebuild_pool_queues_run_and_rerenders_detail(self, mock_session):
+    async def test_confirm_rebuild_pool_resets_only_and_rerenders_detail(self, mock_session):
         from src.bot.modules.autoparse.handlers import confirm_rebuild_pool
 
         callback_data = AutoparseCallback(action="confirm_rebuild_pool", company_id=7)
@@ -173,30 +173,14 @@ class TestRebuildPoolHandlers:
                 new=AsyncMock(return_value=company),
             ) as mock_reset,
             patch(
-                "src.bot.modules.autoparse.handlers.ap_service.mark_parsing_started",
-                new=AsyncMock(return_value=company),
-            ) as mock_mark_started,
-            patch(
-                "src.core.celery_async.run_celery_task",
-                new=AsyncMock(),
-            ) as mock_run_celery_task,
-            patch(
                 "src.bot.modules.autoparse.handlers._render_company_detail_message",
                 new=AsyncMock(),
             ) as mock_render_detail,
         ):
             await confirm_rebuild_pool(callback, callback_data, user, mock_session, i18n)
 
-        from src.worker.tasks.autoparse import run_autoparse_company
-
         mock_get_detail.assert_awaited_once_with(mock_session, 7, user.id)
         mock_reset.assert_awaited_once_with(mock_session, 7, user.id)
-        mock_mark_started.assert_awaited_once_with(mock_session, 7, user.id)
-        mock_run_celery_task.assert_awaited_once_with(
-            run_autoparse_company,
-            7,
-            notify_user_id=user.id,
-        )
         mock_render_detail.assert_awaited_once_with(
             callback.message,
             user,
@@ -223,14 +207,9 @@ class TestRebuildPoolHandlers:
                 "src.bot.modules.autoparse.handlers.ap_service.get_autoparse_detail",
                 new=AsyncMock(return_value=None),
             ) as mock_get_detail,
-            patch(
-                "src.core.celery_async.run_celery_task",
-                new=AsyncMock(),
-            ) as mock_run_celery_task,
         ):
             await confirm_rebuild_pool(callback, callback_data, user, mock_session, i18n)
 
         mock_get_detail.assert_awaited_once_with(mock_session, 7, user.id)
-        mock_run_celery_task.assert_not_called()
         callback.message.edit_text.assert_not_called()
         callback.answer.assert_awaited_once_with("autoparse-not-found", show_alert=True)

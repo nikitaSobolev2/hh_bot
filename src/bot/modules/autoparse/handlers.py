@@ -924,9 +924,6 @@ async def confirm_rebuild_pool(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.core.celery_async import run_celery_task
-    from src.worker.tasks.autoparse import run_autoparse_company
-
     company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
     if not company:
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
@@ -937,12 +934,6 @@ async def confirm_rebuild_pool(
         await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
         return
 
-    company = await ap_service.mark_parsing_started(session, company.id, user.id)
-    if company is None:
-        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
-        return
-
-    await run_celery_task(run_autoparse_company, company.id, notify_user_id=user.id)
     await _render_company_detail_message(callback.message, user, session, i18n, company)
     await callback.answer(i18n.get("autoparse-rebuild-pool-started"), show_alert=True)
 
