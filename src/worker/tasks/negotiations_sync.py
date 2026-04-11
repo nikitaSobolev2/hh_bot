@@ -42,41 +42,46 @@ async def _sync_negotiations_async(
     locale: str,
     *,
     notify_user: bool = True,
+    prefetched_vacancy_ids: set[str] | None = None,
 ) -> dict:
-    async with session_factory() as session:
-        acc_repo = HhLinkedAccountRepository(session)
-        acc = await acc_repo.get_by_id(hh_linked_account_id)
-        if not acc or acc.user_id != user_id:
-            return {"status": "error", "reason": "account_not_found"}
-        if not acc.browser_storage_enc:
+    vacancy_ids = prefetched_vacancy_ids
+    if vacancy_ids is None:
+        async with session_factory() as session:
+            acc_repo = HhLinkedAccountRepository(session)
+            acc = await acc_repo.get_by_id(hh_linked_account_id)
+            if not acc or acc.user_id != user_id:
+                return {"status": "error", "reason": "account_not_found"}
+            if not acc.browser_storage_enc:
+                return {"status": "error", "reason": "no_browser_session"}
+            try:
+                cipher = HhTokenCipher(settings.hh_token_encryption_key)
+                storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
+            except Exception as exc:
+                logger.warning("negotiations_sync_decrypt_failed", error=str(exc)[:200])
+                return {"status": "error", "reason": "decrypt_failed"}
+        if not storage:
             return {"status": "error", "reason": "no_browser_session"}
-        try:
-            cipher = HhTokenCipher(settings.hh_token_encryption_key)
-            storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
-        except Exception as exc:
-            logger.warning("negotiations_sync_decrypt_failed", error=str(exc)[:200])
-            return {"status": "error", "reason": "decrypt_failed"}
-    if not storage:
-        return {"status": "error", "reason": "no_browser_session"}
 
-    config = HhUiApplyConfig.from_settings()
-    vacancy_ids, fetch_err = await asyncio.to_thread(
-        fetch_all_negotiation_vacancy_ids,
-        storage,
-        config,
-    )
-    if fetch_err:
-        logger.info(
-            "negotiations_sync_fetch_issue",
-            user_id=user_id,
-            hh_linked_account_id=hh_linked_account_id,
-            reason=fetch_err,
-            parsed_count=len(vacancy_ids),
+        config = HhUiApplyConfig.from_settings()
+        vacancy_ids, fetch_err = await asyncio.to_thread(
+            fetch_all_negotiation_vacancy_ids,
+            storage,
+            config,
         )
-        if fetch_err == "login_redirect" and not vacancy_ids:
-            return {"status": "error", "reason": "login_redirect"}
-        if not vacancy_ids:
-            return {"status": "error", "reason": fetch_err}
+        if fetch_err:
+            logger.info(
+                "negotiations_sync_fetch_issue",
+                user_id=user_id,
+                hh_linked_account_id=hh_linked_account_id,
+                reason=fetch_err,
+                parsed_count=len(vacancy_ids),
+            )
+            if fetch_err == "login_redirect" and not vacancy_ids:
+                return {"status": "error", "reason": "login_redirect"}
+            if not vacancy_ids:
+                return {"status": "error", "reason": fetch_err}
+
+    vacancy_ids = set(vacancy_ids)
 
     if not vacancy_ids:
         if notify_user and task is not None:
@@ -122,9 +127,14 @@ async def _sync_negotiations_async(
                 hh_linked_account_id=hh_linked_account_id,
                 autoparse_company_id=autoparse_company_id,
                 missing=len(missing),
+                total_parsed=len(vacancy_ids),
                 error=str(exc)[:200],
             )
-            return {"status": "error", "reason": "captcha_required"}
+            return {
+                "status": "error",
+                "reason": "captcha_required",
+                "vacancy_ids": sorted(vacancy_ids),
+            }
 
     async with session_factory() as session:
         company_repo = AutoparseCompanyRepository(session)

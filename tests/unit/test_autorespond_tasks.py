@@ -386,17 +386,29 @@ async def test_negotiations_sync_retries_on_captcha_required():
     with _stub_hh_modules():
         from src.worker.tasks import autorespond as autorespond_module
 
+        sync_calls: list[set[str] | None] = []
+
+        async def fake_sync(*args, **kwargs):
+            sync_calls.append(kwargs.get("prefetched_vacancy_ids"))
+            if len(sync_calls) == 1:
+                return {
+                    "status": "error",
+                    "reason": "captcha_required",
+                    "vacancy_ids": ["vac-1", "vac-2"],
+                }
+            if len(sync_calls) == 2:
+                return {
+                    "status": "error",
+                    "reason": "captcha_required",
+                    "vacancy_ids": ["vac-1", "vac-2"],
+                }
+            return {"status": "ok", "inserted": 1}
+
         with (
             patch.object(
                 autorespond_module,
                 "_sync_negotiations_async",
-                new=AsyncMock(
-                    side_effect=[
-                        {"status": "error", "reason": "captcha_required"},
-                        {"status": "error", "reason": "captcha_required"},
-                        {"status": "ok", "inserted": 1},
-                    ]
-                ),
+                new=AsyncMock(side_effect=fake_sync),
             ) as sync_mock,
             patch(
                 "src.worker.hh_captcha_retry.hh_captcha_retry_delay",
@@ -419,6 +431,7 @@ async def test_negotiations_sync_retries_on_captcha_required():
     assert sync_mock.await_count == 3
     assert delay_mock.call_count == 2
     assert [call.args[0] for call in sleep_mock.await_args_list] == [300, 300]
+    assert sync_calls == [None, {"vac-1", "vac-2"}, {"vac-1", "vac-2"}]
 
 
 @pytest.mark.asyncio

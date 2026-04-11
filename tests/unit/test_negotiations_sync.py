@@ -92,4 +92,8 @@ async def test_sync_negotiations_returns_error_on_captcha_abort():
             notify_user=False,
         )
 
-    assert result == {"status": "error", "reason": "captcha_required"}
+    assert result == {
+        "status": "error",
+        "reason": "captcha_required",
+        "vacancy_ids": ["vac-1", "vac-2"],
+    }

@@ -282,6 +282,7 @@ async def _run_negotiations_sync_with_retry(
     from src.worker.hh_captcha_retry import hh_captcha_retry_delay
 
     attempt = 0
+    cached_vacancy_ids: set[str] | None = None
     while True:
         sync_res = await _sync_negotiations_async(
             session_factory,
@@ -292,7 +293,11 @@ async def _run_negotiations_sync_with_retry(
             telegram_id,
             locale,
             notify_user=False,
+            prefetched_vacancy_ids=cached_vacancy_ids,
         )
+        returned_vacancy_ids = sync_res.get("vacancy_ids")
+        if returned_vacancy_ids:
+            cached_vacancy_ids = {str(vacancy_id) for vacancy_id in returned_vacancy_ids}
         if sync_res.get("status") != "error" or sync_res.get("reason") != "captcha_required":
             return sync_res
         wait_seconds = hh_captcha_retry_delay(attempt)
@@ -303,6 +308,7 @@ async def _run_negotiations_sync_with_retry(
             trigger=trigger,
             attempt=attempt + 1,
             wait_seconds=wait_seconds,
+            cached_vacancy_ids=len(cached_vacancy_ids or ()),
         )
         await asyncio.sleep(wait_seconds)
         attempt += 1
