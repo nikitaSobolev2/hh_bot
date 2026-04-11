@@ -22,6 +22,7 @@ from src.services.hh.crypto import HhTokenCipher
 from src.services.hh_ui.applicant_negotiations_http import fetch_all_negotiation_vacancy_ids
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.storage import decrypt_browser_storage
+from src.services.parser.scraper import HHCaptchaRequiredError
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.utils import run_async
@@ -112,7 +113,18 @@ async def _sync_negotiations_async(
     if missing:
         from src.services.autoparse.negotiations_vacancy_import import fetch_merged_vac_dicts_for_hh_ids
 
-        fetched = await fetch_merged_vac_dicts_for_hh_ids(missing)
+        try:
+            fetched = await fetch_merged_vac_dicts_for_hh_ids(missing)
+        except HHCaptchaRequiredError as exc:
+            logger.warning(
+                "negotiations_sync_fetch_aborted_captcha",
+                user_id=user_id,
+                hh_linked_account_id=hh_linked_account_id,
+                autoparse_company_id=autoparse_company_id,
+                missing=len(missing),
+                error=str(exc)[:200],
+            )
+            return {"status": "error", "reason": "captcha_required"}
 
     async with session_factory() as session:
         company_repo = AutoparseCompanyRepository(session)

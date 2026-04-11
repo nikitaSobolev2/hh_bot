@@ -8,7 +8,7 @@ import httpx
 
 from src.core.logging import get_logger
 from src.schemas.vacancy import build_vacancy_api_context
-from src.services.parser.scraper import HHScraper
+from src.services.parser.scraper import HHCaptchaRequiredError, HHScraper
 
 logger = get_logger(__name__)
 
@@ -47,13 +47,23 @@ async def fetch_merged_vac_dicts_for_hh_ids(
 
     scraper = HHScraper()
     sem = asyncio.Semaphore(concurrency)
+    stop_requested = asyncio.Event()
     out: dict[str, dict] = {}
 
     async def fetch_one(client: httpx.AsyncClient, hid: str) -> None:
         async with sem:
+            if stop_requested.is_set():
+                return
             url = f"https://hh.ru/vacancy/{hid}"
             try:
                 page_data = await scraper.parse_vacancy_page(client, url)
+            except HHCaptchaRequiredError:
+                stop_requested.set()
+                logger.warning(
+                    "negotiations_vacancy_fetch_captcha_abort",
+                    hh_vacancy_id=hid,
+                )
+                raise
             except Exception as exc:
                 logger.warning(
                     "negotiations_vacancy_fetch_error",
@@ -83,6 +93,14 @@ async def fetch_merged_vac_dicts_for_hh_ids(
             out[hid] = merged
 
     async with httpx.AsyncClient() as client:
-        await asyncio.gather(*[fetch_one(client, hid) for hid in hh_ids])
+        tasks = [asyncio.create_task(fetch_one(client, hid)) for hid in hh_ids]
+        try:
+            await asyncio.gather(*tasks)
+        except HHCaptchaRequiredError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     return out
