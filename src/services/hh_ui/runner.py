@@ -57,6 +57,7 @@ _HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM = 8
 _XSRF_POLL_INTERVAL_S = 0.25
 _XSRF_WAIT_CAP_MS = 15_000
 _SEARCH_RESULTS_CARD_SELECTOR = '[data-qa="vacancy-serp__vacancy"]'
+_SEARCH_RESULTS_FULL_PAGE_CARD_COUNT = 50
 
 
 def _wait_for_xsrf_for_popup(
@@ -229,7 +230,7 @@ def render_search_page_with_storage(
     url: str,
     log_user_id: int | None = None,
 ) -> SearchPageRenderResult:
-    """Open HH search page in Chromium, scroll once, and return rendered HTML."""
+    """Open HH search page in Chromium and scroll only when the first render looks incomplete."""
     logger.info(
         "render_search_page_start",
         log_user_id=log_user_id,
@@ -263,9 +264,12 @@ def render_search_page_with_storage(
                 pass
             _jitter(config)
             cards_before = _count_search_cards(page)
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(max(config.min_action_delay_ms, 1000))
-            cards_after = _count_search_cards(page)
+            if cards_before < _SEARCH_RESULTS_FULL_PAGE_CARD_COUNT:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(max(config.min_action_delay_ms, 1000))
+                cards_after = _count_search_cards(page)
+            else:
+                cards_after = cards_before
             final_url = page.url
             logger.info(
                 "render_search_page_done",
