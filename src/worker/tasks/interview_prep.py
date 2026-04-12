@@ -86,7 +86,7 @@ async def _generate_preparation_async(
     from src.models.interview import InterviewPreparationStep
     from src.repositories.interview import InterviewRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_preparation_guide_prompt,
         build_preparation_guide_system_prompt,
@@ -110,6 +110,7 @@ async def _generate_preparation_async(
         return {"status": "circuit_open"}
 
     bot = task.create_bot()
+    ai_client: AIClient | None = None
 
     try:
         async with session_factory() as session:
@@ -179,6 +180,8 @@ async def _generate_preparation_async(
         raise task.retry(exc=exc) from exc
 
     finally:
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         await bot.session.close()
 
 
@@ -220,7 +223,7 @@ async def _generate_deep_summary_async(
     from src.core.constants import AppSettingKey
     from src.core.i18n import get_text
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_deep_learning_summary_prompt,
         build_deep_learning_summary_system_prompt,
@@ -240,6 +243,7 @@ async def _generate_deep_summary_async(
         return {"status": "circuit_open"}
 
     bot = task.create_bot()
+    ai_client: AIClient | None = None
 
     try:
         async with session_factory() as session:
@@ -293,6 +297,8 @@ async def _generate_deep_summary_async(
         raise task.retry(exc=exc) from exc
 
     finally:
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         await bot.session.close()
 
 
@@ -335,7 +341,7 @@ async def _generate_test_async(
     from src.core.i18n import get_text
     from src.models.interview import InterviewPreparationTest
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_preparation_test_prompt,
         build_preparation_test_system_prompt,
@@ -355,6 +361,7 @@ async def _generate_test_async(
         return {"status": "circuit_open"}
 
     bot = task.create_bot()
+    ai_client: AIClient | None = None
 
     try:
         async with session_factory() as session:
@@ -416,6 +423,8 @@ async def _generate_test_async(
         raise task.retry(exc=exc) from exc
 
     finally:
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         await bot.session.close()
 
 
@@ -457,7 +466,7 @@ async def _extend_prep_test_async(
     from src.core.constants import AppSettingKey
     from src.core.i18n import get_text
     from src.repositories.interview import InterviewPreparationRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_preparation_test_extend_prompt,
         build_preparation_test_system_prompt,
@@ -477,6 +486,7 @@ async def _extend_prep_test_async(
         return {"status": "circuit_open"}
 
     bot = task.create_bot()
+    ai_client: AIClient | None = None
 
     try:
         async with session_factory() as session:
@@ -536,6 +546,8 @@ async def _extend_prep_test_async(
         raise task.retry(exc=exc) from exc
 
     finally:
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         await bot.session.close()
 
 

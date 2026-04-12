@@ -13,6 +13,7 @@ import traceback
 import httpx
 
 from src.config import settings
+from src.worker.task_metrics import finish_task_metrics, inject_publish_headers, start_task_metrics
 
 _TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 _MAX_TB_LENGTH = 3500
@@ -59,9 +60,28 @@ def _format_failure(
     )
 
 
-def connect_signals(app) -> None:  # app: Celery
+def connect_signals(_app) -> None:  # app: Celery
     """Attach all worker signal handlers to *app*."""
-    from celery.signals import task_failure
+    from celery.signals import before_task_publish, task_failure, task_postrun, task_prerun
+
+    @before_task_publish.connect
+    def on_before_task_publish(
+        sender=None,
+        headers: dict | None = None,
+        body: object = None,
+        **_extra,
+    ) -> None:
+        inject_publish_headers(headers, body)
+
+    @task_prerun.connect
+    def on_task_prerun(task=None, **_extra) -> None:
+        if task is not None:
+            start_task_metrics(task)
+
+    @task_postrun.connect
+    def on_task_postrun(task=None, state: str | None = None, retval: object = None, **_extra) -> None:
+        if task is not None:
+            finish_task_metrics(state=state, retval=retval)
 
     @task_failure.connect
     def on_task_failure(

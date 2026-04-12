@@ -11,11 +11,9 @@ when the worker died mid-batch (resume payload + remaining items).
 
 from __future__ import annotations
 
-import redis as sync_redis
-
-from src.config import settings
 from src.core.celery_async import run_celery_task
 from src.core.logging import get_logger
+from src.core.redis import create_sync_redis
 from src.db.engine import async_session_factory
 from src.infrastructure.checkpoints.redis_checkpoint_store import (
     HH_UI_APPLY_BATCH_CHECKPOINT_PREFIX,
@@ -44,7 +42,7 @@ def _parse_hh_ui_checkpoint_key(key: str) -> tuple[int, str] | None:
 
 
 def _scan_redis_keys(pattern: str):
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = create_sync_redis()
     try:
         cursor = 0
         while True:

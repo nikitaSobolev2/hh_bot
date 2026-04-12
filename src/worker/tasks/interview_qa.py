@@ -95,7 +95,7 @@ async def _generate_qa_async(
     )
     from src.repositories.interview_qa import StandardQuestionRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         WorkExperienceEntry,
         build_standard_qa_system_prompt,
@@ -189,6 +189,8 @@ async def _generate_qa_async(
             cb.record_failure()
         logger.error("Interview QA generation failed", user_id=user_id, error=str(exc))
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     async with session_factory() as session:
         qa_repo = StandardQuestionRepository(session)
@@ -290,7 +292,7 @@ async def _generate_custom_qa_async(
     from src.models.interview_qa import QuestionCategory
     from src.repositories.interview_qa import StandardQuestionRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         WorkExperienceEntry,
         build_custom_qa_system_prompt,
@@ -340,6 +342,8 @@ async def _generate_custom_qa_async(
             "Custom QA generation failed", user_id=user_id, error=str(exc)
         )
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     blocks = _parse_qa_blocks(raw)
     answer = blocks.get("custom", "").strip()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
 import secrets
 from collections.abc import AsyncGenerator, Callable, Coroutine
@@ -59,6 +60,22 @@ def _short_error(exc: BaseException, *, max_len: int = 480) -> str:
     if len(s) <= max_len:
         return s
     return f"{s[:max_len]}… [truncated, {len(s)} chars]"
+
+
+async def close_ai_client(client: Any | None) -> None:
+    """Close AI client when it exposes an async ``aclose``.
+
+    Tests often replace ``AIClient`` with ``MagicMock``. Those doubles may expose
+    a non-awaitable ``aclose`` attribute, so cleanup must be tolerant.
+    """
+    if client is None:
+        return
+    close = getattr(client, "aclose", None)
+    if close is None:
+        return
+    maybe_awaitable = close()
+    if inspect.isawaitable(maybe_awaitable):
+        await maybe_awaitable
 
 # 429 rate limit retry: Cloudflare recommends 30s minimum, exponential backoff
 _RATE_LIMIT_MIN_WAIT = 10

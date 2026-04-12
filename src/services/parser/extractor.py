@@ -9,7 +9,7 @@ import httpx
 from src.config import settings
 from src.core.logging import get_logger
 from src.schemas.vacancy import PipelineResult, VacancyData, build_vacancy_api_context
-from src.services.ai.client import AIClient
+from src.services.ai.client import AIClient, close_ai_client
 from src.services.ai.prompts import VacancyCompatInput
 from src.services.parser.scraper import HHScraper, _map_api_vacancy_to_page_data
 
@@ -38,6 +38,9 @@ class ParsingExtractor:
     ) -> None:
         self._scraper = scraper or HHScraper()
         self._ai = ai_client or AIClient()
+
+    async def aclose(self) -> None:
+        await close_ai_client(self._ai)
 
     async def run_pipeline(
         self,

@@ -200,6 +200,7 @@ async def _run_parsing_company_async(
         use_compat = compat_params is not None
         vacancies: list[dict] = []
         resume_from: tuple[list[dict], int] | None = None
+        extractor: ParsingExtractor | None = None
 
         restored = await checkpoint.load_parsing(checkpoint_key, task_id)
         if not restored:
@@ -396,6 +397,8 @@ async def _run_parsing_company_async(
         logger.error("Parsing task failed", error=str(exc), company_id=parsing_company_id)
         raise
     finally:
+        if extractor is not None:
+            await extractor.aclose()
         if bot:
             await bot.session.close()
 

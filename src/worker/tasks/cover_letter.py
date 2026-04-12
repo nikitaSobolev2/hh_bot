@@ -16,7 +16,7 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
 
 _AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
 COVER_LETTER_DISPLAY_MAX = 2000
@@ -136,6 +136,7 @@ async def generate_cover_letter_plaintext_for_autoparsed_vacancy(
     ]
 
     style = (cover_letter_style or "professional").strip() or "professional"
+    created_client = ai_client is None
     client = ai_client or AIClient()
     system_prompt = build_cover_letter_system_prompt(style)
     user_content = build_cover_letter_user_content(
@@ -146,14 +147,18 @@ async def generate_cover_letter_plaintext_for_autoparsed_vacancy(
         user_name=user_name,
         about_me=about_me,
     )
-    generated_text = await client.generate_text(
-        user_content,
-        system_prompt=system_prompt,
-        timeout=180,
-        max_tokens=400,
-        temperature=0.6,
-    )
-    return _normalize_dashes(_strip_agent_wrapper(generated_text))
+    try:
+        generated_text = await client.generate_text(
+            user_content,
+            system_prompt=system_prompt,
+            timeout=180,
+            max_tokens=400,
+            temperature=0.6,
+        )
+        return _normalize_dashes(_strip_agent_wrapper(generated_text))
+    finally:
+        if created_client:
+            await close_ai_client(client)
 
 
 @celery_app.task(
@@ -321,7 +326,7 @@ async def _generate_cover_letter_async(
     from src.repositories.cover_letter_vacancy import CoverLetterVacancyRepository
     from src.repositories.task import CeleryTaskRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         WorkExperienceEntry,
         build_cover_letter_system_prompt,
@@ -641,4 +646,5 @@ async def _generate_cover_letter_async(
         )
         return {"status": "completed", "vacancy_id": vacancy_id, "locale": locale}
     finally:
+        await close_ai_client(ai_client)
         await bot.session.close()

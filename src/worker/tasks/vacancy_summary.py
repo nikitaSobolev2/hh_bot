@@ -139,7 +139,7 @@ async def _generate_summary_async(
     from src.core.i18n import get_text
     from src.repositories.vacancy_summary import VacancySummaryRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         WorkExperienceEntry,
         build_vacancy_summary_system_prompt,
@@ -235,6 +235,8 @@ async def _generate_summary_async(
         cb.record_failure()
         logger.error("Vacancy summary generation failed", summary_id=summary_id, error=str(exc))
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     async with session_factory() as session:
         repo = VacancySummaryRepository(session)

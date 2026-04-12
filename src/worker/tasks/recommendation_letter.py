@@ -62,7 +62,7 @@ async def _generate_letter_async(
     from src.core.i18n import get_text
     from src.repositories.recommendation_letter import RecommendationLetterRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_recommendation_letter_prompt,
         build_recommendation_letter_system_prompt,
@@ -89,6 +89,7 @@ async def _generate_letter_async(
         return {"status": "already_completed"}
 
     bot = task.create_bot()
+    ai_client: AIClient | None = None
 
     try:
         async with session_factory() as session:
@@ -166,6 +167,8 @@ async def _generate_letter_async(
         raise task.retry(exc=exc) from exc
 
     finally:
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         await bot.session.close()
 
 

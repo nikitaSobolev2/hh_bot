@@ -80,7 +80,7 @@ async def _generate_async(
     work_exp_id: int | None,
     reference_text: str | None = None,
 ) -> dict:
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.worker.circuit_breaker import CircuitBreaker
 
     cb = CircuitBreaker("work_experience_ai")
@@ -132,6 +132,8 @@ async def _generate_async(
             error=str(exc),
         )
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     if mode == _MODE_CREATE:
         async with session_factory() as session:
@@ -266,7 +268,7 @@ async def _improve_stack_async(
     return_to: str,
 ) -> dict:
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_improve_stack_system_prompt,
         build_improve_stack_user_prompt,
@@ -337,6 +339,8 @@ async def _improve_stack_async(
             error=str(exc),
         )
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     improved = normalize_improved_stack_output(generated or "")
     if not improved.strip():
@@ -658,7 +662,7 @@ async def _generate_resume_keyphrases_async(
 ) -> dict:
     from src.repositories.resume import ResumeRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import WorkExperienceEntry, build_per_company_key_phrases_prompt
     from src.worker.circuit_breaker import CircuitBreaker
 
@@ -735,6 +739,8 @@ async def _generate_resume_keyphrases_async(
         cb.record_failure()
         logger.error("Resume key phrases generation failed", user_id=user_id, error=str(exc))
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     if not phrases:
         return {"status": "empty_response"}
@@ -767,7 +773,7 @@ async def _ensure_achievements(session_factory, experiences, locale: str):
     import asyncio
 
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         build_work_experience_achievements_prompt,
         build_work_experience_achievements_system_prompt,
@@ -815,7 +821,10 @@ async def _ensure_achievements(session_factory, experiences, locale: str):
                     error=str(exc),
                 )
 
-    await asyncio.gather(*[_generate_one(exp) for exp in missing], return_exceptions=True)
+    try:
+        await asyncio.gather(*[_generate_one(exp) for exp in missing], return_exceptions=True)
+    finally:
+        await close_ai_client(ai_client)
 
     # Reload refreshed experiences from DB
     async with session_factory() as session:

@@ -60,7 +60,7 @@ async def _generate_achievements_async(
         AchievementGenerationRepository,
         AchievementItemRepository,
     )
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import (
         AchievementExperienceEntry,
         build_achievement_generation_prompt,
@@ -123,6 +123,8 @@ async def _generate_achievements_async(
                 await session.commit()
         logger.error("Achievement generation failed", generation_id=generation_id, error=str(exc))
         raise
+    finally:
+        await close_ai_client(ai_client)
 
     async with session_factory() as session:
         gen_repo = AchievementGenerationRepository(session)

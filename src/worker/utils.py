@@ -1,9 +1,11 @@
 """Shared utilities for Celery worker tasks."""
 
 import asyncio
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 
 from src.config import settings
 from src.core.db_managed_settings import load_managed_settings_to_runtime
+from src.worker.task_metrics import record_db_query
 
 
 def _create_task_session_factory() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
@@ -30,6 +33,33 @@ def _create_task_session_factory() -> tuple[AsyncEngine, async_sessionmaker[Asyn
         max_overflow=10,
         pool_pre_ping=True,
     )
+    sync_engine = eng.sync_engine
+
+    @event.listens_for(sync_engine, "before_cursor_execute")
+    def _before_cursor_execute(
+        conn,
+        cursor,
+        statement,
+        parameters,
+        context,
+        executemany,
+    ) -> None:
+        context._hh_bot_query_started_at = time.perf_counter()
+
+    @event.listens_for(sync_engine, "after_cursor_execute")
+    def _after_cursor_execute(
+        conn,
+        cursor,
+        statement,
+        parameters,
+        context,
+        executemany,
+    ) -> None:
+        started_at = getattr(context, "_hh_bot_query_started_at", None)
+        if started_at is None:
+            return
+        record_db_query((time.perf_counter() - started_at) * 1000)
+
     factory = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
     return eng, factory
 

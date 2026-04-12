@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import redis as sync_redis
 from redis.exceptions import RedisError, WatchError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
+from src.core.redis import create_sync_redis
 from src.infrastructure.checkpoints.redis_checkpoint_store import (
     hh_ui_apply_batch_checkpoint_key as _hh_ui_apply_batch_checkpoint_key,
 )
@@ -21,6 +20,10 @@ from src.services.progress_service import ProgressService, create_progress_redis
 logger = get_logger(__name__)
 
 _DONE_TTL_S = 4 * 3600
+
+
+def _sync_redis():
+    return create_sync_redis()
 
 
 def autorespond_done_redis_key(chat_id: int, task_key: str) -> str:
@@ -55,7 +58,7 @@ def save_hh_ui_resume_envelope_sync(
     chat_id: int, task_key: str, resume: dict[str, Any]
 ) -> None:
     """Persist resume kwargs so refresh works if the checkpoint JSON loses the ``resume`` key."""
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.set(
             hh_ui_resume_envelope_key(chat_id, task_key),
@@ -69,7 +72,7 @@ def save_hh_ui_resume_envelope_sync(
 def load_hh_ui_resume_envelope_sync(
     chat_id: int, task_key: str,
 ) -> dict[str, Any] | None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         raw = r.get(hh_ui_resume_envelope_key(chat_id, task_key))
         if not raw:
@@ -81,7 +84,7 @@ def load_hh_ui_resume_envelope_sync(
 
 
 def clear_hh_ui_resume_envelope_sync(chat_id: int, task_key: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.delete(hh_ui_resume_envelope_key(chat_id, task_key))
     finally:
@@ -210,7 +213,7 @@ def hh_ui_batch_active_key(chat_id: int, task_key: str) -> str:
 
 
 def set_hh_ui_batch_active_sync(chat_id: int, task_key: str, celery_task_id: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.set(hh_ui_batch_active_key(chat_id, task_key), celery_task_id, ex=_DONE_TTL_S)
     finally:
@@ -218,7 +221,7 @@ def set_hh_ui_batch_active_sync(chat_id: int, task_key: str, celery_task_id: str
 
 
 def clear_hh_ui_batch_active_sync(chat_id: int, task_key: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.delete(hh_ui_batch_active_key(chat_id, task_key))
     finally:
@@ -226,7 +229,7 @@ def clear_hh_ui_batch_active_sync(chat_id: int, task_key: str) -> None:
 
 
 def get_hh_ui_batch_active_sync(chat_id: int, task_key: str) -> str | None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         v = r.get(hh_ui_batch_active_key(chat_id, task_key))
         return str(v) if v else None
@@ -247,8 +250,9 @@ def save_hh_ui_batch_checkpoint_sync(
     so progress refresh can merge with the parent tail between Playwright batches.
     Without ``resume``, an empty list deletes the key (nothing to resume).
     """
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = hh_ui_batch_checkpoint_key(chat_id, task_key)
+    envelope_key = hh_ui_resume_envelope_key(chat_id, task_key)
     try:
         if not remaining_items and resume is None:
             r.delete(key)
@@ -256,8 +260,11 @@ def save_hh_ui_batch_checkpoint_sync(
         payload: dict[str, Any] = {"items": remaining_items}
         if resume is not None:
             payload["resume"] = resume
-            save_hh_ui_resume_envelope_sync(chat_id, task_key, resume)
-        r.set(key, json.dumps(payload), ex=_DONE_TTL_S)
+        pipe = r.pipeline()
+        pipe.set(key, json.dumps(payload), ex=_DONE_TTL_S)
+        if resume is not None:
+            pipe.set(envelope_key, json.dumps(resume), ex=_DONE_TTL_S)
+        pipe.execute()
     finally:
         r.close()
 
@@ -270,7 +277,7 @@ def load_hh_ui_batch_checkpoint_full_sync(
     ``items`` may be empty when the child batch finished but ``resume`` is kept for refresh.
     ``resume`` is None when the JSON has no ``resume`` key (legacy checkpoints).
     """
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = hh_ui_batch_checkpoint_key(chat_id, task_key)
     try:
         raw = r.get(key)
@@ -304,7 +311,7 @@ def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] 
 
 def save_autorespond_ui_tail_sync(chat_id: int, task_key: str, pending_items: list[dict]) -> None:
     """Parent queue: UI item dicts not yet dispatched to ``apply_to_vacancies_batch_ui_task``."""
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = autorespond_ui_tail_key(chat_id, task_key)
     try:
         if not pending_items:
@@ -317,7 +324,7 @@ def save_autorespond_ui_tail_sync(chat_id: int, task_key: str, pending_items: li
 
 def load_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> list[dict] | None:
     """Load parent pending UI rows for refresh between child batches."""
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = autorespond_ui_tail_key(chat_id, task_key)
     try:
         raw = r.get(key)
@@ -334,7 +341,7 @@ def load_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> list[dict] | N
 
 
 def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.delete(autorespond_ui_tail_key(chat_id, task_key))
     finally:
@@ -342,7 +349,7 @@ def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
 
 
 def set_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.set(autorespond_parent_loop_key(chat_id, task_key), "1", ex=_DONE_TTL_S)
     finally:
@@ -350,7 +357,7 @@ def set_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None
 
 
 def clear_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.delete(autorespond_parent_loop_key(chat_id, task_key))
     finally:
@@ -358,7 +365,7 @@ def clear_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> No
 
 
 def is_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> bool:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         return bool(r.get(autorespond_parent_loop_key(chat_id, task_key)))
     finally:
@@ -371,7 +378,7 @@ def pop_autorespond_ui_tail_batch_sync(
     batch_size: int,
 ) -> list[dict]:
     """Atomically remove up to ``batch_size`` items from the parent tail; return popped rows."""
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = autorespond_ui_tail_key(chat_id, task_key)
     try:
         for _ in range(30):
@@ -414,7 +421,7 @@ def pop_autorespond_ui_tail_batch_sync(
 
 
 def clear_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> None:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         r.delete(hh_ui_batch_checkpoint_key(chat_id, task_key))
     finally:
@@ -425,12 +432,14 @@ def increment_autorespond_failed_sync(chat_id: int, task_key: str, n: int = 1) -
     """Increment failed counter (sync Redis; safe from Celery before async tick)."""
     if n <= 0:
         return 0
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = autorespond_failed_redis_key(chat_id, task_key)
     try:
-        v = int(r.incrby(key, n))
-        r.expire(key, _DONE_TTL_S)
-        return v
+        pipe = r.pipeline()
+        pipe.incrby(key, n)
+        pipe.expire(key, _DONE_TTL_S)
+        values = pipe.execute()
+        return int(values[0])
     finally:
         r.close()
 
@@ -439,18 +448,20 @@ def increment_autorespond_employer_test_sync(chat_id: int, task_key: str, n: int
     """Increment employer-test counter (sync Redis; safe from Celery child tasks)."""
     if n <= 0:
         return 0
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     key = autorespond_employer_test_redis_key(chat_id, task_key)
     try:
-        v = int(r.incrby(key, n))
-        r.expire(key, _DONE_TTL_S)
-        return v
+        pipe = r.pipeline()
+        pipe.incrby(key, n)
+        pipe.expire(key, _DONE_TTL_S)
+        values = pipe.execute()
+        return int(values[0])
     finally:
         r.close()
 
 
 def load_autorespond_employer_test_count_sync(chat_id: int, task_key: str) -> int:
-    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    r = _sync_redis()
     try:
         raw = r.get(autorespond_employer_test_redis_key(chat_id, task_key))
         return int(raw or 0)
@@ -465,9 +476,9 @@ def is_autorespond_cancelled_sync(chat_id: int, task_key: str) -> bool:
     continues; cancel cannot be observed until Redis works again.
     """
     key = autorespond_cancel_redis_key(chat_id, task_key)
-    r: sync_redis.Redis | None = None
+    r: Any | None = None
     try:
-        r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        r = _sync_redis()
         return bool(r.get(key))
     except RedisError as exc:
         logger.warning(

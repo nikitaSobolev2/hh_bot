@@ -228,7 +228,7 @@ async def _generate_key_phrases_async(
     )
     from src.repositories.task import CeleryTaskRepository
     from src.repositories.user import UserRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.worker.circuit_breaker import CircuitBreaker
 
     cb = CircuitBreaker("keyphrase")
@@ -322,6 +322,7 @@ async def _generate_key_phrases_async(
             )
             phrases = await _stream_with_fallback(ai, bot, telegram_chat_id, header, prompt)
         finally:
+            await close_ai_client(ai)
             await bot.session.close()
 
         async with session_factory() as session:

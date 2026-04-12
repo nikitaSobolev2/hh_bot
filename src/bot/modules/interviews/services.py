@@ -15,7 +15,7 @@ from src.repositories.interview import (
     InterviewQuestionRepository,
     InterviewRepository,
 )
-from src.services.ai.client import AIClient
+from src.services.ai.client import AIClient, close_ai_client
 from src.services.ai.interview_parser import parse_interview_analysis
 
 _PAGE_SIZE = 5
@@ -77,14 +77,17 @@ async def analyze_and_save(
 ) -> tuple[str, list[InterviewImprovement]]:
     """Run AI analysis, persist results, and return (summary, improvements)."""
     ai_client = AIClient()
-    raw_response = await ai_client.analyze_interview(
-        vacancy_title=vacancy_title,
-        vacancy_description=vacancy_description,
-        company_name=company_name,
-        experience_level=experience_level,
-        questions_answers=questions_answers,
-        user_improvement_notes=user_improvement_notes,
-    )
+    try:
+        raw_response = await ai_client.analyze_interview(
+            vacancy_title=vacancy_title,
+            vacancy_description=vacancy_description,
+            company_name=company_name,
+            experience_level=experience_level,
+            questions_answers=questions_answers,
+            user_improvement_notes=user_improvement_notes,
+        )
+    finally:
+        await close_ai_client(ai_client)
 
     summary, improvement_data = parse_interview_analysis(raw_response)
 
@@ -121,12 +124,15 @@ async def generate_and_save_improvement_flow(
         return ""
 
     ai_client = AIClient()
-    flow = await ai_client.generate_improvement_flow(
-        technology_title=improvement.technology_title,
-        improvement_summary=improvement.summary,
-        vacancy_title=vacancy_title,
-        vacancy_description=vacancy_description,
-    )
+    try:
+        flow = await ai_client.generate_improvement_flow(
+            technology_title=improvement.technology_title,
+            improvement_summary=improvement.summary,
+            vacancy_title=vacancy_title,
+            vacancy_description=vacancy_description,
+        )
+    finally:
+        await close_ai_client(ai_client)
 
     if flow:
         await repo.set_improvement_flow(improvement_id, flow)

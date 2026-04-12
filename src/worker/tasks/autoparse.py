@@ -2,15 +2,16 @@
 
 import asyncio
 import contextlib
+import inspect
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import redis
-
-from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
+from src.core.redis import create_sync_redis
+from src.config import settings
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.hh_captcha_retry import celery_captcha_retry_countdown
@@ -52,6 +53,12 @@ def _search_url_resume_id(url: str) -> str | None:
             return resume_id
     return None
 
+
+async def _await_if_needed(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
 # Atomically acquire or re-acquire a task-owned lock.
 # Returns 1 when the lock is taken (new or re-delivery of same task).
 # Returns 0 when a *different* task already holds the lock.
@@ -65,8 +72,8 @@ return 0
 """
 
 
-def _redis_client() -> redis.Redis:
-    return redis.Redis.from_url(settings.redis_url)
+def _redis_client() -> Any:
+    return create_sync_redis()
 
 
 _RELEASE_RUN_LOCK_SCRIPT = """
@@ -88,6 +95,8 @@ def _release_autoparse_run_lock_best_effort(company_id: int, celery_task_id: str
         r.eval(_RELEASE_RUN_LOCK_SCRIPT, 1, key, celery_task_id)
     except Exception:
         logger.exception("Failed to release autoparse run lock", company_id=company_id)
+    finally:
+        r.close()
 
 
 @celery_app.task(
@@ -107,11 +116,11 @@ async def _dispatch_all_async(session_factory) -> dict:
     from src.repositories.autoparse import AutoparseCompanyRepository
 
     r = _redis_client()
-    if not r.set(_DISPATCH_LOCK_KEY, "1", nx=True, ex=300):
-        logger.info("Autoparse dispatch already running (lock held)")
-        return {"status": "locked"}
-
     try:
+        if not r.set(_DISPATCH_LOCK_KEY, "1", nx=True, ex=300):
+            logger.info("Autoparse dispatch already running (lock held)")
+            return {"status": "locked"}
+
         async with session_factory() as session:
             settings_repo = AppSettingRepository(session)
             enabled = await settings_repo.get_value("task_autoparse_enabled", default=True)
@@ -132,7 +141,9 @@ async def _dispatch_all_async(session_factory) -> dict:
         logger.info("Autoparse dispatch completed", dispatched=dispatched)
         return {"status": "dispatched", "count": dispatched}
     finally:
-        r.delete(_DISPATCH_LOCK_KEY)
+        with contextlib.suppress(Exception):
+            r.delete(_DISPATCH_LOCK_KEY)
+        r.close()
 
 
 @celery_app.task(
@@ -330,7 +341,7 @@ async def _run_autoparse_company_async(
     from src.repositories.parsing import ParsedVacancyRepository
     from src.repositories.user import UserRepository
     from src.repositories.work_experience import WorkExperienceRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.hh.crypto import HhTokenCipher
     from src.services.hh_ui.applicant_negotiations_http import (
         check_negotiations_browser_session_available,
@@ -349,7 +360,8 @@ async def _run_autoparse_company_async(
     lock_ttl = str(settings.autoparse_run_company_lock_ttl_seconds)
     acquired = r.eval(_ACQUIRE_LOCK_SCRIPT, 1, lock_key, task_id, lock_ttl)
     if not acquired:
-        holder_raw = r.get(lock_key)
+        get_holder = r.get
+        holder_raw = get_holder(lock_key)
         if isinstance(holder_raw, (bytes, bytearray)):
             holder = holder_raw.decode()
         elif isinstance(holder_raw, str):
@@ -384,6 +396,7 @@ async def _run_autoparse_company_async(
     cb = CircuitBreaker("autoparse")
     checkpoint = TaskCheckpointService(create_checkpoint_redis())
     hb_task: asyncio.Task[None] | None = None
+    ai_client: AIClient | None = None
     try:
 
         async def _run_lock_heartbeat() -> None:
@@ -621,9 +634,16 @@ async def _run_autoparse_company_async(
         if progress and total_to_analyze > 0:
             await progress.update_bar(progress_task_key, 0, total_to_analyze, total_to_analyze)
 
-        restored = await checkpoint.load(checkpoint_key, task_id)
+        restored = await _await_if_needed(checkpoint.load(checkpoint_key, task_id))
         if not restored:
-            restored = await checkpoint.load_for_resume(checkpoint_key)
+            restored = await _await_if_needed(checkpoint.load_for_resume(checkpoint_key))
+        if not (
+            isinstance(restored, (tuple, list))
+            and len(restored) == 2
+            and isinstance(restored[0], int)
+            and isinstance(restored[1], int)
+        ):
+            restored = None
         analyzed_offset, original_total = restored if restored else (0, total_to_analyze)
         analyzed_count = analyzed_offset
 
@@ -1093,7 +1113,10 @@ async def _run_autoparse_company_async(
             hb_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await hb_task
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         r.delete(lock_key)
+        r.close()
         if _progress_bot:
             await _progress_bot.session.close()
 
@@ -1112,7 +1135,7 @@ return 0
 """
 
 
-def _revoke_prior_scheduled_deliver(r: redis.Redis, deliver_task_key: str) -> None:
+def _revoke_prior_scheduled_deliver(r: Any, deliver_task_key: str) -> None:
     """Revoke a previously ETA-scheduled deliver task so it cannot stack with the new one."""
     old_id = r.get(deliver_task_key)
     if not old_id:
@@ -1130,11 +1153,11 @@ def _revoke_prior_scheduled_deliver(r: redis.Redis, deliver_task_key: str) -> No
         )
 
 
-def _acquire_deliver_lock(r: redis.Redis, lock_key: str, celery_task_id: str) -> bool:
+def _acquire_deliver_lock(r: Any, lock_key: str, celery_task_id: str) -> bool:
     return bool(r.set(lock_key, celery_task_id, nx=True, ex=_DELIVER_LOCK_TTL_S))
 
 
-def _release_deliver_lock(r: redis.Redis, lock_key: str, celery_task_id: str) -> None:
+def _release_deliver_lock(r: Any, lock_key: str, celery_task_id: str) -> None:
     try:
         r.eval(_RELEASE_DELIVER_LOCK_SCRIPT, 1, lock_key, celery_task_id)
     except Exception:
@@ -1171,7 +1194,7 @@ async def _update_compat_unseen_async(
     from src.repositories.vacancy_feed import VacancyFeedSessionRepository
     from src.repositories.work_experience import WorkExperienceRepository
     from src.schemas.vacancy import build_vacancy_api_context_from_orm
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import VacancyCompatInput
     from src.worker.circuit_breaker import CircuitBreaker
 
@@ -1180,6 +1203,7 @@ async def _update_compat_unseen_async(
         logger.info("Update compat unseen already running", user_id=user_id)
         return {"status": "already_running", "user_id": user_id}
 
+    ai_client: AIClient | None = None
     try:
         async with session_factory() as session:
             settings_repo = AppSettingRepository(session)
@@ -1341,6 +1365,8 @@ async def _update_compat_unseen_async(
         )
         return {"status": "completed", "updated_count": updated_count}
     finally:
+        if ai_client is not None:
+            await close_ai_client(ai_client)
         await task.release_user_task_lock(user_id, "update_compat_unseen")
 
 

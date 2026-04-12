@@ -378,7 +378,7 @@ async def _apply_batch_ui_async(
         else None
     )
     try:
-        from src.services.ai.client import AIClient
+        from src.services.ai.client import AIClient, close_ai_client
 
         cipher = HhTokenCipher(settings.hh_token_encryption_key)
         if task_key:
@@ -719,7 +719,7 @@ async def _apply_batch_ui_async(
     finally:
         if cover_ai is not None:
             with contextlib.suppress(Exception):
-                await cover_ai.aclose()
+                await close_ai_client(cover_ai)
         with contextlib.suppress(Exception):
             await bot.session.close()
 

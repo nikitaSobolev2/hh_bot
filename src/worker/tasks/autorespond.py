@@ -163,7 +163,7 @@ async def _regenerate_missing_compatibility_scores(
     """Fill stale compatibility scores (NULL/0) before autorespond filtering."""
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.schemas.vacancy import build_vacancy_api_context_from_orm
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.prompts import VacancyCompatInput
     from src.services.autoparse.compatibility import compatibility_score_needs_regeneration
 
@@ -212,7 +212,7 @@ async def _regenerate_missing_compatibility_scores(
             error=str(exc),
         )
     finally:
-        await ai_client.aclose()
+            await close_ai_client(ai_client)
 
 
 async def _unreacted_autoparsed_vacancy_ids(
@@ -398,7 +398,7 @@ async def _run_autorespond_async(
     from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
     from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
     from src.repositories.hh_linked_account import HhLinkedAccountRepository
-    from src.services.ai.client import AIClient
+    from src.services.ai.client import AIClient, close_ai_client
     from src.services.ai.resume_selection import (
         normalize_hh_resume_cache_items,
         resolve_resume_id_for_autorespond_vacancy,
@@ -1128,7 +1128,7 @@ async def _run_autorespond_async(
                 clear_autorespond_parent_loop_active_sync(user.telegram_id, task_key)
             if cover_ai_client is not None:
                 with contextlib.suppress(Exception):
-                    await cover_ai_client.aclose()
+                    await close_ai_client(cover_ai_client)
             if progress_bot and pipeline_context is None:
                 with contextlib.suppress(Exception):
                     await progress_bot.session.close()

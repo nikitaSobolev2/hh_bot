@@ -67,6 +67,10 @@ celery_app.conf.update(
         "hh_ui.apply_to_vacancy": {"queue": "hh_ui"},
     },
     task_track_started=True,
+    # In-repo callers fire-and-forget tasks and never fetch Celery return values via AsyncResult/.get().
+    # Skip writing success tombstones to Redis; keep failures inspectable.
+    task_ignore_result=True,
+    task_store_errors_even_if_ignored=True,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     task_acks_on_failure_or_timeout=False,
