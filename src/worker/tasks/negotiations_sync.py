@@ -244,7 +244,11 @@ async def _sync_negotiations_async(
 
         attempt_repo = HhApplicationAttemptRepository(session)
         for vid in sorted(vacancy_ids):
-            if await attempt_repo.user_has_any_attempt_for_hh_vacancy(user_id, vid):
+            if await attempt_repo.user_has_any_attempt_for_hh_vacancy(
+                user_id,
+                hh_linked_account_id,
+                vid,
+            ):
                 skipped_existing += 1
                 continue
             await attempt_repo.create(

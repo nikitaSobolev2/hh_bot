@@ -257,13 +257,20 @@ def build_stats_message(
 async def employer_questions_pending_for_feed(
     session: AsyncSession,
     user_id: int,
+    hh_linked_account_id: int | None,
     vacancy: AutoparsedVacancy,
 ) -> bool:
     """True if the vacancy row or latest apply attempt indicates employer questions pending."""
     if getattr(vacancy, "needs_employer_questions", False):
         return True
+    if not hh_linked_account_id:
+        return False
     repo = HhApplicationAttemptRepository(session)
-    st = await repo.latest_attempt_status_for_user_vacancy(user_id, vacancy.hh_vacancy_id)
+    st = await repo.latest_attempt_status_for_user_vacancy(
+        user_id,
+        hh_linked_account_id,
+        vacancy.hh_vacancy_id,
+    )
     return st == "needs_employer_questions"
 
 

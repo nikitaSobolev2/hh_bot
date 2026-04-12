@@ -48,13 +48,19 @@ logger = get_logger(__name__)
 async def _feed_vacancy_card_text(
     session: AsyncSession,
     user: User,
+    feed_session,
     vacancy,
     index: int,
     total: int,
     locale: str,
     mode: str = "summary",
 ) -> str:
-    pending = await feed_services.employer_questions_pending_for_feed(session, user.id, vacancy)
+    pending = await feed_services.employer_questions_pending_for_feed(
+        session,
+        user.id,
+        getattr(feed_session, "hh_linked_account_id", None),
+        vacancy,
+    )
     return feed_services.build_vacancy_card(
         vacancy,
         index,
@@ -447,7 +453,7 @@ async def handle_feed_toggle_view(
     total = len(feed_session.vacancy_ids)
     mode = callback_data.mode
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale, mode
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale, mode
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n, mode,
@@ -528,7 +534,7 @@ async def handle_feed_start(
 
     total = len(feed_session.vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -574,7 +580,7 @@ async def handle_feed_react(
         return
 
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -610,7 +616,7 @@ async def _feed_show_next_vacancy_or_results(
         return
 
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id,
@@ -716,7 +722,12 @@ async def _maybe_feed_ai_chain_single_resume_cached(
     if not settings.hh_ui_apply_enabled:
         return False
     attempt_repo = HhApplicationAttemptRepository(session)
-    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+    if await attempt_repo.has_successful_apply(
+        user.id,
+        feed_session.hh_linked_account_id,
+        vacancy.hh_vacancy_id,
+        resume_id,
+    ):
         await state.clear()
         await _feed_skip_respond_advance_feed(
             callback,
@@ -772,7 +783,7 @@ async def handle_feed_show_later(
         return
 
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -906,7 +917,7 @@ async def handle_feed_back_to_vacancy(
     )
     total = len(vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, current_index, total, i18n.locale
+        session, user, feed_session, vacancy, current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -959,7 +970,7 @@ async def handle_feed_prev_vacancy(
 
     total = len(vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -1507,7 +1518,7 @@ async def handle_feed_respond_cancel(
         return
     total = len(feed_session.vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     keyboard = feed_vacancy_keyboard(
         feed_session.id, vacancy.id, vacancy.url, i18n,
@@ -1566,7 +1577,10 @@ async def handle_feed_respond_pick(
     if settings.hh_ui_apply_enabled:
         attempt_repo = HhApplicationAttemptRepository(session)
         blocked_already = await attempt_repo.has_successful_apply(
-            user.id, vacancy.hh_vacancy_id, resume_id
+            user.id,
+            feed_session.hh_linked_account_id,
+            vacancy.hh_vacancy_id,
+            resume_id,
         )
         rate_ok = await try_acquire_ui_apply_slot_async(user.id)
         if blocked_already or not rate_ok:
@@ -1671,7 +1685,7 @@ async def handle_feed_respond_pick(
 
     total = len(feed_session.vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     if status == "success":
         text = f"{text}\n\n{i18n.get('feed-respond-success')}"
@@ -1745,7 +1759,12 @@ async def handle_feed_respond_letter_skip(
         return
 
     attempt_repo = HhApplicationAttemptRepository(session)
-    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+    if await attempt_repo.has_successful_apply(
+        user.id,
+        feed_session.hh_linked_account_id,
+        vacancy.hh_vacancy_id,
+        resume_id,
+    ):
         await state.clear()
         await callback.answer(i18n.get("feed-respond-ui-already-applied"), show_alert=True)
         return
@@ -1773,7 +1792,7 @@ async def handle_feed_respond_letter_skip(
     )
     total = len(feed_session.vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
     keyboard = feed_vacancy_keyboard(
@@ -1826,7 +1845,12 @@ async def handle_feed_respond_letter_generate(
         return
 
     attempt_repo = HhApplicationAttemptRepository(session)
-    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+    if await attempt_repo.has_successful_apply(
+        user.id,
+        feed_session.hh_linked_account_id,
+        vacancy.hh_vacancy_id,
+        resume_id,
+    ):
         await state.clear()
         await callback.answer(i18n.get("feed-respond-ui-already-applied"), show_alert=True)
         return
@@ -1913,7 +1937,12 @@ async def handle_feed_respond_letter_paste(
 
     letter = (message.text or "").strip()
     attempt_repo = HhApplicationAttemptRepository(session)
-    if await attempt_repo.has_successful_apply(user.id, vacancy.hh_vacancy_id, resume_id):
+    if await attempt_repo.has_successful_apply(
+        user.id,
+        feed_session.hh_linked_account_id,
+        vacancy.hh_vacancy_id,
+        resume_id,
+    ):
         await state.clear()
         return
     if not await try_acquire_ui_apply_slot_async(user.id):
@@ -1938,7 +1967,7 @@ async def handle_feed_respond_letter_paste(
     )
     total = len(feed_session.vacancy_ids)
     text = await _feed_vacancy_card_text(
-        session, user, vacancy, feed_session.current_index, total, i18n.locale
+        session, user, feed_session, vacancy, feed_session.current_index, total, i18n.locale
     )
     text = f"{text}\n\n{i18n.get('feed-respond-ui-queued')}"
     keyboard = feed_vacancy_keyboard(
@@ -2000,6 +2029,7 @@ async def _show_results(
         attempt_repo = HhApplicationAttemptRepository(session)
         attempts = await attempt_repo.list_for_feed_session_summary(
             user_id=feed_session.user_id,
+            hh_linked_account_id=feed_session.hh_linked_account_id,
             vacancy_ids=list(feed_session.vacancy_ids),
             since=since,
         )

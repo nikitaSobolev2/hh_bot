@@ -663,6 +663,7 @@ async def _run_autorespond_async(
         if capped:
             already_handled = await attempt_repo.hh_vacancy_ids_with_success_or_employer_questions(
                 user.id,
+                hh_acc_id,
                 [v.hh_vacancy_id for v in capped],
             )
 

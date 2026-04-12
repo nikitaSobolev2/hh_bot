@@ -15,7 +15,7 @@ async def test_has_successful_apply_true() -> None:
     session.execute = AsyncMock(return_value=result)
 
     repo = HhApplicationAttemptRepository(session)
-    assert await repo.has_successful_apply(1, "v1", "r1") is True
+    assert await repo.has_successful_apply(1, 9, "v1", "r1") is True
 
 
 @pytest.mark.asyncio
@@ -26,14 +26,14 @@ async def test_has_successful_apply_false() -> None:
     session.execute = AsyncMock(return_value=result)
 
     repo = HhApplicationAttemptRepository(session)
-    assert await repo.has_successful_apply(1, "v1", "r1") is False
+    assert await repo.has_successful_apply(1, 9, "v1", "r1") is False
 
 
 @pytest.mark.asyncio
 async def test_hh_vacancy_ids_with_successful_apply_empty_skips_query() -> None:
     session = MagicMock()
     repo = HhApplicationAttemptRepository(session)
-    assert await repo.hh_vacancy_ids_with_successful_apply(1, "r1", []) == set()
+    assert await repo.hh_vacancy_ids_with_successful_apply(1, 9, "r1", []) == set()
     session.execute.assert_not_called()
 
 
@@ -47,7 +47,7 @@ async def test_hh_vacancy_ids_with_successful_apply_returns_set() -> None:
     session.execute = AsyncMock(return_value=result)
 
     repo = HhApplicationAttemptRepository(session)
-    out = await repo.hh_vacancy_ids_with_successful_apply(1, "r1", ["111", "222", "333"])
+    out = await repo.hh_vacancy_ids_with_successful_apply(1, 9, "r1", ["111", "222", "333"])
     assert out == {"111", "222"}
 
 
@@ -55,7 +55,7 @@ async def test_hh_vacancy_ids_with_successful_apply_returns_set() -> None:
 async def test_hh_vacancy_ids_with_successful_apply_any_resume_empty() -> None:
     session = MagicMock()
     repo = HhApplicationAttemptRepository(session)
-    assert await repo.hh_vacancy_ids_with_successful_apply_any_resume(1, []) == set()
+    assert await repo.hh_vacancy_ids_with_successful_apply_any_resume(1, 9, []) == set()
     session.execute.assert_not_called()
 
 
@@ -69,5 +69,5 @@ async def test_hh_vacancy_ids_with_successful_apply_any_resume_returns_set() -> 
     session.execute = AsyncMock(return_value=result)
 
     repo = HhApplicationAttemptRepository(session)
-    out = await repo.hh_vacancy_ids_with_successful_apply_any_resume(1, ["111", "222", "333"])
+    out = await repo.hh_vacancy_ids_with_successful_apply_any_resume(1, 9, ["111", "222", "333"])
     assert out == {"111", "333"}

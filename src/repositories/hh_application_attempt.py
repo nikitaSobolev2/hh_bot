@@ -11,9 +11,14 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, HhApplicationAttempt)
 
+    @staticmethod
+    def _same_account_clause(hh_linked_account_id: int):
+        return HhApplicationAttempt.hh_linked_account_id == hh_linked_account_id
+
     async def has_successful_apply(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         hh_vacancy_id: str,
         resume_id: str,
     ) -> bool:
@@ -22,6 +27,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             .select_from(HhApplicationAttempt)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.hh_vacancy_id == hh_vacancy_id,
                 HhApplicationAttempt.resume_id == resume_id,
                 HhApplicationAttempt.status == "success",
@@ -33,6 +39,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     async def hh_vacancy_ids_with_successful_apply(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         resume_id: str,
         hh_vacancy_ids: list[str],
     ) -> set[str]:
@@ -43,6 +50,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             select(HhApplicationAttempt.hh_vacancy_id)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.resume_id == resume_id,
                 HhApplicationAttempt.hh_vacancy_id.in_(hh_vacancy_ids),
                 HhApplicationAttempt.status == "success",
@@ -56,6 +64,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     async def hh_vacancy_ids_with_successful_apply_any_resume(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         hh_vacancy_ids: list[str],
     ) -> set[str]:
         """Vacancies the user already responded to successfully (any resume)."""
@@ -65,6 +74,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             select(HhApplicationAttempt.hh_vacancy_id)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.hh_vacancy_id.in_(hh_vacancy_ids),
                 HhApplicationAttempt.status == "success",
             )
@@ -77,6 +87,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     async def hh_vacancy_ids_with_success_or_employer_questions(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         hh_vacancy_ids: list[str],
     ) -> set[str]:
         """Vacancies to skip in autorespond: success or employer questions pending (any resume).
@@ -95,6 +106,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             select(HhApplicationAttempt.hh_vacancy_id)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.hh_vacancy_id.in_(hh_vacancy_ids),
                 or_(
                     HhApplicationAttempt.status.in_(("success", "needs_employer_questions")),
@@ -110,6 +122,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     async def latest_attempt_status_for_user_vacancy(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         hh_vacancy_id: str,
     ) -> str | None:
         """Most recent attempt status for this user and HH vacancy id (by attempt id)."""
@@ -117,6 +130,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             select(HhApplicationAttempt.status)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.hh_vacancy_id == hh_vacancy_id,
             )
             .order_by(HhApplicationAttempt.id.desc())
@@ -128,6 +142,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     async def user_has_any_attempt_for_hh_vacancy(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         hh_vacancy_id: str,
     ) -> bool:
         """True if any attempt row exists for this user+vacancy (sync or real apply)."""
@@ -136,6 +151,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             .select_from(HhApplicationAttempt)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.hh_vacancy_id == hh_vacancy_id,
             )
         )
@@ -145,6 +161,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
     async def list_for_feed_session_summary(
         self,
         user_id: int,
+        hh_linked_account_id: int,
         vacancy_ids: list[int],
         since: datetime,
     ) -> list[HhApplicationAttempt]:
@@ -155,6 +172,7 @@ class HhApplicationAttemptRepository(BaseRepository[HhApplicationAttempt]):
             select(HhApplicationAttempt)
             .where(
                 HhApplicationAttempt.user_id == user_id,
+                self._same_account_clause(hh_linked_account_id),
                 HhApplicationAttempt.autoparsed_vacancy_id.in_(vacancy_ids),
                 HhApplicationAttempt.created_at >= since,
             )

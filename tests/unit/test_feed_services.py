@@ -184,7 +184,22 @@ async def test_employer_questions_pending_for_feed_from_latest_attempt(make_vaca
             return_value="needs_employer_questions"
         )
         mock_repo_cls.return_value = mock_repo
-        assert await employer_questions_pending_for_feed(session, 1, vacancy) is True
+        assert await employer_questions_pending_for_feed(session, 1, 9, vacancy) is True
+
+
+@pytest.mark.asyncio
+async def test_employer_questions_pending_for_feed_without_hh_account_returns_false(make_vacancy):
+    vacancy = make_vacancy()
+    vacancy.needs_employer_questions = False
+    vacancy.hh_vacancy_id = "42"
+    session = MagicMock()
+
+    with patch(
+        "src.bot.modules.autoparse.feed_services.HhApplicationAttemptRepository"
+    ) as mock_repo_cls:
+        assert await employer_questions_pending_for_feed(session, 1, None, vacancy) is False
+
+    mock_repo_cls.assert_not_called()
 
 
 def test_build_vacancy_card_skips_missing_optional_fields(make_vacancy):

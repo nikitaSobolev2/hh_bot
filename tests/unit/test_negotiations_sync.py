@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -221,3 +221,7 @@ async def test_sync_negotiations_html_only_uses_basic_cards_without_vacancy_deta
     assert build_mock.call_args_list[1].args[0]["title"] == "Python Engineer"
     assert build_mock.call_args_list[1].args[0]["company_name"] == "Beta"
     attempt_repo.create.assert_awaited()
+    assert attempt_repo.user_has_any_attempt_for_hh_vacancy.await_args_list == [
+        call(42, 9, "vac-1"),
+        call(42, 9, "vac-2"),
+    ]
