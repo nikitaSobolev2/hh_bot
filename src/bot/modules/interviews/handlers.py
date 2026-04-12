@@ -16,12 +16,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.modules.interviews import services as interview_service
 from src.bot.modules.interviews.callbacks import InterviewCallback, InterviewFormCallback
+from src.bot.modules.interviews.employer_qa_ui import (
+    build_employer_qa_item_full_html,
+    build_employer_qa_list_text,
+    truncate_question_for_button,
+)
 from src.bot.modules.interviews.keyboards import (
     cancel_keyboard,
     company_review_view_keyboard,
     confirm_keyboard,
     delete_confirm_keyboard,
     employer_qa_cancel_keyboard,
+    employer_qa_edit_cancel_keyboard,
+    employer_qa_item_keyboard,
     employer_qa_list_keyboard,
     experience_level_keyboard,
     improvement_detail_keyboard,
@@ -40,12 +47,17 @@ from src.bot.utils.limits import get_max_message_length
 from src.core.i18n import I18nContext
 from src.models.interview import ImprovementStatus
 from src.models.user import User
-from src.repositories.interview import InterviewRepository
+from src.repositories.interview import (
+    InterviewEmployerQuestionRepository,
+    InterviewRepository,
+)
 from src.services.parser.scraper import HHScraper
 
 router = Router(name="interviews")
 
 _scraper = HHScraper()
+
+_EMPLOYER_QA_ANSWER_EDIT_MAX = 12000
 
 
 # ── List view ────────────────────────────────────────────────────────────────
@@ -469,18 +481,20 @@ async def handle_detail(
         interview.experience_level,
         interview.hh_vacancy_url,
     )
-    summary_text = interview.ai_summary or i18n.get("iv-no-summary")
+    summary_text = html.escape(interview.ai_summary or i18n.get("iv-no-summary"))
 
     qa_lines = []
     for idx, qa in enumerate(interview.questions, 1):
-        qa_lines.append(f"\n<b>Q{idx}:</b> {qa.question}")
-        qa_lines.append(f"<b>A:</b> {qa.user_answer}")
-    qa_section = "\n".join(qa_lines) if qa_lines else i18n.get("iv-no-questions")
+        qa_lines.append(f"\n<b>Q{idx}:</b> {html.escape(qa.question or '')}")
+        qa_lines.append(f"<b>A:</b> {html.escape(qa.user_answer or '')}")
+    qa_section = "\n".join(qa_lines) if qa_lines else html.escape(i18n.get("iv-no-questions"))
 
     text = (
-        f"{header}\n\n"
-        f"<b>{i18n.get('iv-summary-label')}</b>\n{summary_text}\n\n"
-        f"<b>{i18n.get('iv-qa-label')}</b>{qa_section}"
+        f"{header}\n"
+        f"<i>───────────────</i>\n\n"
+        f"<b>{html.escape(i18n.get('iv-summary-label'))}</b>\n{summary_text}\n\n"
+        f"<i>───────────────</i>\n\n"
+        f"<b>{html.escape(i18n.get('iv-qa-label'))}</b>{qa_section}"
     )
 
     await callback.message.edit_text(
@@ -680,13 +694,8 @@ async def _show_employer_qa_list(
     session: AsyncSession,
     i18n: I18nContext,
     user: User,
-    *,
-    page: int = 0,
 ) -> None:
-    """Render employer Q&A list with optional pagination over long text."""
-    from src.repositories.interview import InterviewRepository
-    from src.services.telegram.text_utils import split_text_for_telegram
-
+    """Employer Q&A index: one button per saved pair (newest first)."""
     interview = await InterviewRepository(session).get_with_relations(interview_id)
     if not interview or interview.is_deleted:
         return
@@ -700,25 +709,77 @@ async def _show_employer_qa_list(
         interview.hh_vacancy_url,
     )
     rows = sorted(interview.employer_questions or [], key=lambda x: x.id, reverse=True)
-    blocks: list[str] = []
+    text = build_employer_qa_list_text(header, i18n, count=len(rows))
+    item_rows: list[tuple[int, str]] = []
     for idx, row in enumerate(rows, 1):
-        blocks.append(
-            f"<b>#{idx}</b>\n<b>{html.escape(i18n.get('iv-employer-qa-label-q'))}</b> "
-            f"{html.escape(row.question_text)}\n\n"
-            f"<b>{html.escape(i18n.get('iv-employer-qa-label-a'))}</b>\n{html.escape(row.answer_text)}"
+        short = truncate_question_for_button(row.question_text or "")
+        label = f"{idx}. {short}"
+        if len(label.encode("utf-8")) > 60:
+            label = label.encode("utf-8")[:57].decode("utf-8", errors="ignore") + "…"
+        item_rows.append((row.id, label))
+    kb = employer_qa_list_keyboard(interview_id, item_rows, i18n=i18n)
+    if not hasattr(message_or_callback, "edit_text"):
+        await message_or_callback.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
         )
-    body = "\n\n".join(blocks) if blocks else i18n.get("iv-employer-qa-empty")
-    title_block = f"{header}\n\n<b>{i18n.get('iv-employer-qa-title')}</b>\n\n"
-    full_text = title_block + body
+    else:
+        await message_or_callback.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+
+
+async def _show_employer_qa_item(
+    message_or_callback,
+    interview_id: int,
+    employer_qa_id: int,
+    session: AsyncSession,
+    i18n: I18nContext,
+    user: User,
+    *,
+    page: int = 0,
+) -> None:
+    """Single employer Q&A with paging when text is long."""
+    from src.services.telegram.text_utils import split_text_for_telegram
+
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        return
+    row = await InterviewEmployerQuestionRepository(session).get_by_id_and_interview(
+        employer_qa_id, interview_id
+    )
+    if not row:
+        return
+
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    full = build_employer_qa_item_full_html(
+        header,
+        result_header=i18n.get("iv-employer-qa-result-header"),
+        q_label=i18n.get("iv-employer-qa-label-q"),
+        a_label=i18n.get("iv-employer-qa-label-a"),
+        question_text=row.question_text or "",
+        answer_text=row.answer_text or "",
+    )
     max_len = get_max_message_length(user, "default")
-    chunks = split_text_for_telegram(full_text, max_len=max_len)
+    chunks = split_text_for_telegram(full, max_len=max_len)
     if not chunks:
-        chunks = [title_block + i18n.get("iv-employer-qa-empty")]
+        chunks = [full]
     total_pages = len(chunks)
-    page_index = max(0, min(page, total_pages - 1)) if total_pages else 0
-    text = chunks[page_index] if chunks else title_block + i18n.get("iv-employer-qa-empty")
-    kb = employer_qa_list_keyboard(
+    page_index = max(0, min(page, total_pages - 1))
+    text = chunks[page_index]
+    kb = employer_qa_item_keyboard(
         interview_id,
+        employer_qa_id,
         i18n=i18n,
         page=page_index,
         total_pages=total_pages,
@@ -747,8 +808,6 @@ async def handle_employer_qa_list(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.repositories.interview import InterviewRepository
-
     interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
     if not interview or interview.is_deleted:
         await callback.answer(i18n.get("iv-not-found"), show_alert=True)
@@ -760,6 +819,40 @@ async def handle_employer_qa_list(
     await _show_employer_qa_list(
         callback.message,
         callback_data.interview_id,
+        session,
+        i18n,
+        user,
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa_item"))
+async def handle_employer_qa_item(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    qa_id = callback_data.employer_qa_id
+    interview_id = callback_data.interview_id
+    if not qa_id or not interview_id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    row = await InterviewEmployerQuestionRepository(session).get_by_id_and_interview(
+        qa_id, interview_id
+    )
+    if not row:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    await _show_employer_qa_item(
+        callback.message,
+        interview_id,
+        qa_id,
         session,
         i18n,
         user,
@@ -777,10 +870,6 @@ async def handle_employer_qa_regenerate(
     i18n: I18nContext,
 ) -> None:
     from src.core.celery_async import run_celery_task
-    from src.repositories.interview import (
-        InterviewEmployerQuestionRepository,
-        InterviewRepository,
-    )
     from src.worker.tasks.interviews import generate_employer_question_answer_task
 
     qa_id = callback_data.employer_qa_id
@@ -815,6 +904,73 @@ async def handle_employer_qa_regenerate(
     await callback.answer()
 
 
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa_edit"))
+async def handle_employer_qa_edit(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    qa_id = callback_data.employer_qa_id
+    interview_id = callback_data.interview_id
+    if not qa_id or not interview_id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    row = await InterviewEmployerQuestionRepository(session).get_by_id_and_interview(
+        qa_id, interview_id
+    )
+    if not row:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    await state.set_state(EmployerQuestionFlow.awaiting_answer_edit)
+    await state.update_data(
+        employer_qa_edit_interview_id=interview_id,
+        employer_qa_edit_row_id=qa_id,
+    )
+    await callback.message.edit_text(
+        i18n.get("iv-employer-qa-edit-prompt"),
+        reply_markup=employer_qa_edit_cancel_keyboard(interview_id, qa_id, i18n=i18n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(InterviewCallback.filter(F.action == "employer_qa_edit_cancel"))
+async def handle_employer_qa_edit_cancel(
+    callback: CallbackQuery,
+    callback_data: InterviewCallback,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    qa_id = callback_data.employer_qa_id
+    interview_id = callback_data.interview_id
+    await state.clear()
+    if not qa_id or not interview_id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await callback.answer(i18n.get("iv-not-found"), show_alert=True)
+        return
+    await _show_employer_qa_item(
+        callback.message,
+        interview_id,
+        qa_id,
+        session,
+        i18n,
+        user,
+        page=0,
+    )
+    await callback.answer()
+
+
 @router.callback_query(InterviewCallback.filter(F.action == "employer_qa_new"))
 async def handle_employer_qa_new(
     callback: CallbackQuery,
@@ -824,8 +980,6 @@ async def handle_employer_qa_new(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.repositories.interview import InterviewRepository
-
     interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
     if not interview or interview.is_deleted:
         await callback.answer(i18n.get("iv-not-found"), show_alert=True)
@@ -855,8 +1009,6 @@ async def handle_employer_qa_cancel(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.repositories.interview import InterviewRepository
-
     interview = await InterviewRepository(session).get_by_id(callback_data.interview_id)
     if not interview or interview.is_deleted or interview.user_id != user.id:
         await state.clear()
@@ -870,7 +1022,6 @@ async def handle_employer_qa_cancel(
         session,
         i18n,
         user,
-        page=0,
     )
     await callback.answer()
 
@@ -884,7 +1035,6 @@ async def handle_employer_qa_question_text(
     i18n: I18nContext,
 ) -> None:
     from src.core.celery_async import run_celery_task
-    from src.repositories.interview import InterviewRepository
     from src.worker.tasks.interviews import generate_employer_question_answer_task
 
     data = await state.get_data()
@@ -916,6 +1066,80 @@ async def handle_employer_qa_question_text(
         message.chat.id,
         wait_msg.message_id,
         locale,
+    )
+
+
+@router.message(EmployerQuestionFlow.awaiting_answer_edit, F.text)
+async def handle_employer_qa_answer_edit_text(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    interview_id = int(data.get("employer_qa_edit_interview_id") or 0)
+    row_id = int(data.get("employer_qa_edit_row_id") or 0)
+    if not interview_id or not row_id:
+        await state.clear()
+        return
+    interview = await InterviewRepository(session).get_by_id(interview_id)
+    if not interview or interview.is_deleted or interview.user_id != user.id:
+        await state.clear()
+        await message.answer(i18n.get("iv-not-found"))
+        return
+    row = await InterviewEmployerQuestionRepository(session).get_by_id_and_interview(
+        row_id, interview_id
+    )
+    if not row:
+        await state.clear()
+        await message.answer(i18n.get("iv-not-found"))
+        return
+    new_answer = (message.text or "").strip()
+    if not new_answer:
+        await message.answer(i18n.get("iv-employer-qa-edit-empty"))
+        return
+    if len(new_answer) > _EMPLOYER_QA_ANSWER_EDIT_MAX:
+        await message.answer(i18n.get("iv-employer-qa-edit-too-long"))
+        return
+    await InterviewEmployerQuestionRepository(session).update(row, answer_text=new_answer)
+    await session.commit()
+    await state.clear()
+
+    header = interview_service.format_vacancy_header(
+        interview.vacancy_title,
+        interview.company_name,
+        interview.experience_level,
+        interview.hh_vacancy_url,
+    )
+    full = build_employer_qa_item_full_html(
+        header,
+        result_header=i18n.get("iv-employer-qa-result-header"),
+        q_label=i18n.get("iv-employer-qa-label-q"),
+        a_label=i18n.get("iv-employer-qa-label-a"),
+        question_text=row.question_text or "",
+        answer_text=new_answer,
+    )
+    from src.services.telegram.text_utils import split_text_for_telegram
+
+    max_len = get_max_message_length(user, "default")
+    chunks = split_text_for_telegram(full, max_len=max_len)
+    if not chunks:
+        chunks = [full]
+    total_pages = len(chunks)
+    text = chunks[0]
+    kb = employer_qa_item_keyboard(
+        interview_id,
+        row_id,
+        i18n=i18n,
+        page=0,
+        total_pages=total_pages,
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=kb,
+        disable_web_page_preview=True,
     )
 
 

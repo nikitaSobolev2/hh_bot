@@ -4,6 +4,7 @@ from src.services.ai.prompts import (
     WorkExperienceEntry,
     build_employer_question_answer_user_content,
     strip_employer_answer_plain_text,
+    truncate_employer_qa_thread,
 )
 
 
@@ -34,6 +35,36 @@ def test_build_employer_question_answer_user_content_includes_blocks():
     assert "Django" in user_content
     assert "Backend focus" in user_content
     assert "вопрос_работодателя" in user_content
+
+
+def test_build_employer_question_answer_user_content_includes_previous_qa():
+    user_content = build_employer_question_answer_user_content(
+        vacancy_title="Python Dev",
+        vacancy_description=None,
+        company_name=None,
+        experience_level=None,
+        hh_vacancy_url=None,
+        employer_question="Salary expectations?",
+        work_experiences=[],
+        previous_qa=[("Why us?", "Culture fit."), ("Remote?", "Hybrid ok.")],
+        history_truncated=True,
+    )
+    assert "РАНЕЕ В ДИАЛОГЕ С РАБОТОДАТЕЛЕМ" in user_content
+    assert "Why us?" in user_content
+    assert "Culture fit." in user_content
+    assert "Remote?" in user_content
+    assert "лимита контекста" in user_content
+    assert "Salary expectations?" in user_content
+    assert "история_вопрос_1" in user_content
+
+
+def test_truncate_employer_qa_thread_drops_oldest():
+    huge = "x" * 5000
+    pairs = [("q1", "a1"), ("q2", huge), ("q3", "a3")]
+    out, truncated = truncate_employer_qa_thread(pairs, max_chars=2000)
+    assert truncated
+    assert all("q1" not in q for q, _ in out)
+    assert any("q3" in q for q, _ in out)
 
 
 def test_build_employer_question_answer_user_content_regenerate_adds_variant():

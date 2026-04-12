@@ -1091,6 +1091,13 @@ iv-employer-qa-ai-empty = Could not get an answer text. Please try again later.
 iv-employer-qa-failed = Could not generate an answer. Please try later.
 iv-employer-qa-too-short = Message is too short. Send the full employer question.
 
+btn-iv-employer-qa-edit = ✏️ Edit answer
+btn-iv-employer-qa-list = 📋 All questions
+iv-employer-qa-list-hint = Choose a question below to view, edit, or regenerate the draft answer.
+iv-employer-qa-edit-prompt = Send the new answer in one message (plain text). It replaces the current draft.
+iv-employer-qa-edit-too-long = Answer is too long. Send a shorter text.
+iv-employer-qa-edit-empty = Answer is empty. Send non-blank text or tap Cancel.
+
 btn-iv-notes = 📝 Notes
 iv-notes-title = Notes
 iv-notes-empty = No notes yet.

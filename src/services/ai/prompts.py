@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from src.schemas.vacancy import VacancyApiContext
@@ -762,6 +763,47 @@ def build_questions_to_ask_prompt(
     return "".join(parts)
 
 
+_EMPLOYER_QA_HISTORY_MAX_CHARS = 7000
+
+
+def truncate_employer_qa_thread(
+    pairs: Sequence[tuple[str, str]],
+    *,
+    max_chars: int = _EMPLOYER_QA_HISTORY_MAX_CHARS,
+) -> tuple[list[tuple[str, str]], bool]:
+    """Trim oldest Q&A pairs (or shorten one long answer) so serialized history fits max_chars."""
+    raw = [(str(q or "").strip(), str(a or "").strip()) for q, a in pairs]
+    raw = [p for p in raw if p[0] or p[1]]
+    if not raw:
+        return [], False
+    original_len = len(raw)
+    lst = list(raw)
+    truncated = False
+
+    def block_size(items: list[tuple[str, str]]) -> int:
+        n = 220
+        for q, a in items:
+            n += len(q) + len(a) + 130
+        return n
+
+    while lst and block_size(lst) > max_chars:
+        if len(lst) > 1:
+            lst = lst[1:]
+            truncated = True
+            continue
+        q, a = lst[0]
+        overhead = block_size([(q, "")])
+        budget = max(400, max_chars - overhead)
+        if len(a) > budget:
+            lst = [(q, a[:budget] + "…")]
+            truncated = True
+        break
+
+    if len(lst) < original_len:
+        truncated = True
+    return lst, truncated
+
+
 def build_employer_question_answer_system_prompt(*, regenerate: bool = False) -> str:
     """System prompt: draft an answer to an employer's question for this vacancy."""
     regen = ""
@@ -779,6 +821,8 @@ def build_employer_question_answer_system_prompt(*, regenerate: bool = False) ->
         "[ПРАВИЛА]\n"
         "- Пиши от первого лица, как будто отвечает сам кандидат.\n"
         "- Опирайся на факты из опыта работы кандидата; не выдумывай проекты, должности и метрики.\n"
+        "- Если в сообщении пользователя есть блок «РАНЕЕ В ДИАЛОГЕ С РАБОТОДАТЕЛЕМ», новый ответ должен "
+        "быть согласован с уже данными ответами кандидата: не противоречь фактам и тону; продолжай линию диалога.\n"
         "- Сфокусируйся на опыте, наиболее релевантном вакансии и формулировке вопроса; "
         "если вопрос узкий — не распыляйся по всем местам работы подряд.\n"
         "- Свяжи ответ с контекстом вакансии (роль, стек, задачи из описания), где уместно.\n"
@@ -806,6 +850,8 @@ def build_employer_question_answer_user_content(
     about_me: str | None = None,
     regenerate: bool = False,
     variation_nonce: str | None = None,
+    previous_qa: Sequence[tuple[str, str]] | None = None,
+    history_truncated: bool = False,
 ) -> str:
     """User message: vacancy, optional about_me, experience block, employer question."""
     parts: list[str] = [f"[ВАКАНСИЯ]\n{vacancy_title}\n\n"]
@@ -824,6 +870,18 @@ def build_employer_question_answer_user_content(
         parts.append(f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n{exp_block}\n\n")
     else:
         parts.append("[ОПЫТ РАБОТЫ КАНДИДАТА]\n(не указан)\n\n")
+    if previous_qa:
+        parts.append("[РАНЕЕ В ДИАЛОГЕ С РАБОТОДАТЕЛЕМ]\n")
+        if history_truncated:
+            parts.append(
+                "(Часть более ранних реплик опущена из‑за лимита контекста; опирайся на то, что ниже.)\n\n"
+            )
+        for i, (pq, pa) in enumerate(previous_qa, 1):
+            parts.append(f"--- Реплика {i} ---\n")
+            parts.append(_wrap_user_input(f"история_вопрос_{i}", pq))
+            parts.append("\n")
+            parts.append(_wrap_user_input(f"история_ответ_кандидата_{i}", pa))
+            parts.append("\n\n")
     parts.append(_wrap_user_input("вопрос_работодателя", employer_question))
     if regenerate and variation_nonce:
         parts.append(

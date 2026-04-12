@@ -1092,6 +1092,13 @@ iv-employer-qa-ai-empty = Не удалось получить текст отв
 iv-employer-qa-failed = Не удалось сгенерировать ответ. Попробуйте позже.
 iv-employer-qa-too-short = Сообщение слишком короткое. Введите полный вопрос работодателя.
 
+btn-iv-employer-qa-edit = ✏️ Изменить ответ
+btn-iv-employer-qa-list = 📋 Все вопросы
+iv-employer-qa-list-hint = Выберите вопрос ниже, чтобы открыть черновик, изменить или перегенерировать ответ.
+iv-employer-qa-edit-prompt = Отправьте новый ответ одним сообщением (обычный текст). Он заменит текущий черновик.
+iv-employer-qa-edit-too-long = Ответ слишком длинный. Сократите текст.
+iv-employer-qa-edit-empty = Пустой ответ. Введите текст или нажмите «Отмена».
+
 btn-iv-notes = 📝 Заметки
 iv-notes-title = Заметки
 iv-notes-empty = Заметок пока нет.

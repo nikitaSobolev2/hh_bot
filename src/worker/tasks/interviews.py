@@ -671,13 +671,15 @@ async def _generate_employer_question_answer_async(
     locale: str,
     employer_qa_row_id: int | None = None,
 ) -> dict:
-    import html
     import secrets
 
     from celery.exceptions import SoftTimeLimitExceeded
 
     from src.bot.modules.autoparse import services as ap_service
-    from src.core.constants import AppSettingKey
+    from src.bot.modules.interviews import services as interview_service
+    from src.bot.modules.interviews.employer_qa_ui import build_employer_qa_item_full_html
+    from src.bot.modules.interviews.keyboards import employer_qa_item_keyboard
+    from src.core.constants import TELEGRAM_SAFE_LIMIT, AppSettingKey
     from src.core.i18n import get_text
     from src.repositories.interview import (
         InterviewEmployerQuestionRepository,
@@ -685,7 +687,10 @@ async def _generate_employer_question_answer_async(
     )
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient, close_ai_client
-    from src.services.ai.prompts import WorkExperienceEntry
+    from src.services.ai.prompts import (
+        WorkExperienceEntry,
+        truncate_employer_qa_thread,
+    )
 
     regenerate = employer_qa_row_id is not None
 
@@ -719,6 +724,19 @@ async def _generate_employer_question_answer_async(
                 q_trunc = (row.question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
             else:
                 q_trunc = (question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
+            prior_rows = await eq_repo.list_by_interview_oldest_first(interview_id)
+            if regenerate and employer_qa_row_id:
+                prior_rows = [r for r in prior_rows if r.id != employer_qa_row_id]
+            previous_qa_raw = [
+                ((r.question_text or "").strip(), (r.answer_text or "").strip()) for r in prior_rows
+            ]
+            previous_qa, history_truncated = truncate_employer_qa_thread(previous_qa_raw)
+            header_html = interview_service.format_vacancy_header(
+                interview.vacancy_title,
+                interview.company_name,
+                interview.experience_level,
+                interview.hh_vacancy_url,
+            )
             user_id = interview.user_id
             we_rows = await WorkExperienceRepository(session).get_active_by_user(user_id)
             settings = await ap_service.get_user_autoparse_settings(session, user_id)
@@ -750,6 +768,8 @@ async def _generate_employer_question_answer_async(
                 about_me=about_me,
                 regenerate=regenerate,
                 variation_nonce=variation_nonce,
+                previous_qa=previous_qa or None,
+                history_truncated=history_truncated,
             )
         finally:
             await close_ai_client(ai)
@@ -783,25 +803,37 @@ async def _generate_employer_question_answer_async(
 
         cb.record_success()
 
-        from src.bot.modules.interviews.keyboards import employer_qa_result_keyboard
+        from src.services.telegram.messenger import TelegramMessenger
+        from src.services.telegram.text_utils import split_text_for_telegram
 
         title = get_text("iv-employer-qa-result-header", locale)
         q_label = get_text("iv-employer-qa-label-q", locale)
         a_label = get_text("iv-employer-qa-label-a", locale)
-        body = (
-            f"<b>{html.escape(title)}</b>\n\n"
-            f"<b>{html.escape(q_label)}</b>\n{html.escape(q_trunc)}\n\n"
-            f"<b>{html.escape(a_label)}</b>\n{html.escape(answer.strip())}"
+        full = build_employer_qa_item_full_html(
+            header_html,
+            result_header=title,
+            q_label=q_label,
+            a_label=a_label,
+            question_text=q_trunc,
+            answer_text=answer.strip(),
         )
-        await task.notify_user(
-            bot,
+        chunks = split_text_for_telegram(full, max_len=TELEGRAM_SAFE_LIMIT)
+        if not chunks:
+            chunks = [full]
+        total_pages = len(chunks)
+        messenger = TelegramMessenger(bot)
+        await messenger.edit_or_send(
             chat_id,
             message_id,
-            body,
-            parse_mode="HTML",
-            reply_markup=employer_qa_result_keyboard(
-                interview_id, result_row_id, locale=locale
+            chunks[0],
+            reply_markup=employer_qa_item_keyboard(
+                interview_id,
+                result_row_id,
+                locale=locale,
+                page=0,
+                total_pages=total_pages,
             ),
+            parse_mode="HTML",
         )
         return {"status": "completed", "interview_id": interview_id}
 

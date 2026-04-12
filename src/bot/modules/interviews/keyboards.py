@@ -57,11 +57,17 @@ def interview_list_keyboard(
     )
 
     for interview in interviews:
-        date_str = interview.created_at.strftime("%m/%d")
+        date_str = interview.created_at.strftime("%d.%m.%Y")
+        co = (interview.company_name or "").strip()
+        title = (interview.vacancy_title or "").strip()
+        prefix = f"{co[:22]}{'…' if len(co) > 22 else ''} · " if co else ""
+        label = f"📝 {prefix}{title} ({date_str})"
+        if len(label.encode("utf-8")) > 62:
+            label = label.encode("utf-8")[:59].decode("utf-8", errors="ignore") + "…"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"📝 {interview.vacancy_title} ({date_str})",
+                    text=label,
                     callback_data=InterviewCallback(
                         action="detail", interview_id=interview.id
                     ).pack(),
@@ -230,20 +236,16 @@ def interview_detail_keyboard(
                 callback_data=InterviewCallback(
                     action="prepare_me", interview_id=interview_id
                 ).pack(),
-            )
-        ]
-    )
-
-    rows.append(
-        [
+            ),
             InlineKeyboardButton(
                 text=_t("btn-iv-company-review", i18n, locale),
                 callback_data=InterviewCallback(
                     action="company_review", interview_id=interview_id
                 ).pack(),
-            )
+            ),
         ]
     )
+
     rows.append(
         [
             InlineKeyboardButton(
@@ -251,17 +253,13 @@ def interview_detail_keyboard(
                 callback_data=InterviewCallback(
                     action="questions_to_ask", interview_id=interview_id
                 ).pack(),
-            )
-        ]
-    )
-    rows.append(
-        [
+            ),
             InlineKeyboardButton(
                 text=_t("btn-iv-notes", i18n, locale),
                 callback_data=InterviewCallback(
                     action="notes", interview_id=interview_id
                 ).pack(),
-            )
+            ),
         ]
     )
     rows.append(
@@ -292,15 +290,11 @@ def interview_detail_keyboard(
             InlineKeyboardButton(
                 text=_t("btn-iv-delete", i18n, locale),
                 callback_data=InterviewCallback(action="delete", interview_id=interview_id).pack(),
-            )
-        ]
-    )
-    rows.append(
-        [
+            ),
             InlineKeyboardButton(
                 text=_t("btn-back", i18n, locale),
                 callback_data=InterviewCallback(action="list").pack(),
-            )
+            ),
         ]
     )
 
@@ -309,53 +303,24 @@ def interview_detail_keyboard(
 
 def employer_qa_list_keyboard(
     interview_id: int,
+    item_rows: list[tuple[int, str]],
     i18n: I18nContext | None = None,
     locale: str = "ru",
-    *,
-    page: int = 0,
-    total_pages: int = 1,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if total_pages > 1:
-        nav: list[InlineKeyboardButton] = []
-        if page > 0:
-            nav.append(
+    for row_id, label in item_rows:
+        rows.append(
+            [
                 InlineKeyboardButton(
-                    text=_t("btn-notes-prev", i18n, locale),
+                    text=label,
                     callback_data=InterviewCallback(
-                        action="employer_qa",
+                        action="employer_qa_item",
                         interview_id=interview_id,
-                        page=page - 1,
+                        employer_qa_id=row_id,
                     ).pack(),
                 )
-            )
-        from src.core.i18n import get_text
-
-        page_label = (
-            i18n.get("iv-notes-page", current=page + 1, total=total_pages)
-            if i18n is not None
-            else get_text("iv-notes-page", locale, current=page + 1, total=total_pages)
+            ]
         )
-        nav.append(
-            InlineKeyboardButton(
-                text=page_label,
-                callback_data=InterviewCallback(
-                    action="employer_qa", interview_id=interview_id, page=page
-                ).pack(),
-            )
-        )
-        if page < total_pages - 1:
-            nav.append(
-                InlineKeyboardButton(
-                    text=_t("btn-notes-next", i18n, locale),
-                    callback_data=InterviewCallback(
-                        action="employer_qa",
-                        interview_id=interview_id,
-                        page=page + 1,
-                    ).pack(),
-                )
-            )
-        rows.append(nav)
     rows.extend(
         [
             [
@@ -379,15 +344,71 @@ def employer_qa_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def employer_qa_result_keyboard(
+def employer_qa_item_keyboard(
     interview_id: int,
     employer_qa_id: int,
     i18n: I18nContext | None = None,
     locale: str = "ru",
+    *,
+    page: int = 0,
+    total_pages: int = 1,
 ) -> InlineKeyboardMarkup:
-    """After a generated answer: regenerate this row, open list, or go back."""
-    rows: list[list[InlineKeyboardButton]] = [
+    rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text=_t("btn-notes-prev", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="employer_qa_item",
+                        interview_id=interview_id,
+                        employer_qa_id=employer_qa_id,
+                        page=page - 1,
+                    ).pack(),
+                )
+            )
+        from src.core.i18n import get_text
+
+        page_label = (
+            i18n.get("iv-notes-page", current=page + 1, total=total_pages)
+            if i18n is not None
+            else get_text("iv-notes-page", locale, current=page + 1, total=total_pages)
+        )
+        nav.append(
+            InlineKeyboardButton(
+                text=page_label,
+                callback_data=InterviewCallback(
+                    action="employer_qa_item",
+                    interview_id=interview_id,
+                    employer_qa_id=employer_qa_id,
+                    page=page,
+                ).pack(),
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text=_t("btn-notes-next", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="employer_qa_item",
+                        interview_id=interview_id,
+                        employer_qa_id=employer_qa_id,
+                        page=page + 1,
+                    ).pack(),
+                )
+            )
+        rows.append(nav)
+    rows.append(
         [
+            InlineKeyboardButton(
+                text=_t("btn-iv-employer-qa-edit", i18n, locale),
+                callback_data=InterviewCallback(
+                    action="employer_qa_edit",
+                    interview_id=interview_id,
+                    employer_qa_id=employer_qa_id,
+                ).pack(),
+            ),
             InlineKeyboardButton(
                 text=_t("btn-iv-employer-qa-regenerate", i18n, locale),
                 callback_data=InterviewCallback(
@@ -395,34 +416,73 @@ def employer_qa_result_keyboard(
                     interview_id=interview_id,
                     employer_qa_id=employer_qa_id,
                 ).pack(),
-            )
-        ],
+            ),
+        ]
+    )
+    rows.append(
         [
             InlineKeyboardButton(
                 text=_t("btn-iv-employer-qa-new", i18n, locale),
                 callback_data=InterviewCallback(
                     action="employer_qa_new", interview_id=interview_id
                 ).pack(),
-            )
-        ],
+            ),
+        ]
+    )
+    rows.append(
         [
             InlineKeyboardButton(
-                text=_t("btn-iv-employer-questions", i18n, locale),
+                text=_t("btn-iv-employer-qa-list", i18n, locale),
                 callback_data=InterviewCallback(
                     action="employer_qa", interview_id=interview_id
                 ).pack(),
-            )
-        ],
-        [
+            ),
             InlineKeyboardButton(
                 text=_t("btn-back", i18n, locale),
-                callback_data=InterviewCallback(
-                    action="detail", interview_id=interview_id
-                ).pack(),
-            )
-        ],
-    ]
+                callback_data=InterviewCallback(action="detail", interview_id=interview_id).pack(),
+            ),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def employer_qa_result_keyboard(
+    interview_id: int,
+    employer_qa_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    """After a generated answer: same actions as item detail (edit, regenerate, list, …)."""
+    return employer_qa_item_keyboard(
+        interview_id,
+        employer_qa_id,
+        i18n=i18n,
+        locale=locale,
+        page=0,
+        total_pages=1,
+    )
+
+
+def employer_qa_edit_cancel_keyboard(
+    interview_id: int,
+    employer_qa_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-cancel", i18n, locale),
+                    callback_data=InterviewCallback(
+                        action="employer_qa_edit_cancel",
+                        interview_id=interview_id,
+                        employer_qa_id=employer_qa_id,
+                    ).pack(),
+                )
+            ],
+        ]
+    )
 
 
 def employer_qa_cancel_keyboard(

@@ -5,6 +5,7 @@ class EmployerQuestionFlow(StatesGroup):
     """User sends employer question text for AI answer (per interview)."""
 
     awaiting_question = State()
+    awaiting_answer_edit = State()
 
 
 class InterviewForm(StatesGroup):

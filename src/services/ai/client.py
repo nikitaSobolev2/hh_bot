@@ -830,6 +830,8 @@ class AIClient:
         about_me: str | None = None,
         regenerate: bool = False,
         variation_nonce: str | None = None,
+        previous_qa: list[tuple[str, str]] | None = None,
+        history_truncated: bool = False,
     ) -> str:
         """Draft a candidate reply to an employer question using vacancy + experience context."""
         if regenerate:
@@ -846,6 +848,8 @@ class AIClient:
             about_me=about_me,
             regenerate=regenerate,
             variation_nonce=variation_nonce,
+            previous_qa=previous_qa,
+            history_truncated=history_truncated,
         )
         raw = await self.generate_text(
             user_content,

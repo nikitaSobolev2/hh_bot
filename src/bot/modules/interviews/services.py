@@ -5,6 +5,7 @@ Contains pure data-access and AI-orchestration logic with no Telegram coupling.
 
 from __future__ import annotations
 
+import html
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -165,11 +166,13 @@ def format_vacancy_header(
     experience_level: str | None,
     hh_vacancy_url: str | None,
 ) -> str:
-    lines = [f"<b>🏢 {vacancy_title}</b>"]
+    title_esc = html.escape(vacancy_title or "")
+    lines = [f"<b>🏢 {title_esc}</b>"]
     if company_name:
-        lines.append(f"Компания: {company_name}")
+        lines.append(f"Компания: {html.escape(company_name)}")
     if experience_level:
-        lines.append(f"Опыт: {experience_level}")
+        lines.append(f"Опыт: {html.escape(experience_level)}")
     if hh_vacancy_url:
-        lines.append(f'<a href="{hh_vacancy_url}">Открыть на HH.ru</a>')
+        url = hh_vacancy_url.replace('"', "%22")
+        lines.append(f'<a href="{url}">Открыть на HH.ru</a>')
     return "\n".join(lines)

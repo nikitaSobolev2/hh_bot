@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import delete, desc, select
+from sqlalchemy import asc, delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -31,6 +31,15 @@ class InterviewEmployerQuestionRepository(BaseRepository[InterviewEmployerQuesti
             select(InterviewEmployerQuestion)
             .where(InterviewEmployerQuestion.interview_id == interview_id)
             .order_by(desc(InterviewEmployerQuestion.id))
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_by_interview_oldest_first(self, interview_id: int) -> list[InterviewEmployerQuestion]:
+        stmt = (
+            select(InterviewEmployerQuestion)
+            .where(InterviewEmployerQuestion.interview_id == interview_id)
+            .order_by(asc(InterviewEmployerQuestion.id))
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
