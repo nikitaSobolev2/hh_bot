@@ -373,6 +373,7 @@ async def _run_autorespond_async(
     *,
     pipeline_context: dict | None = None,
     suppress_progress: bool = False,
+    progress_task_key: str | None = None,
 ) -> dict:
     from src.bot.modules.autoparse import services as ap_service
     from src.core.constants import AppSettingKey
@@ -381,12 +382,14 @@ async def _run_autorespond_async(
     from src.repositories.user import UserRepository
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
+        clear_autorespond_employer_test_counter,
         clear_autorespond_failed_counter,
         clear_autorespond_parent_loop_active_sync,
         clear_autorespond_ui_tail_sync,
         clear_hh_ui_batch_checkpoint_sync,
         clear_hh_ui_resume_envelope_sync,
         is_autorespond_cancelled_sync,
+        load_autorespond_employer_test_count_sync,
         save_autorespond_ui_tail_sync,
         set_autorespond_parent_loop_active_sync,
         tick_autorespond_bar,
@@ -498,7 +501,7 @@ async def _run_autorespond_async(
                 celery_task and user.telegram_id and user.telegram_id > 0
             )
         if pre_progress and not use_pipeline and not suppress_progress:
-            task_key = f"autorespond:{company_id}:{celery_id}"
+            task_key = progress_task_key or f"autorespond:{company_id}:{celery_id}"
             progress_bot = celery_task.create_bot()  # type: ignore[union-attr]
             progress = ProgressService(progress_bot, user.telegram_id, create_progress_redis(), locale)
             await progress.start_task(
@@ -685,6 +688,7 @@ async def _run_autorespond_async(
         queued = 0
         skipped = 0
         failed = 0
+        employer_tests = 0
         ui_batch_buffer: list[tuple[AutoparsedVacancy, str]] = []
         queue_ui_items: list[dict] = []
 
@@ -703,6 +707,7 @@ async def _run_autorespond_async(
                         [get_text("autorespond-progress-failed", locale, count=failed)],
                     )
                     await clear_autorespond_failed_counter(user.telegram_id, task_key)
+                    await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
             else:
                 await progress.set_step_state(task_key, "negotiations", "done")
                 if work_units <= 0:
@@ -721,6 +726,7 @@ async def _run_autorespond_async(
                         [get_text("autorespond-progress-failed", locale, count=failed)],
                     )
                     await clear_autorespond_failed_counter(user.telegram_id, task_key)
+                    await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
 
         ar_prog = (
             {
@@ -800,10 +806,14 @@ async def _run_autorespond_async(
                         "queued": queued,
                         "skipped": skipped,
                         "failed": failed,
+                        "employer_tests": employer_tests,
                         "trigger": trigger,
+                        "negotiations_sync": sync_res,
                     }
 
                 if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
+                    if vac.needs_employer_questions:
+                        employer_tests += 1
                     skipped += 1
                     continue
 
@@ -837,6 +847,7 @@ async def _run_autorespond_async(
                     continue
                 if preflight.requires_employer_test:
                     skipped += 1
+                    employer_tests += 1
                     async with session_factory() as s_eq:
                         vac_repo = AutoparsedVacancyRepository(s_eq)
                         row = await vac_repo.get_by_id(vac.id)
@@ -877,6 +888,7 @@ async def _run_autorespond_async(
                         if task_key and user.telegram_id:
                             await clear_autorespond_done_counter(user.telegram_id, task_key)
                             await clear_autorespond_failed_counter(user.telegram_id, task_key)
+                            await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
                         if progress and task_key:
                             if is_task_group_pipeline:
                                 await progress.update_footer(
@@ -908,7 +920,9 @@ async def _run_autorespond_async(
                             "queued": queued,
                             "skipped": skipped,
                             "failed": failed,
+                            "employer_tests": employer_tests,
                             "trigger": trigger,
+                            "negotiations_sync": sync_res,
                         }
                     if len(resume_items) > 1 and cover_ai_client is None:
                         cover_ai_client = AIClient()
@@ -1084,6 +1098,8 @@ async def _run_autorespond_async(
                 with contextlib.suppress(Exception):
                     await clear_autorespond_failed_counter(user.telegram_id, task_key)
                 with contextlib.suppress(Exception):
+                    await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
+                with contextlib.suppress(Exception):
                     if not is_task_group_pipeline:
                         await progress.finish_task(task_key, complete_bars=False)
             raise
@@ -1129,12 +1145,18 @@ async def _run_autorespond_async(
                     task_key,
                     work_units,
                 )
+                employer_tests += load_autorespond_employer_test_count_sync(
+                    user.telegram_id,
+                    task_key,
+                )
             with contextlib.suppress(Exception):
                 await progress.set_nested_step_state(task_key, "applications", "done")
             with contextlib.suppress(Exception):
                 await clear_autorespond_done_counter(user.telegram_id, task_key)
             with contextlib.suppress(Exception):
                 await clear_autorespond_failed_counter(user.telegram_id, task_key)
+            with contextlib.suppress(Exception):
+                await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
             with contextlib.suppress(Exception):
                 clear_hh_ui_batch_checkpoint_sync(user.telegram_id, task_key)
                 clear_hh_ui_resume_envelope_sync(user.telegram_id, task_key)
@@ -1153,7 +1175,9 @@ async def _run_autorespond_async(
             "queued": queued,
             "skipped": skipped,
             "failed": failed,
+            "employer_tests": employer_tests,
             "trigger": trigger,
+            "negotiations_sync": sync_res,
         }
 
 
@@ -1162,6 +1186,8 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
     task: HHBotTask,
     company_id: int,
     user_id: int,
+    *,
+    progress_task_key: str | None = None,
 ) -> dict:
     """Single Celery task: autoparse then autorespond with one pinned progress entry."""
     from src.repositories.autoparse import AutoparseCompanyRepository
@@ -1187,7 +1213,7 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
         if telegram_id <= 0:
             return {"status": "error", "reason": "no_telegram"}
 
-        pk = f"pipeline:{company_id}:{celery_id}"
+        pk = progress_task_key or f"pipeline:{company_id}:{celery_id}"
         redis = create_progress_redis()
         svc = ProgressService(bot, telegram_id, redis, locale)
         await svc.start_task(
@@ -1276,9 +1302,16 @@ def run_manual_autoparse_autorespond_pipeline(
     self: HHBotTask,
     company_id: int,
     user_id: int,
+    progress_task_key: str | None = None,
 ) -> dict:
     return run_async(
-        lambda sf: _run_manual_autoparse_autorespond_pipeline_async(sf, self, company_id, user_id)
+        lambda sf: _run_manual_autoparse_autorespond_pipeline_async(
+            sf,
+            self,
+            company_id,
+            user_id,
+            progress_task_key=progress_task_key,
+        )
     )
 
 
@@ -1298,6 +1331,7 @@ def run_autorespond_company(
     vacancy_ids: list[int] | None = None,
     trigger: str = "manual",
     task_started_at_iso: str | None = None,
+    progress_task_key: str | None = None,
 ) -> dict:
     ts = None
     if task_started_at_iso:
@@ -1307,7 +1341,15 @@ def run_autorespond_company(
             ts = None
 
     return run_async(
-        lambda sf: _run_autorespond_async(sf, self, company_id, vacancy_ids, trigger, ts)
+        lambda sf: _run_autorespond_async(
+            sf,
+            self,
+            company_id,
+            vacancy_ids,
+            trigger,
+            ts,
+            progress_task_key=progress_task_key,
+        )
     )
 
 

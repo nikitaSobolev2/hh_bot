@@ -23,10 +23,14 @@ Usage
 
 from __future__ import annotations
 
-import json
+from typing import Any
 
-_TTL = 4 * 3600
-_KEY_PREFIX = "checkpoint:"
+from src.application.ports.checkpoints import CheckpointStore
+from src.infrastructure.checkpoints.redis_checkpoint_store import (
+    RedisCheckpointStore,
+    task_checkpoint_key,
+    task_group_checkpoint_key,
+)
 
 
 def create_checkpoint_redis():
@@ -44,26 +48,35 @@ class TaskCheckpointService:
     logical task (e.g. a manual re-trigger while an older checkpoint exists).
     """
 
-    def __init__(self, redis) -> None:
+    def __init__(self, redis, store: CheckpointStore | None = None) -> None:
         self._redis = redis
+        self._store = store or RedisCheckpointStore(redis)
 
     async def save(self, key: str, task_id: str, *, analyzed: int, total: int) -> None:
         """Persist progress counters for ``key``, tagged with ``task_id``."""
-        payload = json.dumps({"task_id": task_id, "analyzed": analyzed, "total": total})
-        await self._redis.set(self._redis_key(key), payload, ex=_TTL)
+        await self._store.save_json(
+            task_checkpoint_key(key),
+            {"task_id": task_id, "analyzed": analyzed, "total": total},
+        )
 
     async def load(self, key: str, task_id: str) -> tuple[int, int] | None:
         """Return ``(analyzed, total)`` if a matching checkpoint exists.
 
         Returns ``None`` when the key is absent or belongs to a different task.
         """
-        raw = await self._redis.get(self._redis_key(key))
-        if not raw:
+        data = await self._store.load_json(task_checkpoint_key(key))
+        if not data:
             return None
-        data = json.loads(raw)
         if data.get("task_id") != task_id:
             return None
         return data["analyzed"], data["total"]
+
+    async def load_for_resume(self, key: str) -> tuple[int, int] | None:
+        """Return ``(analyzed, total)`` when any checkpoint exists, ignoring task id."""
+        data = await self._store.load_json(task_checkpoint_key(key))
+        if not data:
+            return None
+        return int(data.get("analyzed") or 0), int(data.get("total") or 0)
 
     async def save_parsing(
         self,
@@ -75,20 +88,19 @@ class TaskCheckpointService:
         urls: list[dict],
     ) -> None:
         """Persist parsing checkpoint with vacancy URL list for resume."""
-        payload = json.dumps(
-            {"task_id": task_id, "processed": processed, "total": total, "urls": urls}
+        await self._store.save_json(
+            task_checkpoint_key(key),
+            {"task_id": task_id, "processed": processed, "total": total, "urls": urls},
         )
-        await self._redis.set(self._redis_key(key), payload, ex=_TTL)
 
     async def load_parsing(self, key: str, task_id: str) -> tuple[int, int, list[dict]] | None:
         """Return ``(processed, total, urls)`` if a matching parsing checkpoint exists.
 
         Returns ``None`` when the key is absent or belongs to a different task.
         """
-        raw = await self._redis.get(self._redis_key(key))
-        if not raw:
+        data = await self._store.load_json(task_checkpoint_key(key))
+        if not data:
             return None
-        data = json.loads(raw)
         if data.get("task_id") != task_id:
             return None
         urls = data.get("urls", [])
@@ -103,10 +115,9 @@ class TaskCheckpointService:
         is orphaned but valid. Caller must ensure no concurrent execution for this key.
         Returns ``None`` when the key is absent or urls are empty.
         """
-        raw = await self._redis.get(self._redis_key(key))
-        if not raw:
+        data = await self._store.load_json(task_checkpoint_key(key))
+        if not data:
             return None
-        data = json.loads(raw)
         urls = data.get("urls", [])
         if not urls:
             return None
@@ -114,7 +125,50 @@ class TaskCheckpointService:
 
     async def clear(self, key: str) -> None:
         """Remove the checkpoint entry after successful task completion."""
-        await self._redis.delete(self._redis_key(key))
+        await self._store.delete(task_checkpoint_key(key))
 
-    def _redis_key(self, key: str) -> str:
-        return f"{_KEY_PREFIX}{key}"
+    async def save_task_group_state(
+        self,
+        chat_id: int,
+        task_key: str,
+        *,
+        user_id: int,
+        telegram_id: int,
+        steps: list[dict[str, Any]],
+        resume_from_index: int,
+        results: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Persist task-group resume metadata for the refresh button."""
+        await self._store.save_json(
+            task_group_checkpoint_key(chat_id, task_key),
+            {
+                "user_id": user_id,
+                "telegram_id": telegram_id,
+                "steps": steps,
+                "resume_from_index": resume_from_index,
+                "results": results or [],
+            },
+        )
+
+    async def load_task_group_state(self, chat_id: int, task_key: str) -> dict[str, Any] | None:
+        """Load task-group resume metadata for the refresh button."""
+        data = await self._store.load_json(task_group_checkpoint_key(chat_id, task_key))
+        if not data:
+            return None
+        steps = data.get("steps")
+        if not isinstance(steps, list):
+            return None
+        results = data.get("results")
+        if not isinstance(results, list):
+            results = []
+        return {
+            "user_id": int(data.get("user_id") or 0),
+            "telegram_id": int(data.get("telegram_id") or 0),
+            "steps": steps,
+            "resume_from_index": int(data.get("resume_from_index") or 0),
+            "results": results,
+        }
+
+    async def clear_task_group_state(self, chat_id: int, task_key: str) -> None:
+        """Remove task-group resume metadata."""
+        await self._store.delete(task_group_checkpoint_key(chat_id, task_key))

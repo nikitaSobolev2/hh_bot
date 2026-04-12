@@ -1279,6 +1279,23 @@ class TestAutoparsCheckpointRestore:
         assert original_total == 50
 
     @pytest.mark.asyncio
+    async def test_load_for_resume_restores_orphan_checkpoint(self):
+        """Refresh may use a new Celery id, so orphaned checkpoints must still restore."""
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.services.task_checkpoint import TaskCheckpointService
+
+        stored = json.dumps({"task_id": "old-task", "analyzed": 20, "total": 50})
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=stored)
+
+        service = TaskCheckpointService(redis)
+        result = await service.load_for_resume("autoparse:42")
+
+        assert result == (20, 50)
+
+    @pytest.mark.asyncio
     async def test_checkpoint_clears_on_success(self):
         """After successful completion the checkpoint key must be deleted."""
         from unittest.mock import AsyncMock, MagicMock

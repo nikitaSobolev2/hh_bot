@@ -17,13 +17,16 @@ from src.config import settings
 from src.core.celery_async import run_celery_task
 from src.core.logging import get_logger
 from src.db.engine import async_session_factory
+from src.infrastructure.checkpoints.redis_checkpoint_store import (
+    HH_UI_APPLY_BATCH_CHECKPOINT_PREFIX,
+)
 from src.repositories.app_settings import AppSettingRepository
 from src.repositories.parsing import ParsingCompanyRepository
 from src.worker.tasks.parsing import run_parsing_company
 
 logger = get_logger(__name__)
 
-_HH_UI_CP_PREFIX = "checkpoint:hh_ui_apply_batch:"
+_HH_UI_CP_PREFIX = HH_UI_APPLY_BATCH_CHECKPOINT_PREFIX
 
 
 def _parse_hh_ui_checkpoint_key(key: str) -> tuple[int, str] | None:

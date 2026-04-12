@@ -13,6 +13,9 @@ from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
+from src.infrastructure.checkpoints.redis_checkpoint_store import (
+    hh_ui_apply_batch_checkpoint_key as _hh_ui_apply_batch_checkpoint_key,
+)
 from src.services.progress_service import ProgressService, create_progress_redis
 
 logger = get_logger(__name__)
@@ -33,9 +36,14 @@ def autorespond_failed_redis_key(chat_id: int, task_key: str) -> str:
     return f"progress:autorespond_failed:{chat_id}:{task_key}"
 
 
+def autorespond_employer_test_redis_key(chat_id: int, task_key: str) -> str:
+    """Count vacancies that require employer questions/tests for summary output."""
+    return f"progress:autorespond_employer_test:{chat_id}:{task_key}"
+
+
 def hh_ui_batch_checkpoint_key(chat_id: int, task_key: str) -> str:
     """Remaining ``items`` for ``hh_ui.apply_to_vacancies_batch`` resume after soft timeout."""
-    return f"checkpoint:hh_ui_apply_batch:{chat_id}:{task_key}"
+    return _hh_ui_apply_batch_checkpoint_key(chat_id, task_key)
 
 
 def hh_ui_resume_envelope_key(chat_id: int, task_key: str) -> str:
@@ -427,6 +435,29 @@ def increment_autorespond_failed_sync(chat_id: int, task_key: str, n: int = 1) -
         r.close()
 
 
+def increment_autorespond_employer_test_sync(chat_id: int, task_key: str, n: int = 1) -> int:
+    """Increment employer-test counter (sync Redis; safe from Celery child tasks)."""
+    if n <= 0:
+        return 0
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    key = autorespond_employer_test_redis_key(chat_id, task_key)
+    try:
+        v = int(r.incrby(key, n))
+        r.expire(key, _DONE_TTL_S)
+        return v
+    finally:
+        r.close()
+
+
+def load_autorespond_employer_test_count_sync(chat_id: int, task_key: str) -> int:
+    r = sync_redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        raw = r.get(autorespond_employer_test_redis_key(chat_id, task_key))
+        return int(raw or 0)
+    finally:
+        r.close()
+
+
 def is_autorespond_cancelled_sync(chat_id: int, task_key: str) -> bool:
     """Set by the progress Cancel button; checked by Celery child tasks (sync Redis).
 
@@ -462,12 +493,26 @@ async def set_autorespond_cancelled(chat_id: int, task_key: str) -> None:
 
 async def clear_autorespond_done_counter(chat_id: int, task_key: str) -> None:
     redis = create_progress_redis()
-    await redis.delete(autorespond_done_redis_key(chat_id, task_key))
+    try:
+        await redis.delete(autorespond_done_redis_key(chat_id, task_key))
+    finally:
+        await redis.aclose()
 
 
 async def clear_autorespond_failed_counter(chat_id: int, task_key: str) -> None:
     redis = create_progress_redis()
-    await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
+    try:
+        await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
+    finally:
+        await redis.aclose()
+
+
+async def clear_autorespond_employer_test_counter(chat_id: int, task_key: str) -> None:
+    redis = create_progress_redis()
+    try:
+        await redis.delete(autorespond_employer_test_redis_key(chat_id, task_key))
+    finally:
+        await redis.aclose()
 
 
 async def _rehydrate_autorespond_progress_task_if_missing(

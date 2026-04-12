@@ -135,6 +135,8 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
     i18n.get = MagicMock(return_value="ok")
     svc = MagicMock()
     svc.update_celery_task_id = AsyncMock()
+    user = MagicMock()
+    user.id = 1
 
     tail = [{"autoparsed_vacancy_id": 1, "hh_vacancy_id": "9", "resume_id": "r", "vacancy_url": "https://hh.ru/vacancy/9"}]
     resume = {"user_id": 1, "chat_id": 2, "message_id": 0, "locale": "ru", "hh_linked_account_id": 3, "feed_session_id": 0, "cover_letter_style": "x", "cover_task_enabled": True, "silent_feed": True, "autorespond_progress": {}}
@@ -169,7 +171,7 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
 
         mock_run.return_value = MagicMock(id="new-celery-id")
         await _try_refresh_autorespond(
-            callback, i18n, "autorespond:8:tid", 2, svc
+            callback, i18n, "autorespond:8:tid", user, 2, svc, None
         )
 
     mock_run.assert_awaited_once()
@@ -186,6 +188,8 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
     i18n.get = MagicMock(return_value="ok")
     svc = MagicMock()
     svc.update_celery_task_id = AsyncMock()
+    user = MagicMock()
+    user.id = 1
 
     items = [{"autoparsed_vacancy_id": 1, "hh_vacancy_id": "9", "resume_id": "r", "vacancy_url": "u"}]
     resume = {
@@ -242,7 +246,7 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
 
         mock_run.return_value = MagicMock(id="new-id")
         await _try_refresh_autorespond(
-            callback, i18n, "autorespond:8:tid", 2, svc
+            callback, i18n, "autorespond:8:tid", user, 2, svc, None
         )
 
     mock_sync.assert_awaited_once()

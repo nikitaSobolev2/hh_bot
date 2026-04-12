@@ -693,6 +693,18 @@ class TestRenderProgressText:
         text = svc._render_progress_text(tasks)
         assert "Something went wrong, retrying" in text
 
+    def test_indeterminate_bar_renders_processing_message(self):
+        svc, _, _ = _make_service(locale="en")
+        tasks = {
+            "taskgroup:1": _task_state(
+                title="Task group",
+                bars=[{"label": "Current step", "current": 0, "total": 1}],
+            )
+        }
+        text = svc._render_progress_text(tasks)
+        assert "⏳ Processing..." in text
+        assert "0/1" not in text
+
     def test_completed_task_with_note_includes_shortage_message(self):
         svc, _, _ = _make_service()
         state = _task_state(
@@ -759,6 +771,19 @@ class TestRenderSummary:
         tasks = {"parse:1": _task_state(title="Backend Dev")}
         text = svc._render_summary(tasks)
         assert "•" in text
+
+    def test_renders_completion_summary_lines_when_present(self):
+        svc, _, _ = _make_service()
+        state = _task_state(title="Task group")
+        state["completion_summary_lines"] = [
+            "🔎 Спарсено вакансий: 5",
+            "📨 Обработано откликов: 2",
+        ]
+        text = svc._render_summary({"taskgroup:1": state})
+        assert "Task group" in text
+        assert "🔎 Спарсено вакансий: 5" in text
+        assert "📨 Обработано откликов: 2" in text
+        assert "• Task group" not in text
 
 
 # ---------------------------------------------------------------------------

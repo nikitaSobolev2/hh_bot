@@ -234,6 +234,7 @@ async def _finalize_batch_item_async(
 ) -> None:
     """Persist one batch row, tick autorespond bar, optional screenshot, Redis checkpoint."""
     from src.services.autorespond_progress import (
+        increment_autorespond_employer_test_sync,
         increment_autorespond_failed_sync,
         save_hh_ui_batch_checkpoint_sync,
         tick_autorespond_bar,
@@ -275,6 +276,8 @@ async def _finalize_batch_item_async(
             if not skip_progress_tick:
                 if _ui_outcome_increments_autorespond_failed(result.outcome):
                     increment_autorespond_failed_sync(int(chat_id), task_key, 1)
+                if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+                    increment_autorespond_employer_test_sync(int(chat_id), task_key, 1)
                 await tick_autorespond_bar(
                     bot=bot,
                     chat_id=chat_id,
@@ -1258,12 +1261,19 @@ async def _apply_ui_async(
         if autorespond_progress and autorespond_progress.get("task_key"):
             with contextlib.suppress(Exception):
                 from src.services.autorespond_progress import (
+                    increment_autorespond_employer_test_sync,
                     increment_autorespond_failed_sync,
                     tick_autorespond_bar,
                 )
 
                 if result is not None and _ui_outcome_increments_autorespond_failed(result.outcome):
                     increment_autorespond_failed_sync(
+                        int(chat_id),
+                        str(autorespond_progress["task_key"]),
+                        1,
+                    )
+                if result is not None and result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+                    increment_autorespond_employer_test_sync(
                         int(chat_id),
                         str(autorespond_progress["task_key"]),
                         1,

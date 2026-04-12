@@ -21,6 +21,13 @@ from src.services.task_group import (
 
 router = Router(name="task_group")
 
+_MAX_STEP_DISPLAY_TITLE = 40
+
+
+def _short_task_group_title(value: str | None, fallback: str) -> str:
+    text = (value or "").strip() or fallback
+    return text[:_MAX_STEP_DISPLAY_TITLE]
+
 
 def _format_steps_text(
     steps: list[dict],
@@ -195,19 +202,46 @@ async def handle_task_group_run(
             repo = AutoparseCompanyRepository(session)
             co = await repo.get_by_id(int(cid))
             if co and co.user_id == user.id and not co.is_deleted:
-                validated.append({"kind": kind, "company_id": int(cid)})
+                validated.append(
+                    {
+                        "kind": kind,
+                        "company_id": int(cid),
+                        "display_title": _short_task_group_title(
+                            co.vacancy_title,
+                            f"#{co.id}",
+                        ),
+                    }
+                )
                 ok = True
         elif kind == "autorespond":
             repo = AutoparseCompanyRepository(session)
             co = await repo.get_by_id(int(cid))
             if co and co.user_id == user.id and not co.is_deleted:
-                validated.append({"kind": kind, "company_id": int(cid)})
+                validated.append(
+                    {
+                        "kind": kind,
+                        "company_id": int(cid),
+                        "display_title": _short_task_group_title(
+                            co.vacancy_title,
+                            f"#{co.id}",
+                        ),
+                    }
+                )
                 ok = True
         elif kind == "parsing":
             repo = ParsingCompanyRepository(session)
             co = await repo.get_by_id_for_user(int(cid), user.id)
             if co:
-                validated.append({"kind": kind, "company_id": int(cid)})
+                validated.append(
+                    {
+                        "kind": kind,
+                        "company_id": int(cid),
+                        "display_title": _short_task_group_title(
+                            co.vacancy_title or co.search_url,
+                            f"#{co.id}",
+                        ),
+                    }
+                )
                 ok = True
         if not ok:
             skipped += 1

@@ -19,6 +19,7 @@ from src.models.user import User
 from src.services.autorespond_progress import (
     build_hh_ui_resume_envelope_fallback_async,
     clear_autorespond_done_counter,
+    clear_autorespond_employer_test_counter,
     clear_autorespond_failed_counter,
     clear_autorespond_ui_tail_sync,
     clear_hh_ui_batch_active_sync,
@@ -44,6 +45,7 @@ from src.services.progress_service import (
     create_progress_redis,
     short_callback_storage_key,
 )
+from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
 from src.worker.app import celery_app
 
 router = Router(name="progress")
@@ -157,7 +159,15 @@ async def handle_progress_refresh(
             )
         elif task_key.startswith("autorespond:"):
             await _try_refresh_autorespond(
-                callback, i18n, task_key, chat_id, svc
+                callback, i18n, task_key, user, chat_id, svc, celery_task_id
+            )
+        elif task_key.startswith("pipeline:"):
+            await _try_refresh_pipeline(
+                callback, i18n, task_key, user, svc, celery_task_id
+            )
+        elif task_key.startswith("taskgroup:"):
+            await _try_refresh_task_group(
+                callback, i18n, task_key, user, svc, celery_task_id
             )
         else:
             await callback.answer(
@@ -274,14 +284,24 @@ async def _try_refresh_autorespond(
     callback: CallbackQuery,
     i18n: I18nContext,
     task_key: str,
+    user: User,
     chat_id: int,
     svc: ProgressService,
+    celery_task_id: str | None,
 ) -> None:
     from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
+    from src.repositories.autoparse import AutoparseCompanyRepository
+    from src.worker.tasks.autorespond import run_autorespond_company
 
     if is_autorespond_cancelled_sync(chat_id, task_key):
         await callback.answer(
             i18n.get("progress-refresh-cancelled"),
+            show_alert=True,
+        )
+        return
+    if celery_task_id and celery_task_id_is_active(celery_task_id):
+        await callback.answer(
+            i18n.get("progress-refresh-running"),
             show_alert=True,
         )
         return
@@ -300,8 +320,42 @@ async def _try_refresh_autorespond(
             async_session_factory, chat_id, task_key
         )
     if not resume:
+        parts = task_key.split(":", 2)
+        if len(parts) != 3:
+            await callback.answer(
+                i18n.get("progress-refresh-no-resume"),
+                show_alert=True,
+            )
+            return
+        try:
+            company_id = int(parts[1])
+        except ValueError:
+            await callback.answer(
+                i18n.get("progress-refresh-no-resume"),
+                show_alert=True,
+            )
+            return
+        async with async_session_factory() as session:
+            repo = AutoparseCompanyRepository(session)
+            company = await repo.get_by_id(company_id)
+            if not company or company.user_id != user.id or company.is_deleted:
+                await callback.answer(
+                    i18n.get("progress-refresh-no-resume"),
+                    show_alert=True,
+                )
+                return
+        res = await run_celery_task(
+            run_autorespond_company,
+            company_id,
+            None,
+            "progress_refresh",
+            progress_task_key=task_key,
+        )
+        new_id = getattr(res, "id", None)
+        if new_id:
+            await svc.update_celery_task_id(task_key, str(new_id))
         await callback.answer(
-            i18n.get("progress-refresh-no-resume"),
+            i18n.get("progress-refresh-restarted"),
             show_alert=True,
         )
         return
@@ -327,6 +381,125 @@ async def _try_refresh_autorespond(
     res = await run_celery_task(
         apply_to_vacancies_batch_ui_task,
         **{**resume, "items": items},
+    )
+    new_id = getattr(res, "id", None)
+    if new_id:
+        await svc.update_celery_task_id(task_key, str(new_id))
+    await callback.answer(
+        i18n.get("progress-refresh-restarted"),
+        show_alert=True,
+    )
+
+
+async def _try_refresh_pipeline(
+    callback: CallbackQuery,
+    i18n: I18nContext,
+    task_key: str,
+    user: User,
+    svc: ProgressService,
+    celery_task_id: str | None,
+) -> None:
+    from src.repositories.autoparse import AutoparseCompanyRepository
+    from src.worker.tasks.autorespond import run_manual_autoparse_autorespond_pipeline
+
+    if celery_task_id and celery_task_id_is_active(celery_task_id):
+        await callback.answer(
+            i18n.get("progress-refresh-running"),
+            show_alert=True,
+        )
+        return
+    parts = task_key.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer(
+            i18n.get("progress-refresh-autoparse-failed"),
+            show_alert=True,
+        )
+        return
+    try:
+        company_id = int(parts[1])
+    except ValueError:
+        await callback.answer(
+            i18n.get("progress-refresh-autoparse-failed"),
+            show_alert=True,
+        )
+        return
+
+    async with async_session_factory() as session:
+        repo = AutoparseCompanyRepository(session)
+        company = await repo.get_by_id(company_id)
+        if not company or company.user_id != user.id or company.is_deleted:
+            await callback.answer(
+                i18n.get("progress-refresh-autoparse-failed"),
+                show_alert=True,
+            )
+            return
+
+    res = await run_celery_task(
+        run_manual_autoparse_autorespond_pipeline,
+        company_id,
+        user.id,
+        progress_task_key=task_key,
+    )
+    new_id = getattr(res, "id", None)
+    if new_id:
+        await svc.update_celery_task_id(task_key, str(new_id))
+    await callback.answer(
+        i18n.get("progress-refresh-restarted"),
+        show_alert=True,
+    )
+
+
+async def _try_refresh_task_group(
+    callback: CallbackQuery,
+    i18n: I18nContext,
+    task_key: str,
+    user: User,
+    svc: ProgressService,
+    celery_task_id: str | None,
+) -> None:
+    from src.worker.tasks.task_group import run_task_group_sequence
+
+    if celery_task_id and celery_task_id_is_active(celery_task_id):
+        await callback.answer(
+            i18n.get("progress-refresh-running"),
+            show_alert=True,
+        )
+        return
+
+    checkpoint_redis = create_checkpoint_redis()
+    try:
+        checkpoint = TaskCheckpointService(checkpoint_redis)
+        state = await checkpoint.load_task_group_state(user.telegram_id, task_key)
+    finally:
+        await checkpoint_redis.aclose()
+    if not state:
+        await callback.answer(
+            i18n.get("progress-refresh-nothing"),
+            show_alert=True,
+        )
+        return
+    if state.get("user_id") != user.id or state.get("telegram_id") != user.telegram_id:
+        await callback.answer(
+            i18n.get("progress-refresh-nothing"),
+            show_alert=True,
+        )
+        return
+
+    steps = state.get("steps") or []
+    if not steps:
+        await callback.answer(
+            i18n.get("progress-refresh-nothing"),
+            show_alert=True,
+        )
+        return
+
+    res = await run_celery_task(
+        run_task_group_sequence,
+        user.id,
+        user.telegram_id,
+        json.dumps(steps),
+        task_key=task_key,
+        resume_from_index=int(state.get("resume_from_index") or 0),
     )
     new_id = getattr(res, "id", None)
     if new_id:
@@ -399,6 +572,7 @@ async def handle_progress_cancel(
                 await set_autorespond_cancelled(chat_id, task_key)
                 await clear_autorespond_done_counter(chat_id, task_key)
                 await clear_autorespond_failed_counter(chat_id, task_key)
+                await clear_autorespond_employer_test_counter(chat_id, task_key)
                 clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
                 clear_hh_ui_resume_envelope_sync(chat_id, task_key)
                 clear_autorespond_ui_tail_sync(chat_id, task_key)
@@ -428,6 +602,7 @@ async def handle_progress_cancel(
             await set_autorespond_cancelled(chat_id, task_key)
             await clear_autorespond_done_counter(chat_id, task_key)
             await clear_autorespond_failed_counter(chat_id, task_key)
+            await clear_autorespond_employer_test_counter(chat_id, task_key)
             clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
             clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)

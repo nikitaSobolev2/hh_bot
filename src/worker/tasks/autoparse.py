@@ -622,6 +622,8 @@ async def _run_autoparse_company_async(
             await progress.update_bar(progress_task_key, 0, total_to_analyze, total_to_analyze)
 
         restored = await checkpoint.load(checkpoint_key, task_id)
+        if not restored:
+            restored = await checkpoint.load_for_resume(checkpoint_key)
         analyzed_offset, original_total = restored if restored else (0, total_to_analyze)
         analyzed_count = analyzed_offset
 

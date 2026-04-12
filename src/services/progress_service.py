@@ -87,6 +87,11 @@ def render_bar(current: int, total: int) -> str:
     return f"<code>{blocks}</code>  <b>{pct}%</b>  <i>{display_current}/{total}</i>"
 
 
+def render_indeterminate_progress(locale: str) -> str:
+    """Render a textual loader for phases whose total is not known yet."""
+    return get_text("progress-processing", locale)
+
+
 def create_progress_redis():
     """Create an async Redis client suitable for ProgressService."""
     from src.core.redis import create_async_redis
@@ -340,6 +345,17 @@ class ProgressService:
             state["nested_active_step_index"] = active_index
         else:
             state.pop("nested_active_step_index", None)
+        bars = state.get("bars") or []
+        if len(bars) > 1:
+            active_label = self._resolve_active_step_label(
+                state["nested_steps"],
+                state.get("nested_active_step_index"),
+            )
+            bars[1]["label"] = active_label or get_text(
+                "progress-taskgroup-detail-bar",
+                self._locale,
+            )
+        state["bars"] = bars
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -358,6 +374,17 @@ class ProgressService:
                 s["state"] = new_state
                 break
         state["nested_steps"] = nested
+        bars = state.get("bars") or []
+        if len(bars) > 1:
+            active_label = self._resolve_active_step_label(
+                nested,
+                state.get("nested_active_step_index"),
+            )
+            bars[1]["label"] = active_label or get_text(
+                "progress-taskgroup-detail-bar",
+                self._locale,
+            )
+        state["bars"] = bars
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -371,6 +398,15 @@ class ProgressService:
             return
         state = json.loads(raw)
         state["nested_active_step_index"] = index
+        bars = state.get("bars") or []
+        nested = state.get("nested_steps") or []
+        if len(bars) > 1:
+            active_label = self._resolve_active_step_label(nested, index)
+            bars[1]["label"] = active_label or get_text(
+                "progress-taskgroup-detail-bar",
+                self._locale,
+            )
+        state["bars"] = bars
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -388,6 +424,7 @@ class ProgressService:
         state.pop("nested_active_step_index", None)
         bars = state.get("bars") or []
         if len(bars) > 1:
+            bars[1]["label"] = get_text("progress-taskgroup-detail-bar", self._locale)
             bars[1]["current"] = 0
             bars[1]["total"] = 0
         state["bars"] = bars
@@ -446,6 +483,23 @@ class ProgressService:
         )
         await self._refresh_message(force=False)
 
+    async def set_bar_label(self, task_key: str, bar_index: int, label: str) -> None:
+        """Update a progress bar label without changing its counters."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        bars = state.get("bars") or []
+        if 0 <= bar_index < len(bars):
+            bars[bar_index]["label"] = label
+        state["bars"] = bars
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
     async def update_celery_task_id(self, task_key: str, celery_task_id: str | None) -> None:
         """Update stored Celery task id (e.g. after re-dispatching a child batch task)."""
         raw = await self._redis.get(self._task_key(task_key))
@@ -474,6 +528,20 @@ class ProgressService:
             return
         state = json.loads(raw)
         state["footer_lines"] = lines
+        await self._redis.set(
+            self._task_key(task_key),
+            json.dumps(state),
+            ex=_PROGRESS_TTL,
+        )
+        await self._refresh_message(force=False)
+
+    async def update_completion_summary(self, task_key: str, lines: list[str]) -> None:
+        """Store custom lines for final completion summary after pinned progress is removed."""
+        raw = await self._redis.get(self._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        state["completion_summary_lines"] = list(lines)
         await self._redis.set(
             self._task_key(task_key),
             json.dumps(state),
@@ -837,7 +905,10 @@ class ProgressService:
             if total <= 0:
                 continue
             lines.append(self._escape_html(bar["label"]))
-            bar_line = render_bar(bar["current"], total)
+            if not is_done and total == 1 and bar["current"] <= 0:
+                bar_line = self._escape_html(render_indeterminate_progress(self._locale))
+            else:
+                bar_line = render_bar(bar["current"], total)
             lines.append(f"{bar_line} ✅" if is_done else bar_line)
         return "\n".join(lines)
 
@@ -908,10 +979,39 @@ class ProgressService:
     def _render_summary(self, tasks: dict[str, dict]) -> str:
         """Render the all-done summary message sent after the pinned message is removed."""
         title = get_text("progress-completed-title", self._locale)
-        task_lines = "\n".join(f"• {self._escape_html(state['title'])}" for state in tasks.values())
-        return f"<b>{title}</b>\n\n{task_lines}"
+        sections: list[str] = []
+        for state in tasks.values():
+            heading = self._escape_html(state["title"])
+            summary_lines = state.get("completion_summary_lines") or []
+            if summary_lines:
+                lines = [f"<b>{heading}</b>"]
+                lines.extend(self._escape_html(line) for line in summary_lines)
+                sections.append("\n".join(lines))
+            else:
+                sections.append(f"• {heading}")
+        return f"<b>{title}</b>\n\n" + "\n\n".join(sections)
 
     @staticmethod
     def _escape_html(value: object) -> str:
         """Escape dynamic text before embedding it into Telegram HTML."""
         return escape(str(value), quote=False)
+
+    @staticmethod
+    def _resolve_active_step_label(
+        steps: list[dict],
+        active_index: int | None,
+    ) -> str | None:
+        """Return label of current running/pending step for nested detail bar."""
+        if not steps:
+            return None
+        if active_index is not None and 0 <= active_index < len(steps):
+            label = steps[active_index].get("label")
+            if isinstance(label, str) and label:
+                return label
+        for state_name in ("running", "pending"):
+            for step in steps:
+                if step.get("state") == state_name:
+                    label = step.get("label")
+                    if isinstance(label, str) and label:
+                        return label
+        return None
