@@ -2,7 +2,10 @@ from celery import Celery
 from celery.schedules import crontab
 
 from src.config import settings
+from src.core.logging import setup_logging
 from src.worker.signals import connect_signals
+
+setup_logging()
 
 celery_app = Celery(
     "hh_bot",
@@ -67,6 +70,7 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     task_acks_on_failure_or_timeout=False,
+    worker_hijack_root_logger=False,
     worker_prefetch_multiplier=1,
     result_expires=3600,
     # Safety net: kill any task that exceeds 5 min; raise SoftTimeLimitExceeded at 4 min

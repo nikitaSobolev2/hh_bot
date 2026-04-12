@@ -45,3 +45,426 @@
 2026-04-11 13:23:12 | INFO     | src.services.hh_ui.runner | {'log_user_id': 1, 'branch': 'applicant', 'event': 'list_resumes_ui_start', 'logger': 'src.services.hh_ui.runner', 'level': 'info', 'timestamp': '2026-04-11T13:23:12.812746Z'}
 2026-04-11 13:23:16 | INFO     | src.services.hh_ui.runner | {'log_user_id': 1, 'branch': 'applicant', 'resume_count': 3, 'outcome': 'success', 'detail': None, 'event': 'list_resumes_ui_done', 'logger': 'src.services.hh_ui.runner', 'level': 'info', 'timestamp': '2026-04-11T13:23:16.396102Z'}
 2026-04-11 13:23:16 | INFO     | src.bot.modules.autoparse.autorespond_handlers | {'user_id': 1, 'hh_linked_account_id': 9, 'resume_count': 3, 'event': 'autorespond_resume_cache_miss', 'logger': 'src.bot.modules.autoparse.autorespond_handlers', 'level': 'info', 'timestamp': '2026-04-11T13:23:16.404332Z'}
+2026-04-11 15:29:01 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 15:29:01 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 15:29:01 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 15:29:22 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T15:29:22.559642Z'}
+2026-04-11 15:29:48 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T15:29:48.011531Z'}
+2026-04-11 15:29:49 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T15:29:49.218255Z'}
+2026-04-11 15:29:55 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T15:29:55.903562Z'}
+2026-04-11 15:29:55 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 15:29:55 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 16:09:54 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 16:09:54 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 16:09:54 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 16:10:13 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T16:10:13.728940Z'}
+2026-04-11 16:10:39 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T16:10:39.100621Z'}
+2026-04-11 16:10:40 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T16:10:40.064398Z'}
+2026-04-11 16:10:46 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T16:10:46.369415Z'}
+2026-04-11 16:10:46 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 16:10:46 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 16:44:15 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 16:44:15 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 16:44:15 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 16:52:09 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T16:52:09.886167Z'}
+2026-04-11 16:52:36 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T16:52:36.566555Z'}
+2026-04-11 16:52:37 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T16:52:37.497299Z'}
+2026-04-11 16:52:44 | INFO     | src.services.bot_pin_cleanup | {'unpins': 1, 'event': 'startup_bot_pins_cleared', 'logger': 'src.services.bot_pin_cleanup', 'level': 'info', 'timestamp': '2026-04-11T16:52:44.958780Z'}
+2026-04-11 16:52:45 | INFO     | src.services.progress_service | {'chats': 1, 'event': 'progress_pins_refreshed_after_restart', 'logger': 'src.services.progress_service', 'level': 'info', 'timestamp': '2026-04-11T16:52:45.520659Z'}
+2026-04-11 16:52:46 | INFO     | src.services.task_restart | {'chat_id': 1063474709, 'task_key': 'pipeline:16:8f727f39-23fb-4da6-afe8-6d75a30895e6', 'active_id': '8b1917cf-87d2-4fad-b354-4b2a6f451b42', 'event': 'hh_ui_checkpoint_resume_skip_active', 'logger': 'src.services.task_restart', 'level': 'info', 'timestamp': '2026-04-11T16:52:46.745257Z'}
+2026-04-11 16:52:46 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T16:52:46.766699Z'}
+2026-04-11 16:52:46 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 16:52:46 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 17:37:57 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 17:37:57 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 17:37:57 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 17:45:31 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T17:45:31.675225Z'}
+2026-04-11 17:45:56 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T17:45:56.900512Z'}
+2026-04-11 17:45:58 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T17:45:58.236328Z'}
+2026-04-11 17:46:05 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T17:46:05.670354Z'}
+2026-04-11 17:46:05 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 17:46:05 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 18:15:51 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 18:15:51 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 18:15:51 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 18:16:12 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T18:16:12.440438Z'}
+2026-04-11 18:16:37 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T18:16:37.785254Z'}
+2026-04-11 18:16:39 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T18:16:39.228418Z'}
+2026-04-11 18:16:45 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T18:16:45.422577Z'}
+2026-04-11 18:16:45 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 18:16:45 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 21:05:49 | WARNING  | aiogram.dispatcher | Received SIGTERM signal
+2026-04-11 21:05:49 | INFO     | aiogram.dispatcher | Polling stopped for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 21:05:49 | INFO     | aiogram.dispatcher | Polling stopped
+2026-04-11 21:13:41 | INFO     | __main__ | {'event': 'Starting HH Bot...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T21:13:41.761529Z'}
+2026-04-11 21:14:05 | INFO     | src.db.engine | {'event': 'Database connection verified', 'logger': 'src.db.engine', 'level': 'info', 'timestamp': '2026-04-11T21:14:05.118501Z'}
+2026-04-11 21:14:06 | INFO     | __main__ | {'event': 'DB-managed settings loaded', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T21:14:06.059252Z'}
+2026-04-11 21:14:12 | INFO     | src.services.bot_pin_cleanup | {'unpins': 1, 'event': 'startup_bot_pins_cleared', 'logger': 'src.services.bot_pin_cleanup', 'level': 'info', 'timestamp': '2026-04-11T21:14:12.006619Z'}
+2026-04-11 21:14:12 | INFO     | src.services.progress_service | {'chats': 1, 'event': 'progress_pins_refreshed_after_restart', 'logger': 'src.services.progress_service', 'level': 'info', 'timestamp': '2026-04-11T21:14:12.527800Z'}
+2026-04-11 21:14:12 | INFO     | __main__ | {'event': 'Bot is polling...', 'logger': '__main__', 'level': 'info', 'timestamp': '2026-04-11T21:14:12.589203Z'}
+2026-04-11 21:14:12 | INFO     | aiogram.dispatcher | Start polling
+2026-04-11 21:14:12 | INFO     | aiogram.dispatcher | Run polling for bot @hhDreamJobBot id=8616512198 - 'Работа Мечты на HH'
+2026-04-11 21:42:50 | ERROR    | aiogram.event | Cause exception while process update id=33876721 by bot id=8616512198
+TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/throttle.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/auth.py", line 82, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/i18n.py", line 25, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/core/i18n.py", line 65, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/app/src/bot/modules/autoparse/handlers.py", line 678, in parse_mode_web_selected
+    await _continue_web_parse_setup(
+  File "/app/src/bot/modules/autoparse/handlers.py", line 344, in _continue_web_parse_setup
+    await target.answer()
+  File "/usr/local/lib/python3.12/site-packages/aiogram/methods/base.py", line 82, in emit
+    return await bot(self)
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/bot.py", line 493, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 177, in make_request
+    response = self.check_response(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 121, in check_response
+    raise TelegramBadRequest(method=method, message=description)
+aiogram.exceptions.TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+2026-04-11 21:58:34 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-11 21:59:35 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-11 22:34:56 | INFO     | aiogram.dispatcher | Connection established (tryings = 1, bot id = 8616512198)
+2026-04-12 00:54:50 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 00:57:40 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 01:04:25 | INFO     | aiogram.dispatcher | Connection established (tryings = 1, bot id = 8616512198)
+2026-04-12 01:19:27 | ERROR    | aiogram.event | Cause exception while process update id=33876766 by bot id=8616512198
+TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/throttle.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/auth.py", line 82, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/i18n.py", line 25, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/core/i18n.py", line 65, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/app/src/bot/modules/progress/handlers.py", line 163, in handle_progress_refresh
+    await callback.answer(
+  File "/usr/local/lib/python3.12/site-packages/aiogram/methods/base.py", line 82, in emit
+    return await bot(self)
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/bot.py", line 493, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 177, in make_request
+    response = self.check_response(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 121, in check_response
+    raise TelegramBadRequest(method=method, message=description)
+aiogram.exceptions.TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+2026-04-12 01:19:29 | ERROR    | aiogram.event | Cause exception while process update id=33876767 by bot id=8616512198
+TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/throttle.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/auth.py", line 82, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/i18n.py", line 25, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/core/i18n.py", line 65, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/app/src/bot/modules/progress/handlers.py", line 142, in handle_progress_refresh
+    await callback.answer(
+  File "/usr/local/lib/python3.12/site-packages/aiogram/methods/base.py", line 82, in emit
+    return await bot(self)
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/bot.py", line 493, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 177, in make_request
+    response = self.check_response(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 121, in check_response
+    raise TelegramBadRequest(method=method, message=description)
+aiogram.exceptions.TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+2026-04-12 01:19:30 | ERROR    | aiogram.event | Cause exception while process update id=33876768 by bot id=8616512198
+TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 320, in _process_update
+    response = await self.feed_update(bot, update, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 164, in feed_update
+    response = await self.update.wrap_outer_middleware(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/error.py", line 27, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/middlewares/user_context.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/fsm/middleware.py", line 43, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/throttle.py", line 58, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/auth.py", line 82, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/bot/middlewares/i18n.py", line 25, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/src/core/i18n.py", line 65, in __call__
+    return await handler(event, data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/dispatcher.py", line 283, in _listen_update
+    return await self.propagate_event(update_type=update_type, event=event, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 191, in _propagate_event
+    response = await router.propagate_event(update_type=update_type, event=event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 163, in propagate_event
+    return await observer.wrap_outer_middleware(_wrapped, event=event, data=kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 155, in _wrapped
+    return await self._propagate_event(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/router.py", line 183, in _propagate_event
+    response = await observer.trigger(event, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/telegram.py", line 126, in trigger
+    return await wrapped_inner(event, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/dispatcher/event/handler.py", line 71, in call
+    return await wrapped()
+           ^^^^^^^^^^^^^^^
+  File "/app/src/bot/modules/progress/handlers.py", line 142, in handle_progress_refresh
+    await callback.answer(
+  File "/usr/local/lib/python3.12/site-packages/aiogram/methods/base.py", line 82, in emit
+    return await bot(self)
+           ^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/bot.py", line 493, in __call__
+    return await self.session(self, method, timeout=request_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 259, in __call__
+    return cast(TelegramType, await middleware(bot, method))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/aiohttp.py", line 177, in make_request
+    response = self.check_response(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/aiogram/client/session/base.py", line 121, in check_response
+    raise TelegramBadRequest(method=method, message=description)
+aiogram.exceptions.TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+2026-04-12 01:25:53 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-12 01:28:03 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 01:46:12 | INFO     | aiogram.dispatcher | Connection established (tryings = 1, bot id = 8616512198)
+2026-04-12 02:08:41 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 02:09:55 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 02:43:16 | INFO     | aiogram.dispatcher | Connection established (tryings = 1, bot id = 8616512198)
+2026-04-12 03:00:04 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-12 03:02:00 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 03:48:17 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 03:59:56 | WARNING  | aiogram.dispatcher | Sleep for 1.327531 seconds and try again... (tryings = 1, bot id = 8616512198)
+2026-04-12 04:50:54 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 04:51:53 | WARNING  | aiogram.dispatcher | Sleep for 1.584215 seconds and try again... (tryings = 2, bot id = 8616512198)
+2026-04-12 05:17:27 | INFO     | aiogram.dispatcher | Connection established (tryings = 3, bot id = 8616512198)
+2026-04-12 06:32:45 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-12 06:32:45 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 06:32:57 | INFO     | aiogram.dispatcher | Connection established (tryings = 1, bot id = 8616512198)
+2026-04-12 06:47:51 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-12 06:47:51 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 06:48:02 | INFO     | aiogram.dispatcher | Connection established (tryings = 1, bot id = 8616512198)
+2026-04-12 07:24:45 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-12 07:26:07 | WARNING  | aiogram.dispatcher | Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8616512198)
+2026-04-12 08:15:06 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+2026-04-12 08:18:06 | WARNING  | aiogram.dispatcher | Sleep for 1.223453 seconds and try again... (tryings = 1, bot id = 8616512198)
+2026-04-12 08:59:05 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 09:06:55 | WARNING  | aiogram.dispatcher | Sleep for 1.669667 seconds and try again... (tryings = 2, bot id = 8616512198)
+2026-04-12 09:38:51 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 09:38:53 | WARNING  | aiogram.dispatcher | Sleep for 2.139904 seconds and try again... (tryings = 3, bot id = 8616512198)
+2026-04-12 09:41:22 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 09:41:23 | WARNING  | aiogram.dispatcher | Sleep for 2.834481 seconds and try again... (tryings = 4, bot id = 8616512198)
+2026-04-12 09:43:00 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 09:43:03 | WARNING  | aiogram.dispatcher | Sleep for 3.852276 seconds and try again... (tryings = 5, bot id = 8616512198)
+2026-04-12 09:45:10 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 09:45:11 | WARNING  | aiogram.dispatcher | Sleep for 5.128579 seconds and try again... (tryings = 6, bot id = 8616512198)
+2026-04-12 09:49:45 | ERROR    | aiogram.dispatcher | Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+2026-04-12 09:49:48 | WARNING  | aiogram.dispatcher | Sleep for 4.924380 seconds and try again... (tryings = 7, bot id = 8616512198)
+2026-04-12 09:53:49 | INFO     | aiogram.dispatcher | Connection established (tryings = 8, bot id = 8616512198)
