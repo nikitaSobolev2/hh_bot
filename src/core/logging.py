@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
 
 import structlog
 from rich.console import Console
@@ -12,14 +11,13 @@ from src.config import settings
 _CONFIGURED = False
 
 
-def _build_file_handler(log_dir) -> RotatingFileHandler | None:
+def _build_file_handler(log_dir) -> logging.FileHandler | None:
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
+        file_handler = logging.FileHandler(
             log_dir / "hh_bot.log",
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
             encoding="utf-8",
+            mode="a",
         )
     except OSError as exc:
         print(

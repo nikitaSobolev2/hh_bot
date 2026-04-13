@@ -1089,6 +1089,8 @@ iv-employer-qa-label-q = Question:
 iv-employer-qa-label-a = Draft answer:
 iv-employer-qa-ai-empty = Could not get an answer text. Please try again later.
 iv-employer-qa-failed = Could not generate an answer. Please try later.
+iv-employer-qa-disabled = Employer-question answers are disabled in app settings. Ask an admin to enable the task.
+iv-employer-qa-circuit = Too many failures recently; try again in a few minutes.
 iv-employer-qa-too-short = Message is too short. Send the full employer question.
 
 btn-iv-employer-qa-edit = ✏️ Edit answer

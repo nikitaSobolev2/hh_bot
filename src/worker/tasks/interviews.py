@@ -96,8 +96,8 @@ def generate_questions_to_ask_task(
     name="interviews.generate_employer_question_answer",
     max_retries=2,
     default_retry_delay=30,
-    soft_time_limit=120,
-    time_limit=180,
+    soft_time_limit=240,
+    time_limit=300,
 )
 def generate_employer_question_answer_task(
     self,
@@ -694,169 +694,199 @@ async def _generate_employer_question_answer_async(
 
     regenerate = employer_qa_row_id is not None
 
-    enabled = await task.check_enabled(
-        AppSettingKey.TASK_EMPLOYER_QUESTION_ANSWER_ENABLED, session_factory
-    )
-    if not enabled:
-        return {"status": "disabled"}
-
-    cb = await task.load_circuit_breaker(
-        "employer_question_answer",
-        AppSettingKey.CB_EMPLOYER_QUESTION_ANSWER_FAILURE_THRESHOLD,
-        AppSettingKey.CB_EMPLOYER_QUESTION_ANSWER_RECOVERY_TIMEOUT,
-        session_factory,
-    )
-    if not cb.is_call_allowed():
-        return {"status": "circuit_open"}
-
     bot = task.create_bot()
-
     try:
-        async with session_factory() as session:
-            interview = await InterviewRepository(session).get_with_relations(interview_id)
-            if not interview or interview.is_deleted:
-                return {"status": "not_found"}
-            eq_repo = InterviewEmployerQuestionRepository(session)
-            if regenerate:
-                row = await eq_repo.get_by_id_and_interview(employer_qa_row_id, interview_id)
-                if not row:
-                    return {"status": "not_found"}
-                q_trunc = (row.question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
-            else:
-                q_trunc = (question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
-            prior_rows = await eq_repo.list_by_interview_oldest_first(interview_id)
-            if regenerate and employer_qa_row_id:
-                prior_rows = [r for r in prior_rows if r.id != employer_qa_row_id]
-            previous_qa_raw = [
-                ((r.question_text or "").strip(), (r.answer_text or "").strip()) for r in prior_rows
-            ]
-            previous_qa, history_truncated = truncate_employer_qa_thread(previous_qa_raw)
-            header_html = interview_service.format_vacancy_header(
-                interview.vacancy_title,
-                interview.company_name,
-                interview.experience_level,
-                interview.hh_vacancy_url,
+        enabled = await task.check_enabled(
+            AppSettingKey.TASK_EMPLOYER_QUESTION_ANSWER_ENABLED, session_factory
+        )
+        if not enabled:
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("iv-employer-qa-disabled", locale),
             )
-            user_id = interview.user_id
-            we_rows = await WorkExperienceRepository(session).get_active_by_user(user_id)
-            settings = await ap_service.get_user_autoparse_settings(session, user_id)
-        about_me = (settings.get("about_me") or "").strip() or None
+            return {"status": "disabled"}
 
-        experiences = [
-            WorkExperienceEntry(
-                company_name=e.company_name,
-                stack=e.stack,
-                title=e.title,
-                period=e.period,
-                achievements=e.achievements,
-                duties=e.duties,
+        cb = await task.load_circuit_breaker(
+            "employer_question_answer",
+            AppSettingKey.CB_EMPLOYER_QUESTION_ANSWER_FAILURE_THRESHOLD,
+            AppSettingKey.CB_EMPLOYER_QUESTION_ANSWER_RECOVERY_TIMEOUT,
+            session_factory,
+        )
+        if not cb.is_call_allowed():
+            await task.notify_user(
+                bot,
+                chat_id,
+                message_id,
+                get_text("iv-employer-qa-circuit", locale),
             )
-            for e in we_rows
-        ]
+            return {"status": "circuit_open"}
 
-        variation_nonce = secrets.token_hex(12)
-        ai = AIClient()
         try:
-            answer = await ai.generate_employer_question_answer(
-                vacancy_title=interview.vacancy_title,
-                vacancy_description=interview.vacancy_description,
-                company_name=interview.company_name,
-                experience_level=interview.experience_level,
-                hh_vacancy_url=interview.hh_vacancy_url,
-                employer_question=q_trunc,
-                work_experiences=experiences,
-                about_me=about_me,
-                regenerate=regenerate,
-                variation_nonce=variation_nonce,
-                previous_qa=previous_qa or None,
-                history_truncated=history_truncated,
-            )
-        finally:
-            await close_ai_client(ai)
-
-        if not (answer or "").strip():
-            cb.record_failure()
-            await task.notify_user(
-                bot,
-                chat_id,
-                message_id,
-                get_text("iv-employer-qa-ai-empty", locale),
-            )
-            return {"status": "empty_answer"}
-
-        async with session_factory() as session:
-            repo = InterviewEmployerQuestionRepository(session)
-            if regenerate:
-                row = await repo.get_by_id_and_interview(employer_qa_row_id, interview_id)
-                if not row:
+            async with session_factory() as session:
+                interview = await InterviewRepository(session).get_with_relations(interview_id)
+                if not interview or interview.is_deleted:
+                    await task.notify_user(
+                        bot,
+                        chat_id,
+                        message_id,
+                        get_text("iv-not-found", locale),
+                    )
                     return {"status": "not_found"}
-                await repo.update(row, answer_text=answer.strip())
-                result_row_id = row.id
-            else:
-                created = await repo.create_qa(
-                    interview_id=interview_id,
-                    question_text=q_trunc,
-                    answer_text=answer.strip(),
+                eq_repo = InterviewEmployerQuestionRepository(session)
+                if regenerate:
+                    row = await eq_repo.get_by_id_and_interview(employer_qa_row_id, interview_id)
+                    if not row:
+                        await task.notify_user(
+                            bot,
+                            chat_id,
+                            message_id,
+                            get_text("iv-not-found", locale),
+                        )
+                        return {"status": "not_found"}
+                    q_trunc = (row.question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
+                else:
+                    q_trunc = (question_text or "").strip()[:_EMPLOYER_QUESTION_MAX_LEN]
+                prior_rows = await eq_repo.list_by_interview_oldest_first(interview_id)
+                if regenerate and employer_qa_row_id:
+                    prior_rows = [r for r in prior_rows if r.id != employer_qa_row_id]
+                previous_qa_raw = [
+                    ((r.question_text or "").strip(), (r.answer_text or "").strip()) for r in prior_rows
+                ]
+                previous_qa, history_truncated = truncate_employer_qa_thread(previous_qa_raw)
+                header_html = interview_service.format_vacancy_header(
+                    interview.vacancy_title,
+                    interview.company_name,
+                    interview.experience_level,
+                    interview.hh_vacancy_url,
                 )
-                result_row_id = created.id
-            await session.commit()
+                user_id = interview.user_id
+                we_rows = await WorkExperienceRepository(session).get_active_by_user(user_id)
+                settings = await ap_service.get_user_autoparse_settings(session, user_id)
+            about_me = (settings.get("about_me") or "").strip() or None
 
-        cb.record_success()
+            experiences = [
+                WorkExperienceEntry(
+                    company_name=e.company_name,
+                    stack=e.stack,
+                    title=e.title,
+                    period=e.period,
+                    achievements=e.achievements,
+                    duties=e.duties,
+                )
+                for e in we_rows
+            ]
 
-        from src.services.telegram.messenger import TelegramMessenger
-        from src.services.telegram.text_utils import split_text_for_telegram
+            variation_nonce = secrets.token_hex(12)
+            ai = AIClient()
+            try:
+                answer = await ai.generate_employer_question_answer(
+                    vacancy_title=interview.vacancy_title,
+                    vacancy_description=interview.vacancy_description,
+                    company_name=interview.company_name,
+                    experience_level=interview.experience_level,
+                    hh_vacancy_url=interview.hh_vacancy_url,
+                    employer_question=q_trunc,
+                    work_experiences=experiences,
+                    about_me=about_me,
+                    regenerate=regenerate,
+                    variation_nonce=variation_nonce,
+                    previous_qa=previous_qa or None,
+                    history_truncated=history_truncated,
+                )
+            finally:
+                await close_ai_client(ai)
 
-        title = get_text("iv-employer-qa-result-header", locale)
-        q_label = get_text("iv-employer-qa-label-q", locale)
-        a_label = get_text("iv-employer-qa-label-a", locale)
-        full = build_employer_qa_item_full_html(
-            header_html,
-            result_header=title,
-            q_label=q_label,
-            a_label=a_label,
-            question_text=q_trunc,
-            answer_text=answer.strip(),
-        )
-        chunks = split_text_for_telegram(full, max_len=TELEGRAM_SAFE_LIMIT)
-        if not chunks:
-            chunks = [full]
-        total_pages = len(chunks)
-        messenger = TelegramMessenger(bot)
-        await messenger.edit_or_send(
-            chat_id,
-            message_id,
-            chunks[0],
-            reply_markup=employer_qa_item_keyboard(
-                interview_id,
-                result_row_id,
-                locale=locale,
-                page=0,
-                total_pages=total_pages,
-            ),
-            parse_mode="HTML",
-        )
-        return {"status": "completed", "interview_id": interview_id}
+            if not (answer or "").strip():
+                cb.record_failure()
+                await task.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    get_text("iv-employer-qa-ai-empty", locale),
+                )
+                return {"status": "empty_answer"}
 
-    except SoftTimeLimitExceeded:
-        await task.handle_soft_timeout(bot, chat_id, message_id, locale)
-        task.request.retries = task.max_retries
-        raise
+            async with session_factory() as session:
+                repo = InterviewEmployerQuestionRepository(session)
+                if regenerate:
+                    row = await repo.get_by_id_and_interview(employer_qa_row_id, interview_id)
+                    if not row:
+                        await task.notify_user(
+                            bot,
+                            chat_id,
+                            message_id,
+                            get_text("iv-not-found", locale),
+                        )
+                        return {"status": "not_found"}
+                    await repo.update(row, answer_text=answer.strip())
+                    result_row_id = row.id
+                else:
+                    created = await repo.create_qa(
+                        interview_id=interview_id,
+                        question_text=q_trunc,
+                        answer_text=answer.strip(),
+                    )
+                    result_row_id = created.id
+                await session.commit()
 
-    except Exception as exc:
-        cb.record_failure()
-        logger.error(
-            "Employer question answer task failed",
-            interview_id=interview_id,
-            error=str(exc),
-        )
-        if task.request.retries >= task.max_retries:
-            await task.notify_user(
-                bot,
+            cb.record_success()
+
+            from src.services.telegram.messenger import TelegramMessenger
+            from src.services.telegram.text_utils import split_text_for_telegram
+
+            title = get_text("iv-employer-qa-result-header", locale)
+            q_label = get_text("iv-employer-qa-label-q", locale)
+            a_label = get_text("iv-employer-qa-label-a", locale)
+            full = build_employer_qa_item_full_html(
+                header_html,
+                result_header=title,
+                q_label=q_label,
+                a_label=a_label,
+                question_text=q_trunc,
+                answer_text=answer.strip(),
+            )
+            chunks = split_text_for_telegram(full, max_len=TELEGRAM_SAFE_LIMIT)
+            if not chunks:
+                chunks = [full]
+            total_pages = len(chunks)
+            messenger = TelegramMessenger(bot)
+            await messenger.edit_or_send(
                 chat_id,
                 message_id,
-                get_text("iv-employer-qa-failed", locale),
+                chunks[0],
+                reply_markup=employer_qa_item_keyboard(
+                    interview_id,
+                    result_row_id,
+                    locale=locale,
+                    page=0,
+                    total_pages=total_pages,
+                ),
+                parse_mode="HTML",
             )
-        raise task.retry(exc=exc) from exc
+            return {"status": "completed", "interview_id": interview_id}
+
+        except SoftTimeLimitExceeded:
+            await task.handle_soft_timeout(bot, chat_id, message_id, locale)
+            task.request.retries = task.max_retries
+            raise
+
+        except Exception as exc:
+            cb.record_failure()
+            logger.error(
+                "Employer question answer task failed",
+                interview_id=interview_id,
+                error=str(exc),
+            )
+            if task.request.retries >= task.max_retries:
+                await task.notify_user(
+                    bot,
+                    chat_id,
+                    message_id,
+                    get_text("iv-employer-qa-failed", locale),
+                )
+            raise task.retry(exc=exc) from exc
 
     finally:
         await bot.session.close()

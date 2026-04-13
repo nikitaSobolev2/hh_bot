@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 
-    # Logging — file logs go to ``log_dir/hh_bot.log`` (see ``setup_logging``); mount ``./logs`` in Docker.
+    # Logging — append-only ``log_dir/hh_bot.log`` (no rotation; see ``setup_logging``); mount ``./logs`` in Docker.
     log_level: str = "INFO"
     log_dir: Path = Field(
         default_factory=lambda: BASE_DIR / "logs",

@@ -13,6 +13,7 @@ in streaming.py) as a public API so tasks can send messages reliably.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -86,6 +87,8 @@ class TelegramMessenger:
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
             )
+            with contextlib.suppress(Exception):
+                await self._bot.delete_message(chat_id=chat_id, message_id=message_id)
 
 
 async def send_message_with_retry(
