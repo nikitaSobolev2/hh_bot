@@ -7,9 +7,11 @@ usage metrics without changing command behavior.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 import time
+import weakref
 from typing import Any
 
 import redis
@@ -18,11 +20,14 @@ import redis.asyncio as aioredis
 from src.config import settings
 from src.worker.task_metrics import record_redis_client, record_redis_command
 
-
 _SYNC_POOL: redis.ConnectionPool | None = None
 _SYNC_POOL_PID: int | None = None
-_ASYNC_POOL: aioredis.ConnectionPool | None = None
-_ASYNC_POOL_PID: int | None = None
+# Async Redis connections are bound to the event loop they were created on.
+# Celery tasks use ``asyncio.run()`` per invocation, so a process-wide pool
+# (or PID-scoped pool) leaves connections attached to a closed loop and causes
+# "Future attached to a different loop" / "Event loop is closed" on the next task.
+_AsyncPoolByLoop = weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, aioredis.ConnectionPool]
+_ASYNC_POOL_BY_LOOP: _AsyncPoolByLoop = weakref.WeakKeyDictionary()
 
 
 class _InstrumentedRedisProxy:
@@ -82,14 +87,18 @@ class _InstrumentedRedisProxy:
 
     def __enter__(self) -> Any:
         entered = self._client.__enter__()
-        return _InstrumentedRedisProxy(entered, kind=self._kind) if entered is not self._client else self
+        if entered is not self._client:
+            return _InstrumentedRedisProxy(entered, kind=self._kind)
+        return self
 
     def __exit__(self, exc_type, exc, tb) -> Any:
         return self._client.__exit__(exc_type, exc, tb)
 
     async def __aenter__(self) -> Any:
         entered = await self._client.__aenter__()
-        return _InstrumentedRedisProxy(entered, kind=self._kind) if entered is not self._client else self
+        if entered is not self._client:
+            return _InstrumentedRedisProxy(entered, kind=self._kind)
+        return self
 
     async def __aexit__(self, exc_type, exc, tb) -> Any:
         return await self._client.__aexit__(exc_type, exc, tb)
@@ -98,19 +107,19 @@ class _InstrumentedRedisProxy:
 def _get_sync_pool() -> redis.ConnectionPool:
     global _SYNC_POOL, _SYNC_POOL_PID
     pid = os.getpid()
-    if _SYNC_POOL is None or _SYNC_POOL_PID != pid:
+    if _SYNC_POOL is None or pid != _SYNC_POOL_PID:
         _SYNC_POOL = redis.ConnectionPool.from_url(settings.redis_url, decode_responses=True)
         _SYNC_POOL_PID = pid
     return _SYNC_POOL
 
 
-def _get_async_pool() -> aioredis.ConnectionPool:
-    global _ASYNC_POOL, _ASYNC_POOL_PID
-    pid = os.getpid()
-    if _ASYNC_POOL is None or _ASYNC_POOL_PID != pid:
-        _ASYNC_POOL = aioredis.ConnectionPool.from_url(settings.redis_url, decode_responses=True)
-        _ASYNC_POOL_PID = pid
-    return _ASYNC_POOL
+def _async_pool_for_running_loop() -> aioredis.ConnectionPool:
+    loop = asyncio.get_running_loop()
+    pool = _ASYNC_POOL_BY_LOOP.get(loop)
+    if pool is None:
+        pool = aioredis.ConnectionPool.from_url(settings.redis_url, decode_responses=True)
+        _ASYNC_POOL_BY_LOOP[loop] = pool
+    return pool
 
 
 def create_sync_redis():
@@ -126,7 +135,23 @@ def create_async_redis():
     - ``decode_responses=True`` — all keys and values are native Python strings
     - URL from ``settings.redis_url``
 
+    When created inside a running event loop, clients share a **loop-local**
+    connection pool so Celery's repeated ``asyncio.run()`` usage stays safe.
+
+    With no running loop, the client owns a dedicated pool (first use binds to
+    whatever loop later runs the coroutine).
+
     Callers are responsible for closing the connection when done.
     """
-    client = aioredis.Redis(connection_pool=_get_async_pool())
+    try:
+        pool = _async_pool_for_running_loop()
+    except RuntimeError:
+        # No loop yet: let the client own its pool so ``aclose()`` can dispose it.
+        client = aioredis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+        )
+    else:
+        # Explicit shared pool: redis-py 5 does not auto-close it on ``aclose()``.
+        client = aioredis.Redis(connection_pool=pool)
     return _InstrumentedRedisProxy(client, kind="async")

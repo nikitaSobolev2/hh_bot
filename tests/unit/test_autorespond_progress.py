@@ -67,6 +67,17 @@ class _FakeRedisStore:
     def make_client(self, *args, **kwargs):
         store = self.store
 
+        class _Pipeline:
+            def __init__(self) -> None:
+                self._sets: list[tuple[str, str]] = []
+
+            def set(self, key, val, ex=None):
+                self._sets.append((key, val))
+
+            def execute(self) -> None:
+                for key, val in self._sets:
+                    store[key] = val
+
         class _R:
             def get(self, key):
                 return store.get(key)
@@ -77,6 +88,9 @@ class _FakeRedisStore:
             def delete(self, key):
                 store.pop(key, None)
 
+            def pipeline(self):
+                return _Pipeline()
+
             def close(self) -> None:
                 """No-op: in-memory fake has no connection."""
 
@@ -86,12 +100,9 @@ class _FakeRedisStore:
 def test_save_checkpoint_empty_with_resume_persists_json(monkeypatch: pytest.MonkeyPatch) -> None:
     fr = _FakeRedisStore()
 
-    def _from_url(*a, **k):
-        return fr.make_client()
-
     monkeypatch.setattr(
-        "src.services.autorespond_progress.sync_redis.Redis.from_url",
-        _from_url,
+        "src.services.autorespond_progress._sync_redis",
+        fr.make_client,
     )
     from src.services.autorespond_progress import (
         hh_ui_batch_checkpoint_key,
@@ -111,12 +122,9 @@ def test_load_checkpoint_empty_items_returns_resume(monkeypatch: pytest.MonkeyPa
     key = "checkpoint:hh_ui_apply_batch:7:autorespond:1:abc"
     fr.store[key] = json.dumps({"items": [], "resume": {"user_id": 42}})
 
-    def _from_url(*a, **k):
-        return fr.make_client()
-
     monkeypatch.setattr(
-        "src.services.autorespond_progress.sync_redis.Redis.from_url",
-        _from_url,
+        "src.services.autorespond_progress._sync_redis",
+        fr.make_client,
     )
     from src.services.autorespond_progress import load_hh_ui_batch_checkpoint_full_sync
 
