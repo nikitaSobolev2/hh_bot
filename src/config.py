@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 
-    # Logging — append-only ``log_dir/hh_bot.log`` (no rotation; see ``setup_logging``); mount ``./logs`` in Docker.
+    # Logging — append-only ``log_dir/hh_bot.log`` (no rotation; see ``setup_logging``);
+    # mount ``./logs`` in Docker.
     log_level: str = "INFO"
     log_dir: Path = Field(
         default_factory=lambda: BASE_DIR / "logs",
@@ -108,8 +109,9 @@ class Settings(BaseSettings):
     hh_ui_apply_max_retries: int = Field(default=5, ge=1, le=10)
     hh_ui_apply_retry_initial_seconds: float = Field(default=10.0, ge=1.0, le=300.0)
     hh_ui_apply_retry_delay_cap_seconds: float = Field(default=600.0, ge=10.0, le=3600.0)
-    # Celery ``autoparse.run_company``: large target_count runs need hours; wall-clock is total budget.
-    # Redis per-company run lock TTL is renewed on an interval (see autoparse task) — not the same as stall detection.
+    # Celery ``autoparse.run_company``: large runs need hours; wall-clock is total budget.
+    # Redis per-company run lock TTL is renewed on an interval (see autoparse task) —
+    # not the same as stall detection.
     autoparse_run_company_soft_time_limit_seconds: int = Field(default=14400, ge=300, le=86400)
     autoparse_run_company_time_limit_seconds: int = Field(default=15300, ge=600, le=93600)
     # Sliding window for ``lock:autoparse:run:{company_id}`` — extended while the task heartbeats.
@@ -165,20 +167,30 @@ class Settings(BaseSettings):
                 "hh_ui_apply_batch_task_time_limit must be greater than "
                 "hh_ui_apply_batch_task_soft_time_limit"
             )
-        if self.hh_public_api_list_delay_max_seconds < self.hh_public_api_list_delay_min_seconds:
+        list_max = self.hh_public_api_list_delay_max_seconds
+        list_min = self.hh_public_api_list_delay_min_seconds
+        if list_max < list_min:
             raise ValueError(
-                "hh_public_api_list_delay_max_seconds must be >= hh_public_api_list_delay_min_seconds"
+                "hh_public_api_list_delay_max_seconds must be >= "
+                "hh_public_api_list_delay_min_seconds"
             )
-        if self.hh_public_api_vacancy_delay_max_seconds < self.hh_public_api_vacancy_delay_min_seconds:
+        vac_max = self.hh_public_api_vacancy_delay_max_seconds
+        vac_min = self.hh_public_api_vacancy_delay_min_seconds
+        if vac_max < vac_min:
             raise ValueError(
-                "hh_public_api_vacancy_delay_max_seconds must be >= hh_public_api_vacancy_delay_min_seconds"
+                "hh_public_api_vacancy_delay_max_seconds must be >= "
+                "hh_public_api_vacancy_delay_min_seconds"
             )
-        if self.autoparse_run_company_time_limit_seconds <= self.autoparse_run_company_soft_time_limit_seconds:
+        time_lim = self.autoparse_run_company_time_limit_seconds
+        soft_lim = self.autoparse_run_company_soft_time_limit_seconds
+        if time_lim <= soft_lim:
             raise ValueError(
                 "autoparse_run_company_time_limit_seconds must be greater than "
                 "autoparse_run_company_soft_time_limit_seconds"
             )
-        if self.autoparse_run_company_lock_ttl_seconds < self.autoparse_run_company_lock_renew_interval_seconds * 2:
+        lock_ttl = self.autoparse_run_company_lock_ttl_seconds
+        renew_iv = self.autoparse_run_company_lock_renew_interval_seconds
+        if lock_ttl < renew_iv * 2:
             raise ValueError(
                 "autoparse_run_company_lock_ttl_seconds should be at least twice "
                 "autoparse_run_company_lock_renew_interval_seconds so renewals keep the lock alive"

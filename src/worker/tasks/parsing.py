@@ -154,6 +154,7 @@ async def _run_parsing_company_async(
         telegram_chat_id,
     )
     try:
+        extractor: ParsingExtractor | None = None
         async with session_factory() as session:
             company_repo = ParsingCompanyRepository(session)
             company = await company_repo.get_by_id(parsing_company_id)
@@ -200,7 +201,6 @@ async def _run_parsing_company_async(
         use_compat = compat_params is not None
         vacancies: list[dict] = []
         resume_from: tuple[list[dict], int] | None = None
-        extractor: ParsingExtractor | None = None
 
         restored = await checkpoint.load_parsing(checkpoint_key, task_id)
         if not restored:

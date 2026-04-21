@@ -281,7 +281,11 @@ def _extract_detail_field_from_soup(soup: BeautifulSoup, prefix: str) -> str:
         parent = text_node.parent
         if parent is not None:
             parent_text = _clean_text(parent.get_text(" ", strip=True))
-            value = _clean_text(parent_text[len(prefix) :]) if parent_text.startswith(prefix) else ""
+            value = (
+                _clean_text(parent_text[len(prefix) :])
+                if parent_text.startswith(prefix)
+                else ""
+            )
             if value:
                 return value
     return ""
@@ -387,10 +391,14 @@ def _map_html_vacancy_to_page_data(soup: BeautifulSoup, _url: str) -> dict:
         if _clean_text(el.get_text(" ", strip=True))
     ]
 
-    work_experience = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["work_experience"])
-    employment_type = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["employment_type"])
-    work_schedule = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["work_schedule"])
-    working_hours = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["working_hours"])
+    we_key = _DETAIL_FIELD_PREFIXES["work_experience"]
+    et_key = _DETAIL_FIELD_PREFIXES["employment_type"]
+    ws_key = _DETAIL_FIELD_PREFIXES["work_schedule"]
+    wh_key = _DETAIL_FIELD_PREFIXES["working_hours"]
+    work_experience = _extract_detail_field_from_soup(soup, we_key)
+    employment_type = _extract_detail_field_from_soup(soup, et_key)
+    work_schedule = _extract_detail_field_from_soup(soup, ws_key)
+    working_hours = _extract_detail_field_from_soup(soup, wh_key)
     work_formats = _extract_detail_field_from_soup(soup, _DETAIL_FIELD_PREFIXES["work_formats"])
     compensation_frequency = _extract_detail_field_from_soup(
         soup, _DETAIL_FIELD_PREFIXES["compensation_frequency"]
@@ -1099,7 +1107,11 @@ class HHScraper:
             cfg = HhUiApplyConfig.from_settings()
             while new_collected_count < target_count:
                 if page >= _MAX_PAGES:
-                    logger.warning("Reached max page limit", limit=_MAX_PAGES, parse_mode=parse_mode)
+                    logger.warning(
+                        "Reached max page limit",
+                        limit=_MAX_PAGES,
+                        parse_mode=parse_mode,
+                    )
                     break
 
                 url = self._build_page_url(base_url, page)
@@ -1142,7 +1154,12 @@ class HHScraper:
                 page_had_results = bool(page_results) or raw_blocks > 0
 
                 if not page_had_results:
-                    logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
+                    logger.info(
+                        "No vacancy items on page",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                    )
                     break
 
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
@@ -1176,7 +1193,11 @@ class HHScraper:
             async with httpx.AsyncClient() as client:
                 while new_collected_count < target_count:
                     if page >= _MAX_PAGES:
-                        logger.warning("Reached max page limit", limit=_MAX_PAGES, parse_mode=parse_mode)
+                        logger.warning(
+                            "Reached max page limit",
+                            limit=_MAX_PAGES,
+                            parse_mode=parse_mode,
+                        )
                         break
                     if (
                         last_total_pages is not None
@@ -1367,7 +1388,11 @@ class HHScraper:
             if soup is None:
                 return {}
             if final_url and url_suggests_login_page(final_url):
-                logger.warning("Web vacancy detail redirected to login", url=url, final_url=final_url)
+                logger.warning(
+                    "Web vacancy detail redirected to login",
+                    url=url,
+                    final_url=final_url,
+                )
                 return {}
             return _map_html_vacancy_to_page_data(soup, url)
 
