@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.parser.scraper import HHScraper, _map_api_vacancy_to_page_data
+
 # ---------------------------------------------------------------------------
 # ParsingExtractor.run_pipeline with compat_params (batch compat)
 # ---------------------------------------------------------------------------
@@ -14,7 +16,7 @@ def _make_api_response(
     skills: list | None = None,
     title: str = "Backend Dev",
 ) -> dict:
-    """Minimal HH API vacancy detail response for extractor's fetch_vacancy_by_id."""
+    """Minimal HH API vacancy detail response for extractor's parse_vacancy_page."""
     skills = skills or []
     return {
         "name": title,
@@ -29,16 +31,18 @@ def _make_api_response(
 
 
 def _make_scraper(api_response: dict | None = None):
-    """Scraper for one-shot flow (no compat). Extractor uses fetch_vacancy_by_id."""
+    """Scraper for one-shot flow (no compat). Extractor uses parse_vacancy_page."""
     scraper = MagicMock()
+    scraper._extract_vacancy_id = HHScraper._extract_vacancy_id  # type: ignore[attr-defined]
     scraper.collect_vacancy_urls = AsyncMock(
         return_value=[
             {"title": "Backend Dev", "url": "https://hh.ru/1", "hh_vacancy_id": "1"},
             {"title": "Java Dev", "url": "https://hh.ru/2", "hh_vacancy_id": "2"},
         ]
     )
-    scraper.fetch_vacancy_by_id = AsyncMock(
-        return_value=api_response or _make_api_response()
+    api = api_response or _make_api_response()
+    scraper.parse_vacancy_page = AsyncMock(
+        return_value=_map_api_vacancy_to_page_data(api, {"url": "https://hh.ru/vacancy/1"})
     )
     return scraper
 
@@ -46,9 +50,11 @@ def _make_scraper(api_response: dict | None = None):
 def _make_compat_scraper(urls: list[dict], api_response: dict | None = None):
     """Scraper for compat flow: list phase returns urls once with has_more=False (catalog done)."""
     scraper = MagicMock()
+    scraper._extract_vacancy_id = HHScraper._extract_vacancy_id  # type: ignore[attr-defined]
     scraper.collect_vacancy_urls_batch = AsyncMock(return_value=(urls, 1, False))
-    scraper.fetch_vacancy_by_id = AsyncMock(
-        return_value=api_response or _make_api_response()
+    api = api_response or _make_api_response()
+    scraper.parse_vacancy_page = AsyncMock(
+        return_value=_map_api_vacancy_to_page_data(api, {"url": "https://hh.ru/vacancy/1"})
     )
     return scraper
 
@@ -181,7 +187,7 @@ class TestExtractorCompatFilter:
 
 
 # ---------------------------------------------------------------------------
-# List-then-detail: search list is exhausted before fetch_vacancy_by_id runs
+# List-then-detail: search list is exhausted before parse_vacancy_page runs
 # ---------------------------------------------------------------------------
 
 
@@ -202,14 +208,16 @@ class TestCompatFetchMoreLoop:
             {"title": "V4", "url": "https://hh.ru/4", "hh_vacancy_id": "4"},
         ]
         scraper = MagicMock()
+        scraper._extract_vacancy_id = HHScraper._extract_vacancy_id  # type: ignore[attr-defined]
         scraper.collect_vacancy_urls_batch = AsyncMock(
             side_effect=[
                 (batch1, 1, True),
                 (batch2, 2, False),
             ]
         )
-        scraper.fetch_vacancy_by_id = AsyncMock(
-            return_value=_make_api_response(description="desc", skills=["Python"])
+        api = _make_api_response(description="desc", skills=["Python"])
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value=_map_api_vacancy_to_page_data(api, {"url": "https://hh.ru/vacancy/1"})
         )
 
         ai_client = MagicMock()
@@ -242,11 +250,13 @@ class TestCompatFetchMoreLoop:
             {"title": "V2", "url": "https://hh.ru/2", "hh_vacancy_id": "2"},
         ]
         scraper = MagicMock()
+        scraper._extract_vacancy_id = HHScraper._extract_vacancy_id  # type: ignore[attr-defined]
         scraper.collect_vacancy_urls_batch = AsyncMock(
             return_value=(batch1, 1, False),
         )
-        scraper.fetch_vacancy_by_id = AsyncMock(
-            return_value=_make_api_response(description="desc", skills=[])
+        api = _make_api_response(description="desc", skills=[])
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value=_map_api_vacancy_to_page_data(api, {"url": "https://hh.ru/vacancy/1"})
         )
 
         ai_client = MagicMock()
@@ -274,11 +284,13 @@ class TestCompatFetchMoreLoop:
             for i in range(100)
         ]
         scraper = MagicMock()
+        scraper._extract_vacancy_id = HHScraper._extract_vacancy_id  # type: ignore[attr-defined]
         scraper.collect_vacancy_urls_batch = AsyncMock(
             return_value=(batch, 5, False)
         )
-        scraper.fetch_vacancy_by_id = AsyncMock(
-            return_value=_make_api_response(description="desc", skills=["Python"])
+        api = _make_api_response(description="desc", skills=["Python"])
+        scraper.parse_vacancy_page = AsyncMock(
+            return_value=_map_api_vacancy_to_page_data(api, {"url": "https://hh.ru/vacancy/1"})
         )
         ai_client = MagicMock()
         ai_client.calculate_compatibility_batch = AsyncMock(

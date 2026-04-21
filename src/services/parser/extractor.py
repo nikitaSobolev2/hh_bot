@@ -11,7 +11,7 @@ from src.core.logging import get_logger
 from src.schemas.vacancy import PipelineResult, VacancyData, build_vacancy_api_context
 from src.services.ai.client import AIClient, close_ai_client
 from src.services.ai.prompts import VacancyCompatInput
-from src.services.parser.scraper import HHScraper, _map_api_vacancy_to_page_data
+from src.services.parser.scraper import HHScraper
 
 logger = get_logger(__name__)
 
@@ -35,9 +35,12 @@ class ParsingExtractor:
         self,
         scraper: HHScraper | None = None,
         ai_client: AIClient | None = None,
+        *,
+        browser_storage_state: dict | None = None,
     ) -> None:
         self._scraper = scraper or HHScraper()
         self._ai = ai_client or AIClient()
+        self._browser_storage_state = browser_storage_state
 
     async def aclose(self) -> None:
         await close_ai_client(self._ai)
@@ -254,9 +257,17 @@ class ParsingExtractor:
             client: httpx.AsyncClient,
             vac: dict,
         ) -> VacancyData:
+            detail_url = vac["url"]
+            if not self._scraper._extract_vacancy_id(detail_url):
+                detail_url = f"https://hh.ru/vacancy/{vac['hh_vacancy_id']}"
             async with sem:
-                api_response = await self._scraper.fetch_vacancy_by_id(client, vac["hh_vacancy_id"])
-            if not api_response:
+                page_data = await self._scraper.parse_vacancy_page(
+                    client,
+                    detail_url,
+                    parse_mode="api",
+                    storage_state=self._browser_storage_state,
+                )
+            if not page_data:
                 return VacancyData(
                     hh_vacancy_id=vac["hh_vacancy_id"],
                     url=vac["url"],
@@ -266,7 +277,6 @@ class ParsingExtractor:
                     salary=vac.get("salary", ""),
                     company_name=vac.get("company_name", ""),
                 )
-            page_data = _map_api_vacancy_to_page_data(api_response, vac)
             async with scrape_lock:
                 scraped_count[0] += 1
                 scrape_current = scraped_count[0]

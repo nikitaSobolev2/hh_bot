@@ -139,6 +139,56 @@ class TestCircuitBreakerRecovery:
         assert cb.state == STATE_OPEN
 
 
+class TestCircuitBreakerExponentialRecovery:
+    def test_effective_recovery_equals_base_on_first_open(self, mock_redis):
+        redis, store = mock_redis
+        cb = CircuitBreaker(
+            "exp_test",
+            failure_threshold=1,
+            recovery_timeout=10,
+            exponential_recovery=True,
+            recovery_multiplier=2.0,
+            max_recovery_timeout=100,
+            redis_client=redis,
+        )
+        cb.record_failure()
+        assert cb.state == STATE_OPEN
+        assert store["cb:exp_test:effective_recovery_seconds"] == b"10"
+        assert store["cb:exp_test:open_streak"] == b"1"
+
+    def test_effective_recovery_multiplies_on_repeated_open(self, mock_redis):
+        redis, store = mock_redis
+        cb = CircuitBreaker(
+            "exp_test2",
+            failure_threshold=1,
+            recovery_timeout=10,
+            exponential_recovery=True,
+            recovery_multiplier=2.0,
+            max_recovery_timeout=100,
+            redis_client=redis,
+        )
+        cb.record_failure()
+        cb.record_failure()
+        assert store["cb:exp_test2:open_streak"] == b"2"
+        assert store["cb:exp_test2:effective_recovery_seconds"] == b"20"
+
+    def test_close_resets_open_streak_and_effective_recovery(self, mock_redis):
+        redis, store = mock_redis
+        cb = CircuitBreaker(
+            "exp_test3",
+            failure_threshold=1,
+            recovery_timeout=10,
+            exponential_recovery=True,
+            recovery_multiplier=2.0,
+            max_recovery_timeout=100,
+            redis_client=redis,
+        )
+        cb.record_failure()
+        cb.force_close()
+        assert "cb:exp_test3:open_streak" not in store
+        assert "cb:exp_test3:effective_recovery_seconds" not in store
+
+
 class TestCircuitBreakerAdminOperations:
     def test_force_open_transitions_to_open(self, mock_redis):
         redis, _ = mock_redis

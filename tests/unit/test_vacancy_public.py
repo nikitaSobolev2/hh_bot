@@ -1,5 +1,7 @@
 """Tests for public HH vacancy API probe."""
 
+from unittest.mock import patch
+
 import httpx
 import pytest
 import respx
@@ -127,6 +129,25 @@ async def test_preflight_unavailable_when_hidden_true():
     p = await hh_vacancy_public_preflight("222")
     assert p.unavailable is True
     assert p.requires_employer_test is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preflight_403_retries_json_via_playwright_mock():
+    respx.get("https://api.hh.ru/vacancies/777").mock(
+        return_value=httpx.Response(
+            403,
+            json={"errors": [{"type": "forbidden"}]},
+        )
+    )
+    body = {"id": "777", "name": "Role", "has_test": True, "test": {"required": True}}
+    with patch(
+        "src.services.hh.vacancy_public.fetch_public_hh_api_json_via_browser",
+        return_value=body,
+    ):
+        p = await hh_vacancy_public_preflight("777")
+    assert p.unavailable is False
+    assert p.requires_employer_test is True
 
 
 @pytest.mark.asyncio

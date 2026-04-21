@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.services.ai.client import MAX_DESCRIPTION_LENGTH, AIClient
+from src.services.parser.scraper import _map_api_vacancy_to_page_data
 
 
 class TestExtractKeywords:
@@ -75,19 +76,24 @@ def _make_api_vacancy_response(vac: dict, description: str = "desc", skills: lis
 
 def _make_compat_scraper(urls: list[dict], description: str = "desc", skills: list | None = None):
     """Scraper mock for compat flow: list phase returns urls once (catalog exhausted)."""
+    from src.services.parser.scraper import HHScraper
+
     scraper = MagicMock()
+    scraper._extract_vacancy_id = HHScraper._extract_vacancy_id  # type: ignore[attr-defined]
     scraper.collect_vacancy_urls_batch = AsyncMock(return_value=(urls, 1, False))
     skills = skills or ["Python"]
 
-    async def _fetch_vacancy_by_id(client, vacancy_id: str):
+    async def _parse_vacancy_page(client, url: str, **kwargs: object):
+        vacancy_id = url.rstrip("/").rsplit("/", 1)[-1]
         vac = next((u for u in urls if u["hh_vacancy_id"] == vacancy_id), {})
-        return _make_api_vacancy_response(
+        api = _make_api_vacancy_response(
             {"hh_vacancy_id": vacancy_id, "title": vac.get("title", ""), **vac},
             description=description,
             skills=skills,
         )
+        return _map_api_vacancy_to_page_data(api, {"url": url})
 
-    scraper.fetch_vacancy_by_id = AsyncMock(side_effect=_fetch_vacancy_by_id)
+    scraper.parse_vacancy_page = AsyncMock(side_effect=_parse_vacancy_page)
     return scraper
 
 

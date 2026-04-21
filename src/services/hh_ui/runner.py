@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import random
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from playwright.sync_api import Locator
+from playwright.sync_api import Locator, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
 
 from src.core.logging import get_logger
 from src.services.hh_ui import selectors as sel
@@ -26,7 +26,13 @@ from src.services.hh_ui.applicant_http import (
     url_is_applicant_resumes_document,
     url_suggests_login_page,
 )
+from src.services.hh_ui.apply_retry import (
+    apply_outcome_is_terminal_no_retry,
+    apply_result_should_retry_popup_batch,
+    apply_retry_delay_seconds,
+)
 from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 from src.services.hh_ui.playwright_support import (
     CHROMIUM_LAUNCH_ARGS,
     HH_UI_VIEWPORT,
@@ -41,12 +47,6 @@ from src.services.hh_ui.vacancy_response_popup import (
     probe_xsrf_light_with_source,
     try_apply_via_popup,
 )
-from src.services.hh_ui.apply_retry import (
-    apply_outcome_is_terminal_no_retry,
-    apply_result_should_retry_popup_batch,
-    apply_retry_delay_seconds,
-)
-from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
 
 logger = get_logger(__name__)
 
@@ -58,6 +58,7 @@ _XSRF_POLL_INTERVAL_S = 0.25
 _XSRF_WAIT_CAP_MS = 15_000
 _SEARCH_RESULTS_CARD_SELECTOR = '[data-qa="vacancy-serp__vacancy"]'
 _SEARCH_RESULTS_FULL_PAGE_CARD_COUNT = 50
+_VACANCY_DESCRIPTION_SELECTOR = '[data-qa="vacancy-description"]'
 
 
 def _wait_for_xsrf_for_popup(
@@ -216,6 +217,13 @@ class SearchPageRenderResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class VacancyDetailRenderResult:
+    html: str | None
+    final_url: str | None
+    error: str | None = None
+
+
 def _count_search_cards(page: Any) -> int:
     try:
         return int(page.locator(_SEARCH_RESULTS_CARD_SELECTOR).count())
@@ -318,6 +326,165 @@ def render_search_page_with_storage(
                 cards_after_scroll=0,
                 error=str(exc)[:200],
             )
+        finally:
+            dispose_sync_browser_context(context, browser)
+
+
+def render_vacancy_detail_page_with_storage(
+    *,
+    storage_state: dict[str, Any] | None,
+    config: HhUiApplyConfig,
+    url: str,
+    log_user_id: int | None = None,
+) -> VacancyDetailRenderResult:
+    """Open a single vacancy page (hh.ru HTML) in Chromium for scraping when public API fails."""
+    logger.info(
+        "render_vacancy_detail_start",
+        log_user_id=log_user_id,
+        url=url,
+        has_storage=bool(storage_state),
+    )
+    with sync_playwright() as p:
+        browser = None
+        context = None
+        try:
+            browser = p.chromium.launch(
+                headless=config.headless,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
+            context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
+            if storage_state:
+                context_kwargs["storage_state"] = storage_state
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+            page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=config.navigation_timeout_ms,
+            )
+            try:
+                page.locator(_VACANCY_DESCRIPTION_SELECTOR).first.wait_for(
+                    state="attached",
+                    timeout=min(config.action_timeout_ms, config.navigation_timeout_ms),
+                )
+            except Exception:
+                pass
+            _jitter(config)
+            final_url = page.url
+            logger.info(
+                "render_vacancy_detail_done",
+                log_user_id=log_user_id,
+                url=url,
+                final_url=final_url,
+                has_storage=bool(storage_state),
+                login_detected=url_suggests_login_page(final_url),
+                captcha_detected=_detect_captcha(page),
+            )
+            return VacancyDetailRenderResult(
+                html=page.content(),
+                final_url=final_url,
+            )
+        except PlaywrightTimeoutError as exc:
+            logger.warning(
+                "render_vacancy_detail_timeout",
+                log_user_id=log_user_id,
+                url=url,
+                has_storage=bool(storage_state),
+                error=str(exc)[:200],
+            )
+            return VacancyDetailRenderResult(html=None, final_url=None, error="timeout")
+        except Exception as exc:
+            logger.warning(
+                "render_vacancy_detail_failed",
+                log_user_id=log_user_id,
+                url=url,
+                has_storage=bool(storage_state),
+                error=str(exc)[:200],
+            )
+            return VacancyDetailRenderResult(html=None, final_url=None, error=str(exc)[:200])
+        finally:
+            dispose_sync_browser_context(context, browser)
+
+
+def fetch_public_hh_api_json_via_browser(
+    *,
+    storage_state: dict[str, Any] | None,
+    config: HhUiApplyConfig,
+    api_url: str,
+    log_user_id: int | None = None,
+) -> dict[str, Any] | None:
+    """GET a public api.hh.ru URL in Chromium and parse JSON from the document body."""
+    logger.info(
+        "fetch_public_hh_api_json_browser_start",
+        log_user_id=log_user_id,
+        api_url=api_url,
+        has_storage=bool(storage_state),
+    )
+    with sync_playwright() as p:
+        browser = None
+        context = None
+        try:
+            browser = p.chromium.launch(
+                headless=config.headless,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
+            context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
+            if storage_state:
+                context_kwargs["storage_state"] = storage_state
+            context = browser.new_context(**context_kwargs)
+            page = context.new_page()
+            page.goto(
+                api_url,
+                wait_until="domcontentloaded",
+                timeout=config.navigation_timeout_ms,
+            )
+            _jitter(config)
+            body_text = page.evaluate(
+                "() => document.body && document.body.innerText "
+                "? document.body.innerText.trim() : ''"
+            )
+            if not body_text:
+                logger.warning(
+                    "fetch_public_hh_api_json_browser_empty_body",
+                    log_user_id=log_user_id,
+                    api_url=api_url,
+                )
+                return None
+            try:
+                data = json.loads(body_text)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "fetch_public_hh_api_json_browser_not_json",
+                    log_user_id=log_user_id,
+                    api_url=api_url,
+                    sample=body_text[:200],
+                )
+                return None
+            if not isinstance(data, dict):
+                return None
+            logger.info(
+                "fetch_public_hh_api_json_browser_done",
+                log_user_id=log_user_id,
+                api_url=api_url,
+                has_storage=bool(storage_state),
+            )
+            return data
+        except PlaywrightTimeoutError as exc:
+            logger.warning(
+                "fetch_public_hh_api_json_browser_timeout",
+                log_user_id=log_user_id,
+                api_url=api_url,
+                error=str(exc)[:200],
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "fetch_public_hh_api_json_browser_failed",
+                log_user_id=log_user_id,
+                api_url=api_url,
+                error=str(exc)[:200],
+            )
+            return None
         finally:
             dispose_sync_browser_context(context, browser)
 

@@ -80,6 +80,7 @@ class HHParserService:
             client,
             vac["url"],
             parse_mode=self._detail_parse_mode,
+            storage_state=self._storage_state if self._detail_parse_mode == "api" else None,
         )
         if not page_data:
             return None

@@ -5,13 +5,12 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup
 
+from src.services.hh_ui.runner import SearchPageRenderResult, VacancyDetailRenderResult
 from src.services.parser.scraper import (
-    HHCaptchaRequiredError,
     HHScraper,
-    _map_html_vacancy_to_page_data,
     _hh_error_body_has_captcha,
+    _map_html_vacancy_to_page_data,
 )
-from src.services.hh_ui.runner import SearchPageRenderResult
 
 
 class TestExtractVacanciesFromPage:
@@ -298,6 +297,53 @@ class TestCollectVacancyUrlsBatch:
         assert mock_fetch.call_count == 2
 
 
+class TestVacancySearchPlaywrightFallback:
+    @pytest.mark.asyncio
+    async def test_search_api_failure_uses_playwright_html(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=AssertionError("API GET must not run when circuit open"),
+        )
+
+        html = (
+            Path(__file__).resolve().parents[2] / "docs" / "vacancies-list-page.html"
+        ).read_text(encoding="utf-8")
+        render_result = SearchPageRenderResult(
+            html=html,
+            final_url="https://hh.ru/search/vacancy",
+            cards_before_scroll=5,
+            cards_after_scroll=10,
+        )
+        mock_br = MagicMock()
+        mock_br.is_call_allowed.return_value = False
+        scraper_pw = HHScraper(
+            public_api_breaker=mock_br,
+            page_delay=(0, 0),
+            vacancy_delay=(0, 0),
+        )
+        with (
+            patch(
+                "src.services.parser.scraper.render_search_page_with_storage",
+                return_value=render_result,
+            ) as mock_render,
+            patch(
+                "src.services.parser.scraper.asyncio.to_thread",
+                new=AsyncMock(side_effect=lambda fn, **kwargs: fn(**kwargs)),
+            ),
+        ):
+            data = await scraper_pw._fetch_vacancy_search_page(
+                mock_client,
+                "https://api.hh.ru/vacancies?text=python&page=0",
+                keyword="",
+                fallback_web_url="https://hh.ru/search/vacancy?text=python&page=0",
+                storage_state=None,
+            )
+        assert data is not None
+        assert len(data.get("items", [])) > 0
+        mock_render.assert_called_once()
+        mock_br.record_success.assert_called_once()
+
+
 class TestBuildPageUrl:
     def test_adds_page_param(self):
         url = HHScraper._build_page_url("https://hh.ru/search/vacancy?text=Python", 3)
@@ -443,8 +489,10 @@ class TestParseVacancyPage:
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = sample_vacancy_detail_api_response
+        with patch.object(
+            scraper, "_fetch_api_page", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = (sample_vacancy_detail_api_response, False)
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert "Python" in result["description"]
@@ -467,8 +515,19 @@ class TestParseVacancyPage:
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(
-            scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None
+        with (
+            patch.object(
+                scraper,
+                "_fetch_api_page",
+                new_callable=AsyncMock,
+                return_value=(None, False),
+            ),
+            patch(
+                "src.services.parser.scraper.asyncio.to_thread",
+                new=AsyncMock(
+                    return_value=VacancyDetailRenderResult(html=None, final_url=None, error="fail")
+                ),
+            ),
         ):
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
@@ -566,10 +625,15 @@ class TestHHCaptchaAndPublicApiBreaker:
             vacancy_delay=(0, 0),
         )
         async with httpx.AsyncClient(transport=transport) as client:
-            with pytest.raises(HHCaptchaRequiredError):
-                await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
+            with patch(
+                "src.services.parser.scraper.fetch_public_hh_api_json_via_browser",
+                return_value=None,
+            ):
+                data, strike = await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
+        assert data is None
+        assert strike is True
         assert len(calls) == 1
-        mock_br.record_failure.assert_called_once()
+        mock_br.record_failure.assert_not_called()
         mock_br.record_success.assert_not_called()
 
     @pytest.mark.asyncio
@@ -583,9 +647,13 @@ class TestHHCaptchaAndPublicApiBreaker:
         )
         client = AsyncMock()
         client.get = AsyncMock(side_effect=AssertionError("GET must not be called"))
-        with pytest.raises(HHCaptchaRequiredError) as exc_info:
-            await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
-        assert "circuit" in str(exc_info.value).lower()
+        with patch(
+            "src.services.parser.scraper.fetch_public_hh_api_json_via_browser",
+            return_value=None,
+        ):
+            data, strike = await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
+        assert data is None
+        assert strike is True
         client.get.assert_not_called()
         mock_br.record_failure.assert_not_called()
 
@@ -609,8 +677,89 @@ class TestHHCaptchaAndPublicApiBreaker:
             vacancy_delay=(0, 0),
         )
         async with httpx.AsyncClient(transport=transport) as client:
-            result = await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/999999999")
+            result, strike = await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/999999999")
         assert result is None
+        assert strike is False
         assert len(calls) == 1
         mock_br.record_success.assert_called_once()
         mock_br.record_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_api_page_recovers_via_browser_json_after_captcha(self):
+        calls: list[object] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(
+                403,
+                json={"errors": [{"type": "captcha_required"}]},
+            )
+
+        transport = httpx.MockTransport(handler)
+        mock_br = MagicMock()
+        mock_br.is_call_allowed.return_value = True
+        scraper = HHScraper(
+            public_api_breaker=mock_br,
+            page_delay=(0, 0),
+            vacancy_delay=(0, 0),
+        )
+        recovered = {"id": "1", "name": "Dev", "description": "<p>x</p>"}
+        async with httpx.AsyncClient(transport=transport) as client:
+            with patch(
+                "src.services.parser.scraper.fetch_public_hh_api_json_via_browser",
+                return_value=recovered,
+            ):
+                data, strike = await scraper._fetch_api_page(client, "https://api.hh.ru/vacancies/1")
+        assert data == recovered
+        assert strike is False
+        assert len(calls) == 1
+        mock_br.record_success.assert_called_once()
+        mock_br.record_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_api_page_forbidden_exhausts_few_http_tries_then_playwright(
+        self, monkeypatch
+    ):
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "hh_public_api_rate_limit_max_attempts_detail", 3)
+        monkeypatch.setattr(settings, "hh_public_api_403_retry_base_seconds", 0.01)
+        monkeypatch.setattr(settings, "hh_public_api_403_retry_max_seconds", 0.05)
+        calls: list[object] = []
+        sleeps: list[float] = []
+
+        async def capture_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(403, json={"errors": [{"type": "forbidden"}]})
+
+        transport = httpx.MockTransport(handler)
+        mock_br = MagicMock()
+        mock_br.is_call_allowed.return_value = True
+        scraper = HHScraper(
+            public_api_breaker=mock_br,
+            page_delay=(0, 0),
+            vacancy_delay=(0, 0),
+        )
+        recovered = {"id": "1", "name": "Dev", "description": "<p>x</p>"}
+        async with httpx.AsyncClient(transport=transport) as client:
+            with (
+                patch(
+                    "src.services.parser.scraper.fetch_public_hh_api_json_via_browser",
+                    return_value=recovered,
+                ),
+                patch("src.services.parser.scraper.asyncio.sleep", side_effect=capture_sleep),
+            ):
+                data, strike = await scraper._fetch_api_page(
+                    client, "https://api.hh.ru/vacancies/1"
+                )
+        assert data == recovered
+        assert strike is False
+        assert len(calls) == 3
+        assert len(sleeps) == 2
+        assert sleeps[0] == pytest.approx(0.01)
+        assert sleeps[1] == pytest.approx(0.02)
+        mock_br.record_failure.assert_called_once()
+        mock_br.record_success.assert_called_once()

@@ -20,7 +20,11 @@ from src.config import settings
 from src.core.logging import get_logger
 from src.services.hh_ui.applicant_http import url_suggests_login_page
 from src.services.hh_ui.config import HhUiApplyConfig
-from src.services.hh_ui.runner import render_search_page_with_storage
+from src.services.hh_ui.runner import (
+    fetch_public_hh_api_json_via_browser,
+    render_search_page_with_storage,
+    render_vacancy_detail_page_with_storage,
+)
 from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 from src.services.parser.keyword_match import matches_keyword_expression
 from src.worker.circuit_breaker import CircuitBreaker
@@ -106,16 +110,55 @@ def _hh_error_body_has_captcha(body: str) -> bool:
     return False
 
 
+def _hh_vacancy_detail_json_is_valid(data: dict) -> bool:
+    """True when JSON from api.hh.ru/vacancies/{{id}} looks like a vacancy object."""
+    if not isinstance(data, dict):
+        return False
+    if data.get("id") is not None or isinstance(data.get("name"), str):
+        return True
+    return "description" in data
+
+
+def _synthetic_search_api_payload_from_web_cards(page_results: list[dict]) -> dict:
+    """Build an API-shaped dict so _extract_vacancies_from_api_response can run unchanged."""
+    items: list[dict] = []
+    for card in page_results:
+        items.append(
+            {
+                "id": card["hh_vacancy_id"],
+                "name": card["title"],
+                "alternate_url": card["url"],
+                "snippet": {"requirement": "", "responsibility": ""},
+                "employer": {
+                    "name": card.get("company_name"),
+                    "alternate_url": card.get("company_url"),
+                },
+                "salary": None,
+                "work_format": [],
+                "schedule": None,
+            }
+        )
+    return {"items": items, "pages": _MAX_PAGES}
+
+
 def _get_hh_public_api_breaker() -> CircuitBreaker:
-    """Redis-backed breaker shared across workers; opens after one captcha response."""
+    """Redis-backed breaker shared across workers; exponential recovery between opens."""
     global _hh_public_api_breaker_singleton
     if _hh_public_api_breaker_singleton is None:
         _hh_public_api_breaker_singleton = CircuitBreaker(
             "hh_public_api",
-            failure_threshold=1,
+            failure_threshold=settings.hh_public_api_circuit_failure_threshold,
             recovery_timeout=settings.hh_public_api_circuit_recovery_seconds,
+            exponential_recovery=True,
+            recovery_multiplier=settings.hh_public_api_circuit_recovery_multiplier,
+            max_recovery_timeout=settings.hh_public_api_circuit_recovery_max_seconds,
         )
     return _hh_public_api_breaker_singleton
+
+
+def _is_public_api_rate_limit_status(status_code: int | None) -> bool:
+    """True for 403/429 on public API when not handled as captcha JSON elsewhere."""
+    return status_code in (403, 429)
 
 
 def _looks_like_salary(text: str) -> bool:
@@ -440,16 +483,6 @@ class HHScraper:
             return self._public_api_breaker_override
         return _get_hh_public_api_breaker()
 
-    def _ensure_public_api_call_allowed(self, url: str) -> None:
-        br = self._hh_public_api_breaker()
-        if not br.is_call_allowed():
-            logger.warning("HH public API circuit open, skipping request", url=url)
-            raise HHCaptchaRequiredError(
-                "HH public API circuit open (captcha cooldown)",
-                status_code=None,
-                body=None,
-            )
-
     def _user_agent_for_request(self) -> str:
         return random.choice(_HH_BROWSER_USER_AGENTS + (settings.hh_user_agent,))
 
@@ -522,153 +555,307 @@ class HHScraper:
                     logger.error("Failed to fetch page", url=url)
                     return None, None
 
-    async def _fetch_api_page(self, client: httpx.AsyncClient, url: str) -> dict | None:
-        """Fetch JSON from HH API (single-vacancy detail). Returns None on failure.
+    async def _fetch_api_page(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        storage_state: dict | None = None,
+    ) -> tuple[dict | None, bool]:
+        """Fetch JSON from HH API (single-vacancy detail).
 
-        Raises HHCaptchaRequiredError when HH returns captcha_required or the public API
-        circuit breaker is open (no tight retries in those cases).
+        Returns (data, captcha_or_circuit_unresolved): second flag is True when the HTTP
+        path indicated captcha or the breaker was open and browser JSON did not recover,
+        so callers should raise after HTML Playwright also fails.
         """
         br = self._hh_public_api_breaker()
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
         await self._sleep_before_public_api_request(list_request=False)
-        for attempt in range(self._retries):
-            self._ensure_public_api_call_allowed(url)
-            try:
-                resp = await client.get(url, headers=self._headers_api(), timeout=self._timeout)
-                resp.raise_for_status()
-                br.record_success()
-                return resp.json()
-            except httpx.HTTPStatusError as exc:
-                if exc.response is not None and exc.response.status_code == 404:
-                    logger.info(
-                        "HH API vacancy not found (404), not retrying",
-                        url=url,
-                    )
+
+        cfg = HhUiApplyConfig.from_settings()
+        circuit_open = not br.is_call_allowed()
+        if circuit_open:
+            logger.warning("hh_public_api_circuit_open_playwright_fallback", url=url)
+
+        httpx_captcha = False
+        rate_limit_round = 0
+        rate_limit_http_exhausted = False
+        if not circuit_open:
+            for attempt in range(self._retries):
+                try:
+                    resp = await client.get(url, headers=self._headers_api(), timeout=self._timeout)
+                    resp.raise_for_status()
                     br.record_success()
-                    return None
-                body = ""
-                if exc.response is not None:
-                    body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]
-                if _hh_error_body_has_captcha(body):
-                    logger.warning(
-                        "HH API captcha required, not retrying",
-                        url=url,
-                        status=exc.response.status_code if exc.response else None,
-                        body=body or None,
-                    )
-                    br.record_failure()
-                    raise HHCaptchaRequiredError(
-                        "HeadHunter requires captcha for this request",
-                        status_code=exc.response.status_code if exc.response else None,
-                        body=body if body else None,
-                    ) from exc
-                if attempt < self._retries - 1:
-                    wait = 3 + attempt * 2
-                    logger.warning(
-                        "API request error, retrying",
-                        error=str(exc),
-                        wait=wait,
-                        status=exc.response.status_code if exc.response else None,
-                        body=body or None,
-                    )
-                    await asyncio.sleep(wait)
-                else:
-                    logger.error(
-                        "Failed to fetch API page",
-                        url=url,
-                        status=exc.response.status_code if exc.response else None,
-                        body=body or None,
-                    )
-                    return None
-            except httpx.HTTPError as exc:
-                if attempt < self._retries - 1:
-                    wait = 3 + attempt * 2
-                    logger.warning("API request error, retrying", error=str(exc), wait=wait)
-                    await asyncio.sleep(wait)
-                else:
-                    logger.error("Failed to fetch API page", url=url)
-                    return None
+                    return resp.json(), False
+                except httpx.HTTPStatusError as exc:
+                    if exc.response is not None and exc.response.status_code == 404:
+                        logger.info(
+                            "HH API vacancy not found (404), not retrying",
+                            url=url,
+                        )
+                        br.record_success()
+                        return None, False
+                    body = ""
+                    status = exc.response.status_code if exc.response else None
+                    if exc.response is not None:
+                        body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]
+                    if _hh_error_body_has_captcha(body):
+                        logger.warning(
+                            "HH API captcha required, trying Playwright JSON fallback",
+                            url=url,
+                            status=status,
+                            body=body or None,
+                        )
+                        httpx_captcha = True
+                        break
+                    if _is_public_api_rate_limit_status(status) and not _hh_error_body_has_captcha(
+                        body
+                    ):
+                        rate_limit_round += 1
+                        max_rl = settings.hh_public_api_rate_limit_max_attempts_detail
+                        if rate_limit_round >= max_rl:
+                            rate_limit_http_exhausted = True
+                            logger.warning(
+                                "HH API detail rate-limit/forbidden HTTP retries exhausted",
+                                url=url,
+                                attempts=rate_limit_round,
+                                status=status,
+                            )
+                            break
+                        wait = min(
+                            settings.hh_public_api_403_retry_base_seconds
+                            * (2 ** (rate_limit_round - 1)),
+                            settings.hh_public_api_403_retry_max_seconds,
+                        )
+                        logger.warning(
+                            "HH API detail rate-limit/forbidden, exponential backoff",
+                            url=url,
+                            wait=wait,
+                            attempt=rate_limit_round,
+                            status=status,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    if attempt < self._retries - 1:
+                        wait = 3 + attempt * 2
+                        logger.warning(
+                            "API request error, retrying",
+                            error=str(exc),
+                            wait=wait,
+                            status=status,
+                            body=body or None,
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        logger.error(
+                            "Failed to fetch API page",
+                            url=url,
+                            status=status,
+                            body=body or None,
+                        )
+                except httpx.HTTPError as exc:
+                    if attempt < self._retries - 1:
+                        wait = 3 + attempt * 2
+                        logger.warning("API request error, retrying", error=str(exc), wait=wait)
+                        await asyncio.sleep(wait)
+                    else:
+                        logger.error("Failed to fetch API page", url=url)
 
-    async def _fetch_vacancy_search_page(self, client: httpx.AsyncClient, url: str) -> dict | None:
-        """Fetch vacancy search (GET /vacancies). Retries same URL until success or cap.
+        if rate_limit_http_exhausted:
+            br.record_failure()
 
-        Raises HHCaptchaRequiredError on captcha or when the public API circuit is open.
-        """
+        pw_data = await asyncio.to_thread(
+            fetch_public_hh_api_json_via_browser,
+            storage_state=storage_state,
+            config=cfg,
+            api_url=url,
+        )
+        if pw_data and _hh_vacancy_detail_json_is_valid(pw_data):
+            br.record_success()
+            return pw_data, False
+        return None, httpx_captcha or circuit_open
+
+    async def _fetch_vacancy_search_page(
+        self,
+        client: httpx.AsyncClient,
+        api_url: str,
+        *,
+        keyword: str,
+        fallback_web_url: str | None = None,
+        storage_state: dict | None = None,
+    ) -> dict | None:
+        """Fetch vacancy search (GET /vacancies). Retries then optional Playwright HTML search."""
         br = self._hh_public_api_breaker()
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
         await self._sleep_before_public_api_request(list_request=True)
-        for attempt in range(_SEARCH_LIST_MAX_ATTEMPTS):
-            self._ensure_public_api_call_allowed(url)
-            try:
-                resp = await client.get(url, headers=self._headers_api(), timeout=self._timeout)
-                resp.raise_for_status()
-                br.record_success()
-                return resp.json()
-            except httpx.HTTPStatusError as exc:
-                body = ""
-                if exc.response is not None:
-                    body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]
-                if _hh_error_body_has_captcha(body):
+
+        circuit_open = not br.is_call_allowed()
+        if circuit_open:
+            logger.warning("hh_public_api_circuit_open_playwright_fallback", url=api_url)
+
+        httpx_captcha = False
+        rate_limit_round = 0
+        rate_limit_http_exhausted = False
+        if not circuit_open:
+            for attempt in range(_SEARCH_LIST_MAX_ATTEMPTS):
+                try:
+                    resp = await client.get(
+                        api_url,
+                        headers=self._headers_api(),
+                        timeout=self._timeout,
+                    )
+                    resp.raise_for_status()
+                    br.record_success()
+                    return resp.json()
+                except httpx.HTTPStatusError as exc:
+                    body = ""
+                    status = exc.response.status_code if exc.response else None
+                    if exc.response is not None:
+                        body = exc.response.text[:_SEARCH_LIST_BODY_LOG_LEN]
+                    if _hh_error_body_has_captcha(body):
+                        logger.warning(
+                            "Vacancy search captcha, trying Playwright search fallback",
+                            url=api_url,
+                            status=status,
+                            body=body or None,
+                        )
+                        httpx_captcha = True
+                        break
+                    if _is_public_api_rate_limit_status(status) and not _hh_error_body_has_captcha(
+                        body
+                    ):
+                        rate_limit_round += 1
+                        max_rl = settings.hh_public_api_rate_limit_max_attempts_search
+                        if rate_limit_round >= max_rl:
+                            rate_limit_http_exhausted = True
+                            logger.warning(
+                                "Vacancy search rate-limit/forbidden HTTP retries exhausted",
+                                url=api_url,
+                                attempts=rate_limit_round,
+                                status=status,
+                            )
+                            break
+                        wait = min(
+                            settings.hh_public_api_403_retry_base_seconds
+                            * (2 ** (rate_limit_round - 1)),
+                            settings.hh_public_api_403_retry_max_seconds,
+                        )
+                        logger.warning(
+                            "Vacancy search rate-limit/forbidden, exponential backoff",
+                            url=api_url,
+                            wait=wait,
+                            attempt=rate_limit_round,
+                            status=status,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    wait = min(5 + attempt * 2, 60)
                     logger.warning(
-                        "Vacancy search captcha required, not retrying",
-                        url=url,
-                        status=exc.response.status_code if exc.response else None,
+                        "Vacancy search API error, retrying",
+                        error=str(exc),
+                        wait=wait,
+                        attempt=attempt + 1,
+                        max_attempts=_SEARCH_LIST_MAX_ATTEMPTS,
+                        status=status,
                         body=body or None,
+                        url=api_url,
                     )
-                    br.record_failure()
-                    raise HHCaptchaRequiredError(
-                        "HeadHunter requires captcha for vacancy search",
-                        status_code=exc.response.status_code if exc.response else None,
-                        body=body if body else None,
-                    ) from exc
-                wait = min(5 + attempt * 2, 60)
-                logger.warning(
-                    "Vacancy search API error, retrying",
-                    error=str(exc),
-                    wait=wait,
-                    attempt=attempt + 1,
-                    max_attempts=_SEARCH_LIST_MAX_ATTEMPTS,
-                    status=exc.response.status_code if exc.response else None,
-                    body=body or None,
-                    url=url,
-                )
-                if attempt >= _SEARCH_LIST_MAX_ATTEMPTS - 1:
-                    logger.error(
-                        "Vacancy search failed after retries",
-                        url=url,
-                        status=exc.response.status_code if exc.response else None,
-                        body=body or None,
+                    if attempt >= _SEARCH_LIST_MAX_ATTEMPTS - 1:
+                        logger.error(
+                            "Vacancy search failed after retries",
+                            url=api_url,
+                            status=status,
+                            body=body or None,
+                        )
+                        break
+                    await asyncio.sleep(wait)
+                except httpx.HTTPError as exc:
+                    wait = min(5 + attempt * 2, 60)
+                    logger.warning(
+                        "Vacancy search request error, retrying",
+                        error=str(exc),
+                        wait=wait,
+                        attempt=attempt + 1,
+                        url=api_url,
                     )
-                    return None
-                await asyncio.sleep(wait)
-            except httpx.HTTPError as exc:
-                wait = min(5 + attempt * 2, 60)
-                logger.warning(
-                    "Vacancy search request error, retrying",
-                    error=str(exc),
-                    wait=wait,
-                    attempt=attempt + 1,
-                    url=url,
+                    if attempt >= _SEARCH_LIST_MAX_ATTEMPTS - 1:
+                        logger.error("Vacancy search failed after retries", url=api_url)
+                        break
+                    await asyncio.sleep(wait)
+
+        if rate_limit_http_exhausted:
+            br.record_failure()
+
+        if not fallback_web_url:
+            if httpx_captcha:
+                br.force_open()
+                raise HHCaptchaRequiredError(
+                    "HeadHunter requires captcha for vacancy search",
+                    status_code=None,
+                    body=None,
                 )
-                if attempt >= _SEARCH_LIST_MAX_ATTEMPTS - 1:
-                    logger.error("Vacancy search failed after retries", url=url)
-                    return None
-                await asyncio.sleep(wait)
-        return None
+            return None
+
+        cfg = HhUiApplyConfig.from_settings()
+        rendered = await asyncio.to_thread(
+            render_search_page_with_storage,
+            storage_state=storage_state,
+            config=cfg,
+            url=fallback_web_url,
+        )
+        if rendered.html is None:
+            if httpx_captcha:
+                br.force_open()
+                raise HHCaptchaRequiredError(
+                    "HeadHunter requires captcha for vacancy search",
+                    status_code=None,
+                    body=None,
+                )
+            return None
+        if rendered.final_url and url_suggests_login_page(rendered.final_url):
+            logger.warning(
+                "Playwright vacancy search redirected to login",
+                url=fallback_web_url,
+                final_url=rendered.final_url,
+            )
+            if httpx_captcha:
+                br.force_open()
+                raise HHCaptchaRequiredError(
+                    "HeadHunter requires captcha for vacancy search",
+                    status_code=None,
+                    body=None,
+                )
+            return None
+
+        soup = BeautifulSoup(rendered.html, "html.parser")
+        page_results = self._extract_vacancies_from_page(soup, keyword)
+        raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
+        if not page_results and raw_blocks == 0:
+            if httpx_captcha:
+                br.force_open()
+                raise HHCaptchaRequiredError(
+                    "HeadHunter requires captcha for vacancy search",
+                    status_code=None,
+                    body=None,
+                )
+            return None
+
+        br.record_success()
+        return _synthetic_search_api_payload_from_web_cards(page_results)
 
     async def fetch_vacancy_by_id(
         self,
         client: httpx.AsyncClient,
         vacancy_id: str,
+        *,
+        storage_state: dict | None = None,
     ) -> dict | None:
-        """Fetch full vacancy detail from HH API. Returns raw JSON or None on failure.
-
-        Raises HHCaptchaRequiredError when captcha is required or the circuit is open.
-        """
+        """Fetch full vacancy detail from HH API (HTTP then Playwright JSON)."""
         url = _vacancy_api_url(vacancy_id)
-        return await self._fetch_api_page(client, url)
+        data, _ = await self._fetch_api_page(client, url, storage_state=storage_state)
+        return data
 
     @staticmethod
     def _build_page_url(base_url: str, page: int) -> str:
@@ -998,15 +1185,32 @@ class HHScraper:
                     ):
                         break
 
-                    url = self._build_api_url(base_url, page)
-                    logger.info("Fetching search page", url=url, page=page + 1, parse_mode=parse_mode)
-                    data = await self._fetch_vacancy_search_page(client, url)
+                    api_url = self._build_api_url(base_url, page)
+                    web_url = self._build_page_url(base_url, page)
+                    logger.info(
+                        "Fetching search page",
+                        url=api_url,
+                        page=page + 1,
+                        parse_mode=parse_mode,
+                    )
+                    data = await self._fetch_vacancy_search_page(
+                        client,
+                        api_url,
+                        keyword=keyword,
+                        fallback_web_url=web_url,
+                        storage_state=storage_state,
+                    )
                     if data is None:
                         break
 
                     items = data.get("items", [])
                     if not items:
-                        logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
+                        logger.info(
+                            "No vacancy items on page",
+                            page=page + 1,
+                            url=api_url,
+                            parse_mode=parse_mode,
+                        )
                         break
 
                     last_total_pages = int(data.get("pages", 0) or 0)
@@ -1015,7 +1219,12 @@ class HHScraper:
                     page_had_results = bool(items)
 
                     if not page_had_results:
-                        logger.info("No vacancy items on page", page=page + 1, url=url, parse_mode=parse_mode)
+                        logger.info(
+                            "No vacancy items on page",
+                            page=page + 1,
+                            url=api_url,
+                            parse_mode=parse_mode,
+                        )
                         break
 
                     new_count, _, blacklisted_skipped = self._collect_new_from_page(
@@ -1031,7 +1240,7 @@ class HHScraper:
                     logger.info(
                         "Search page scraped",
                         page=page + 1,
-                        url=url,
+                        url=api_url,
                         parse_mode=parse_mode,
                         raw_blocks=raw_blocks,
                         keyword_matched=len(page_results),
@@ -1039,7 +1248,7 @@ class HHScraper:
                         new=new_count,
                         total=len(collected),
                         target=target_count,
-                        has_cookies=False,
+                        has_cookies=bool(storage_state),
                     )
 
                     page += 1
@@ -1057,6 +1266,7 @@ class HHScraper:
         start_page: int = 0,
         blacklisted_ids: set[str] | None = None,
         exclude_ids: set[str] | None = None,
+        storage_state: dict | None = None,
     ) -> tuple[list[dict[str, str]], int, bool]:
         """Collect a batch of vacancy URLs for incremental fetching.
 
@@ -1088,15 +1298,22 @@ class HHScraper:
                 ):
                     return collected[:batch_size], page, False
 
-                url = self._build_api_url(base_url, page)
-                logger.info("Fetching search page", url=url, page=page + 1)
-                data = await self._fetch_vacancy_search_page(client, url)
+                api_url = self._build_api_url(base_url, page)
+                web_url = self._build_page_url(base_url, page)
+                logger.info("Fetching search page", url=api_url, page=page + 1)
+                data = await self._fetch_vacancy_search_page(
+                    client,
+                    api_url,
+                    keyword=keyword,
+                    fallback_web_url=web_url,
+                    storage_state=storage_state,
+                )
                 if data is None:
                     return collected[:batch_size], page, False
 
                 items = data.get("items", [])
                 if not items:
-                    logger.info("No vacancy items on page", page=page + 1, url=url)
+                    logger.info("No vacancy items on page", page=page + 1, url=api_url)
                     return collected[:batch_size], page, False
 
                 last_total_pages = int(data.get("pages", 0) or 0)
@@ -1114,7 +1331,7 @@ class HHScraper:
                 logger.info(
                     "Search page scraped",
                     page=page + 1,
-                    url=url,
+                    url=api_url,
                     raw_blocks=len(items),
                     keyword_matched=len(page_results),
                     blacklisted_skipped=blacklisted_skipped,
@@ -1137,6 +1354,7 @@ class HHScraper:
         url: str,
         *,
         parse_mode: str = "api",
+        storage_state: dict | None = None,
     ) -> dict:
         """Parse a single vacancy page. Returns page_data shape with structured fields.
 
@@ -1157,8 +1375,35 @@ class HHScraper:
         if not vacancy_id:
             return {}
 
-        api_response = await self.fetch_vacancy_by_id(client, vacancy_id)
-        if not api_response:
-            return {}
+        br = self._hh_public_api_breaker()
+        api_url = _vacancy_api_url(vacancy_id)
+        api_response, captcha_strike = await self._fetch_api_page(
+            client,
+            api_url,
+            storage_state=storage_state,
+        )
+        if api_response:
+            return _map_api_vacancy_to_page_data(api_response, {"url": url})
 
-        return _map_api_vacancy_to_page_data(api_response, {"url": url})
+        cfg = HhUiApplyConfig.from_settings()
+        rendered = await asyncio.to_thread(
+            render_vacancy_detail_page_with_storage,
+            storage_state=storage_state,
+            config=cfg,
+            url=url,
+        )
+        if rendered.html and rendered.final_url and not url_suggests_login_page(rendered.final_url):
+            soup = BeautifulSoup(rendered.html, "html.parser")
+            page_data = _map_html_vacancy_to_page_data(soup, url)
+            if page_data.get("description") or page_data.get("title"):
+                br.record_success()
+                return page_data
+
+        if captcha_strike:
+            br.force_open()
+            raise HHCaptchaRequiredError(
+                "HeadHunter requires captcha for this request",
+                status_code=None,
+                body=None,
+            )
+        return {}

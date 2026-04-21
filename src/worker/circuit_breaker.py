@@ -51,11 +51,17 @@ class CircuitBreaker:
         recovery_timeout: int = CB_DEFAULT_RECOVERY_TIMEOUT,
         half_open_success_threshold: int = CB_HALF_OPEN_SUCCESS_THRESHOLD,
         redis_client: redis.Redis | None = None,
+        exponential_recovery: bool = False,
+        recovery_multiplier: float = 2.0,
+        max_recovery_timeout: int | None = None,
     ) -> None:
         self._name = name
         self._failure_threshold = failure_threshold
         self._recovery_timeout = recovery_timeout
         self._half_open_success_threshold = half_open_success_threshold
+        self._exponential_recovery = exponential_recovery
+        self._recovery_multiplier = recovery_multiplier
+        self._max_recovery_timeout = max_recovery_timeout
         self._redis = redis_client or redis.Redis.from_url(settings.redis_url)
 
     # ------------------------------------------------------------------
@@ -77,6 +83,14 @@ class CircuitBreaker:
     @property
     def _key_half_open_successes(self) -> str:
         return f"cb:{self._name}:half_open_successes"
+
+    @property
+    def _key_open_streak(self) -> str:
+        return f"cb:{self._name}:open_streak"
+
+    @property
+    def _key_effective_recovery(self) -> str:
+        return f"cb:{self._name}:effective_recovery_seconds"
 
     # ------------------------------------------------------------------
     # State accessors
@@ -109,7 +123,14 @@ class CircuitBreaker:
             last_failure = self._redis.get(self._key_last_failure)
             if last_failure:
                 elapsed = time.time() - float(last_failure)
-                if elapsed >= self._recovery_timeout:
+                recovery_seconds = float(self._recovery_timeout)
+                if self._exponential_recovery:
+                    raw_eff = self._redis.get(self._key_effective_recovery)
+                    if raw_eff is not None:
+                        recovery_seconds = float(
+                            raw_eff.decode() if isinstance(raw_eff, bytes) else raw_eff
+                        )
+                if elapsed >= recovery_seconds:
                     self._transition_to_half_open()
                     return True
             return False
@@ -177,6 +198,19 @@ class CircuitBreaker:
     # ------------------------------------------------------------------
 
     def _transition_to_open(self, failures: int) -> None:
+        effective_recovery = self._recovery_timeout
+        if self._exponential_recovery:
+            streak = int(self._redis.incr(self._key_open_streak))
+            self._redis.expire(self._key_open_streak, REDIS_CB_STATE_TTL)
+            cap = self._max_recovery_timeout or self._recovery_timeout
+            base = float(self._recovery_timeout)
+            mult = self._recovery_multiplier
+            effective_recovery = int(min(base * (mult ** (streak - 1)), float(cap)))
+            self._redis.set(
+                self._key_effective_recovery,
+                str(effective_recovery),
+                ex=REDIS_CB_STATE_TTL,
+            )
         with self._redis.pipeline() as pipe:
             pipe.set(self._key_state, STATE_OPEN, ex=REDIS_CB_STATE_TTL)
             pipe.delete(self._key_half_open_successes)
@@ -186,6 +220,9 @@ class CircuitBreaker:
             name=self._name,
             failures=failures,
             threshold=self._failure_threshold,
+            effective_recovery_seconds=(
+                effective_recovery if self._exponential_recovery else None
+            ),
         )
 
     def _transition_to_half_open(self) -> None:
@@ -200,5 +237,7 @@ class CircuitBreaker:
             pipe.set(self._key_state, STATE_CLOSED, ex=REDIS_CB_STATE_TTL)
             pipe.set(self._key_failures, 0, ex=REDIS_CB_FAILURES_TTL)
             pipe.delete(self._key_half_open_successes)
+            pipe.delete(self._key_open_streak)
+            pipe.delete(self._key_effective_recovery)
             pipe.execute()
         logger.info("Circuit breaker closed", name=self._name)

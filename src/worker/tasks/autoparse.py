@@ -470,10 +470,13 @@ async def _run_autoparse_company_async(
             we_repo = WorkExperienceRepository(session)
             work_experiences = await we_repo.get_active_by_user(company.user_id)
 
-            if parse_mode == "web" and company.parse_hh_linked_account_id:
+            if company.parse_hh_linked_account_id:
                 hh_repo = HhLinkedAccountRepository(session)
                 hh_acc = await hh_repo.get_by_id(company.parse_hh_linked_account_id)
-                if not hh_acc or hh_acc.user_id != company.user_id or not hh_acc.browser_storage_enc:
+                session_missing = (
+                    not hh_acc or hh_acc.user_id != company.user_id or not hh_acc.browser_storage_enc
+                )
+                if parse_mode == "web" and session_missing:
                     logger.warning(
                         "Autoparse web run missing browser session",
                         company_id=company_id,
@@ -488,23 +491,32 @@ async def _run_autoparse_company_async(
                             text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
                         )
                     return {"status": "error", "reason": "no_browser_session", "company_id": company_id}
-                try:
-                    cipher = HhTokenCipher(settings.hh_token_encryption_key)
-                    web_storage = decrypt_browser_storage(hh_acc.browser_storage_enc, cipher)
-                except Exception as exc:
-                    logger.warning(
-                        "Autoparse web session decrypt failed",
-                        company_id=company_id,
-                        hh_linked_account_id=company.parse_hh_linked_account_id,
-                        error=str(exc)[:200],
-                    )
-                    if user and notify_user_id is not None and pipeline_progress is None:
-                        await _send_run_failure_notification(
-                            bot_token=settings.bot_token,
-                            chat_id=user.telegram_id,
-                            text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                if not session_missing:
+                    try:
+                        cipher = HhTokenCipher(settings.hh_token_encryption_key)
+                        web_storage = decrypt_browser_storage(hh_acc.browser_storage_enc, cipher)
+                    except Exception as exc:
+                        if parse_mode == "web":
+                            logger.warning(
+                                "Autoparse web session decrypt failed",
+                                company_id=company_id,
+                                hh_linked_account_id=company.parse_hh_linked_account_id,
+                                error=str(exc)[:200],
+                            )
+                            if user and notify_user_id is not None and pipeline_progress is None:
+                                await _send_run_failure_notification(
+                                    bot_token=settings.bot_token,
+                                    chat_id=user.telegram_id,
+                                    text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                                )
+                            return {"status": "error", "reason": "decrypt_failed", "company_id": company_id}
+                        logger.warning(
+                            "Autoparse API parse optional browser session decrypt failed",
+                            company_id=company_id,
+                            hh_linked_account_id=company.parse_hh_linked_account_id,
+                            error=str(exc)[:200],
                         )
-                    return {"status": "error", "reason": "decrypt_failed", "company_id": company_id}
+                        web_storage = None
 
             if parse_mode == "web" and resume_filter_id:
                 if not web_storage:

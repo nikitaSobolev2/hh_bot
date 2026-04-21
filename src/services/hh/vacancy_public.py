@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import re
 from dataclasses import dataclass
 
 import httpx
 
 from src.core.logging import get_logger
+from src.services.hh_ui.config import HhUiApplyConfig
+from src.services.hh_ui.runner import fetch_public_hh_api_json_via_browser
 
 logger = get_logger(__name__)
 
@@ -78,6 +82,36 @@ def _has_not_found_error(payload: object) -> bool:
     return False
 
 
+def _body_suggests_public_api_block(body: str) -> bool:
+    if not body:
+        return False
+    low = body.lower()
+    if "captcha" in low:
+        return True
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return False
+    errs = data.get("errors") if isinstance(data, dict) else None
+    if not isinstance(errs, list):
+        return False
+    for item in errs:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in ("forbidden", "captcha_required"):
+            return True
+    return False
+
+
+def _preflight_from_vacancy_json(data: dict) -> HhVacancyPublicPreflight:
+    if _has_not_found_error(data):
+        return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
+    if vacancy_public_json_is_archived_or_hidden(data):
+        return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
+    needs_test = vacancy_public_json_requires_employer_test(data)
+    return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=needs_test)
+
+
 async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPreflight:
     """GET /vacancies/{id}: unavailable vs employer test required (single request)."""
     vid = str(hh_vacancy_id or "").strip()
@@ -113,12 +147,25 @@ async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPref
             return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
         if not isinstance(data, dict):
             return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
-        if _has_not_found_error(data):
-            return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
-        if vacancy_public_json_is_archived_or_hidden(data):
-            return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
-        needs_test = vacancy_public_json_requires_employer_test(data)
-        return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=needs_test)
+        return _preflight_from_vacancy_json(data)
+
+    body_preview = (resp.text or "")[:800]
+    try_playwright = resp.status_code in (403, 429) or _body_suggests_public_api_block(body_preview)
+    if try_playwright:
+        cfg = HhUiApplyConfig.from_settings()
+        data = await asyncio.to_thread(
+            fetch_public_hh_api_json_via_browser,
+            storage_state=None,
+            config=cfg,
+            api_url=url,
+        )
+        if isinstance(data, dict) and data and not _has_not_found_error(data):
+            logger.info(
+                "hh_vacancy_public_playwright_json_ok",
+                hh_vacancy_id=vid,
+                status=resp.status_code,
+            )
+            return _preflight_from_vacancy_json(data)
 
     # 429, 5xx, other — do not treat as unavailable or test (allow apply attempt)
     return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)

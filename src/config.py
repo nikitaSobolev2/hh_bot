@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # After HH captcha_required (403), block further public API calls until cooldown (Redis CB).
     # Default 300 aligns with Celery captcha retry cap so retries are not scheduled too early.
     hh_public_api_circuit_recovery_seconds: int = Field(default=300, ge=60, le=86400)
+    # Exponential recovery: each open multiplies wait by recovery_multiplier (capped).
+    hh_public_api_circuit_recovery_max_seconds: int = Field(default=3600, ge=60, le=86400)
+    hh_public_api_circuit_recovery_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    hh_public_api_circuit_failure_threshold: int = Field(default=3, ge=1, le=20)
+    # HTTP 403/429 (non-captcha): exp. backoff, then Playwright; few HTTP tries before web.
+    hh_public_api_403_retry_base_seconds: float = Field(default=2.0, ge=0.5, le=60.0)
+    hh_public_api_403_retry_max_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    hh_public_api_rate_limit_max_attempts_detail: int = Field(default=3, ge=1, le=10)
+    hh_public_api_rate_limit_max_attempts_search: int = Field(default=5, ge=1, le=30)
     hh_token_encryption_key: str = ""
 
     # HeadHunter UI apply (Playwright) — optional; off by default
@@ -173,6 +182,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 "autoparse_run_company_lock_ttl_seconds should be at least twice "
                 "autoparse_run_company_lock_renew_interval_seconds so renewals keep the lock alive"
+            )
+        if self.hh_public_api_403_retry_max_seconds < self.hh_public_api_403_retry_base_seconds:
+            raise ValueError(
+                "hh_public_api_403_retry_max_seconds must be >= "
+                "hh_public_api_403_retry_base_seconds"
+            )
+        max_cb = self.hh_public_api_circuit_recovery_max_seconds
+        base_cb = self.hh_public_api_circuit_recovery_seconds
+        if max_cb < base_cb:
+            raise ValueError(
+                "hh_public_api_circuit_recovery_max_seconds must be >= "
+                "hh_public_api_circuit_recovery_seconds"
             )
         return self
 

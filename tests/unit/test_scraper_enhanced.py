@@ -126,13 +126,13 @@ def _api_response_detail(
 class TestParseVacancyPageEnhanced:
     @pytest.mark.asyncio
     async def test_extracts_detail_fields(self):
-        """parse_vacancy_page uses fetch_vacancy_by_id (API), not HTML parsing."""
+        """parse_vacancy_page uses _fetch_api_page (API), not HTML parsing."""
         scraper = HHScraper()
         mock_client = AsyncMock()
         api_response = _api_response_detail()
 
-        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = api_response
+        with patch.object(scraper, "_fetch_api_page", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = (api_response, False)
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert isinstance(result, dict)
@@ -150,8 +150,16 @@ class TestParseVacancyPageEnhanced:
         scraper = HHScraper()
         mock_client = AsyncMock()
 
-        with patch.object(
-            scraper, "fetch_vacancy_by_id", new_callable=AsyncMock, return_value=None
+        from src.services.hh_ui.runner import VacancyDetailRenderResult
+
+        with (
+            patch.object(scraper, "_fetch_api_page", new_callable=AsyncMock, return_value=(None, False)),
+            patch(
+                "src.services.parser.scraper.asyncio.to_thread",
+                new=AsyncMock(
+                    return_value=VacancyDetailRenderResult(html=None, final_url=None, error="fail")
+                ),
+            ),
         ):
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
@@ -164,8 +172,8 @@ class TestParseVacancyPageEnhanced:
         mock_client = AsyncMock()
         api_response = _api_response_detail(work_formats="удалённо")
 
-        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = api_response
+        with patch.object(scraper, "_fetch_api_page", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = (api_response, False)
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["work_formats"] == "удалённо"
@@ -177,8 +185,8 @@ class TestParseVacancyPageEnhanced:
         mock_client = AsyncMock()
         api_response = _api_response_detail(work_experience="1–3 года")
 
-        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = api_response
+        with patch.object(scraper, "_fetch_api_page", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = (api_response, False)
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["work_experience"] == "1–3 года"
@@ -190,8 +198,8 @@ class TestParseVacancyPageEnhanced:
         mock_client = AsyncMock()
         api_response = _api_response_detail(compensation_frequency="ежемесячно")
 
-        with patch.object(scraper, "fetch_vacancy_by_id", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = api_response
+        with patch.object(scraper, "_fetch_api_page", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = (api_response, False)
             result = await scraper.parse_vacancy_page(mock_client, "https://hh.ru/vacancy/1")
 
         assert result["compensation_frequency"] == "ежемесячно"
