@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import settings
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -985,3 +987,79 @@ class TestAutoparseTaskProgressIntegration:
         assert result["status"] == "completed"
         assert collect_mock.await_args.kwargs["parse_mode"] == "web"
         assert detail_mock.await_args.kwargs["parse_mode"] == "api"
+
+    @pytest.mark.asyncio
+    async def test_global_api_parsing_off_uses_web_search_and_web_detail(self):
+        company = _make_company(company_id=22, vacancy_title="Python Dev")
+        company.parse_mode = "web"
+        user = _make_user(telegram_id=888)
+        session = _make_session()
+        session_factory = MagicMock(return_value=session)
+        fake_task = MagicMock()
+        fake_task.request.id = "test-id-web-only"
+
+        search_cards = [
+            {"hh_vacancy_id": "321", "url": "https://hh.ru/vacancy/321", "title": "Python Dev"}
+        ]
+        page_data = {
+            "description": "d",
+            "skills": ["Python"],
+            "orm_fields": {},
+            "employer_data": {"id": "1", "name": "Co"},
+            "area_data": {"id": "1", "name": "Msk"},
+            "title": "Python Dev",
+            "company_name": "Co",
+        }
+
+        base_patches = [
+            patch("src.worker.tasks.autoparse._redis_client", return_value=_make_sync_redis()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.collect_vacancy_urls",
+                new=AsyncMock(return_value=search_cards),
+            ),
+            patch(
+                "src.services.parser.hh_parser_service.HHScraper.parse_vacancy_page",
+                new=AsyncMock(return_value=page_data),
+            ),
+            patch(
+                "src.repositories.hh.HHEmployerRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.repositories.hh.HHAreaRepository.get_or_create_by_hh_id",
+                new=AsyncMock(return_value=MagicMock(id=1)),
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=_make_checkpoint_mock(),
+            ),
+            patch("src.worker.tasks.autoparse.deliver_autoparse_results"),
+            patch.object(settings, "hh_api_vacancy_parsing_enabled", False),
+        ]
+
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            collect_mock = None
+            detail_mock = None
+            for p in base_patches + _repo_patches(company, user) + _crypto_patches():
+                result = stack.enter_context(p)
+                if getattr(p, "attribute", None) == "collect_vacancy_urls":
+                    collect_mock = result
+                elif getattr(p, "attribute", None) == "parse_vacancy_page":
+                    detail_mock = result
+
+            from src.worker.tasks.autoparse import _run_autoparse_company_async
+
+            result = await _run_autoparse_company_async(
+                session_factory,
+                fake_task,
+                company_id=22,
+                notify_user_id=None,
+            )
+
+        assert result["status"] == "completed"
+        assert collect_mock.await_args.kwargs["parse_mode"] == "web"
+        assert detail_mock.await_args.kwargs["parse_mode"] == "web"

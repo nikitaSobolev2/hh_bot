@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from src.services.hh.vacancy_public import vacancy_public_json_requires_employer_test
+
 
 def _safe_str(val: Any, default: str = "") -> str:
     return str(val) if val is not None else default
@@ -121,6 +123,7 @@ def map_api_vacancy_to_orm_fields(api_response: dict) -> dict[str, Any]:
         "published_at": _parse_published_at(api_response.get("published_at")),
         "work_format": api_response.get("work_format") or None,
         "professional_roles": api_response.get("professional_roles") or None,
+        "has_test": vacancy_public_json_requires_employer_test(api_response),
     }
 
     return {

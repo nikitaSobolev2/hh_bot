@@ -1,4 +1,4 @@
-"""Celery task: sync HH applicant negotiations (responded vacancies) into hh_application_attempts."""
+"""Celery task: sync HH negotiations into hh_application_attempts."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from src.repositories.hh_application_attempt import HhApplicationAttemptReposito
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.services.autoparse.negotiations_liked_merge import merge_liked_from_negotiations_sync
+from src.services.autoparse.negotiations_vacancy_import import fetch_merged_vac_dicts_for_hh_ids
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh_ui.applicant_negotiations_http import (
     fetch_all_negotiation_vacancy_cards,
@@ -37,7 +38,10 @@ logger = get_logger(__name__)
 _SYNC_RESUME_PLACEHOLDER = "sync"
 
 
-def _basic_negotiations_vacancy_dict(hh_vacancy_id: str, card: dict[str, str | None] | None) -> dict:
+def _basic_negotiations_vacancy_dict(
+    hh_vacancy_id: str,
+    card: dict[str, str | None] | None,
+) -> dict:
     card = card or {}
     return {
         "hh_vacancy_id": hh_vacancy_id,
@@ -69,6 +73,7 @@ async def _sync_negotiations_async(
     basic_cards_by_id: dict[str, dict[str, str | None]] = {}
     vacancy_ids = prefetched_vacancy_ids
     enrich_vacancy_details = False
+    negotiation_browser_storage: dict | None = None
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
         enrich_vacancy_details = bool(
@@ -93,6 +98,8 @@ async def _sync_negotiations_async(
                 return {"status": "error", "reason": "decrypt_failed"}
         if not storage:
             return {"status": "error", "reason": "no_browser_session"}
+
+        negotiation_browser_storage = storage
 
         config = HhUiApplyConfig.from_settings()
         if enrich_vacancy_details:
@@ -151,16 +158,44 @@ async def _sync_negotiations_async(
         if not company or company.user_id != user_id:
             return {"status": "error", "reason": "company_not_found"}
         vac_repo = AutoparsedVacancyRepository(session)
-        already = await vac_repo.hh_vacancy_ids_already_in_company(autoparse_company_id, vacancy_ids)
+        already = await vac_repo.hh_vacancy_ids_already_in_company(
+            autoparse_company_id,
+            vacancy_ids,
+        )
 
     missing = sorted(vacancy_ids - already)
     fetched: dict[str, dict] = {}
     if missing:
         if enrich_vacancy_details:
-            from src.services.autoparse.negotiations_vacancy_import import fetch_merged_vac_dicts_for_hh_ids
+            vac_parse_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
+            import_storage: dict | None = None
+            if vac_parse_mode == "web":
+                import_storage = negotiation_browser_storage
+                if import_storage is None:
+                    async with session_factory() as session:
+                        acc_repo = HhLinkedAccountRepository(session)
+                        acc = await acc_repo.get_by_id(hh_linked_account_id)
+                        if not acc or acc.user_id != user_id:
+                            return {"status": "error", "reason": "account_not_found"}
+                        if not acc.browser_storage_enc:
+                            return {"status": "error", "reason": "no_browser_session"}
+                        try:
+                            cipher = HhTokenCipher(settings.hh_token_encryption_key)
+                            import_storage = decrypt_browser_storage(
+                                acc.browser_storage_enc, cipher
+                            )
+                        except Exception as exc:
+                            logger.warning("negotiations_sync_decrypt_failed", error=str(exc)[:200])
+                            return {"status": "error", "reason": "decrypt_failed"}
+                    if not import_storage:
+                        return {"status": "error", "reason": "no_browser_session"}
 
             try:
-                fetched = await fetch_merged_vac_dicts_for_hh_ids(missing)
+                fetched = await fetch_merged_vac_dicts_for_hh_ids(
+                    missing,
+                    parse_mode=vac_parse_mode,
+                    storage_state=import_storage,
+                )
             except HHCaptchaRequiredError as exc:
                 logger.warning(
                     "negotiations_sync_fetch_aborted_captcha",

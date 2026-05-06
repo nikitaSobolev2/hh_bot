@@ -42,6 +42,20 @@ class ParsingExtractor:
         self._ai = ai_client or AIClient()
         self._browser_storage_state = browser_storage_state
 
+    @staticmethod
+    def _vacancy_parse_mode() -> str:
+        return "api" if settings.hh_api_vacancy_parsing_enabled else "web"
+
+    def _http_client_kwargs(self) -> dict:
+        if self._vacancy_parse_mode() == "web" and self._browser_storage_state:
+            from src.services.hh_ui.applicant_http import httpx_cookies_from_storage_state
+
+            return {
+                "cookies": httpx_cookies_from_storage_state(self._browser_storage_state),
+                "follow_redirects": True,
+            }
+        return {}
+
     async def aclose(self) -> None:
         await close_ai_client(self._ai)
 
@@ -117,6 +131,8 @@ class ParsingExtractor:
                 keyword_filter,
                 target_count,
                 blacklisted_ids=blacklisted_ids,
+                parse_mode=self._vacancy_parse_mode(),
+                storage_state=self._browser_storage_state,
             )
             skip_count = 0
 
@@ -167,6 +183,8 @@ class ParsingExtractor:
                     start_page=start_page,
                     blacklisted_ids=blacklisted,
                     exclude_ids=seen_ids if seen_ids else None,
+                    storage_state=self._browser_storage_state,
+                    parse_mode=self._vacancy_parse_mode(),
                 )
                 if not batch:
                     if not has_more:
@@ -264,7 +282,7 @@ class ParsingExtractor:
                 page_data = await self._scraper.parse_vacancy_page(
                     client,
                     detail_url,
-                    parse_mode="api",
+                    parse_mode=self._vacancy_parse_mode(),
                     storage_state=self._browser_storage_state,
                 )
             if not page_data:
@@ -307,7 +325,7 @@ class ParsingExtractor:
                 orm_fields=orm_fields,
             )
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**self._http_client_kwargs()) as client:
             for batch_start in range(0, len(vacancies_to_process), _COMPAT_BATCH_SIZE):
                 batch = vacancies_to_process[batch_start : batch_start + _COMPAT_BATCH_SIZE]
                 partials = await asyncio.gather(*[_scrape_one(client, vac) for vac in batch])

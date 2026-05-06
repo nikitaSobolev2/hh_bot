@@ -28,3 +28,17 @@ def test_sync_setting_to_runtime_preserves_int_hh_ui_apply_max() -> None:
         assert settings.hh_ui_apply_max_per_day == 99
     finally:
         settings.hh_ui_apply_max_per_day = original
+
+
+def test_sync_setting_to_runtime_preserves_bool_hh_api_vacancy_parsing() -> None:
+    original = settings.hh_api_vacancy_parsing_enabled
+    try:
+        sync_setting_to_runtime("hh_api_vacancy_parsing_enabled", False)
+        assert settings.hh_api_vacancy_parsing_enabled is False
+        assert isinstance(settings.hh_api_vacancy_parsing_enabled, bool)
+
+        sync_setting_to_runtime("hh_api_vacancy_parsing_enabled", True)
+        assert settings.hh_api_vacancy_parsing_enabled is True
+        assert isinstance(settings.hh_api_vacancy_parsing_enabled, bool)
+    finally:
+        settings.hh_api_vacancy_parsing_enabled = original

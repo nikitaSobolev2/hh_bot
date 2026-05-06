@@ -1288,6 +1288,7 @@ class HHScraper:
         blacklisted_ids: set[str] | None = None,
         exclude_ids: set[str] | None = None,
         storage_state: dict | None = None,
+        parse_mode: str = "api",
     ) -> tuple[list[dict[str, str]], int, bool]:
         """Collect a batch of vacancy URLs for incremental fetching.
 
@@ -1305,6 +1306,93 @@ class HHScraper:
         seen_urls: set[str] = set()
         page = start_page
         last_total_pages: int | None = None
+
+        if parse_mode == "web":
+            cfg = HhUiApplyConfig.from_settings()
+            while len(collected) < batch_size:
+                if page >= _MAX_PAGES:
+                    return collected[:batch_size], page, False
+
+                url = self._build_page_url(base_url, page)
+                logger.info(
+                    "Fetching search page",
+                    url=url,
+                    page=page + 1,
+                    parse_mode=parse_mode,
+                    has_cookies=bool(storage_state),
+                )
+                rendered = await asyncio.to_thread(
+                    render_search_page_with_storage,
+                    storage_state=storage_state,
+                    config=cfg,
+                    url=url,
+                )
+                if rendered.html is None:
+                    logger.warning(
+                        "Web vacancy search browser fetch failed",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        has_cookies=bool(storage_state),
+                        error=rendered.error,
+                    )
+                    return collected[:batch_size], page, False
+                if rendered.final_url and url_suggests_login_page(rendered.final_url):
+                    logger.warning(
+                        "Web vacancy search redirected to login",
+                        page=page + 1,
+                        url=url,
+                        final_url=rendered.final_url,
+                        parse_mode=parse_mode,
+                        has_cookies=bool(storage_state),
+                    )
+                    return collected[:batch_size], page, False
+                soup = BeautifulSoup(rendered.html, "html.parser")
+                page_results = self._extract_vacancies_from_page(soup, keyword)
+                raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
+                page_had_results = bool(page_results) or raw_blocks > 0
+
+                if not page_had_results:
+                    logger.info(
+                        "No vacancy items on page",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                    )
+                    return collected[:batch_size], page, False
+
+                self._collect_new_from_page(
+                    page_results,
+                    seen_urls,
+                    skip_ids,
+                    set(),
+                    collected,
+                    batch_size,
+                )
+
+                logger.info(
+                    "Search page scraped",
+                    page=page + 1,
+                    url=url,
+                    final_url=rendered.final_url,
+                    parse_mode=parse_mode,
+                    raw_blocks=raw_blocks,
+                    cards_before_scroll=rendered.cards_before_scroll,
+                    cards_after_scroll=rendered.cards_after_scroll,
+                    keyword_matched=len(page_results),
+                    blacklisted_skipped=0,
+                    new=len(collected),
+                    total=len(collected),
+                    target=batch_size,
+                    has_cookies=bool(storage_state),
+                )
+
+                page += 1
+                if len(collected) >= batch_size:
+                    has_more = page_had_results and page < _MAX_PAGES
+                    return collected[:batch_size], page, has_more
+
+            return collected[:batch_size], page, False
 
         async with httpx.AsyncClient() as client:
             while len(collected) < batch_size:

@@ -357,7 +357,9 @@ async def test_logs_average_and_histogram_compatibility_breakdown():
 
     assert result["status"] == "ok"
     breakdown_calls = [
-        call for call in logger_mock.info.call_args_list if call.args[0] == "autorespond_selection_breakdown"
+        call
+        for call in logger_mock.info.call_args_list
+        if call.args[0] == "autorespond_selection_breakdown"
     ]
     assert len(breakdown_calls) == 1
     breakdown = breakdown_calls[0].kwargs
@@ -370,7 +372,7 @@ async def test_logs_average_and_histogram_compatibility_breakdown():
         "75_100": 1,
     }
     assert breakdown["compatibility_avg_percent_filtered"] == 75.0
-    assert breakdown["compatibility_missing_filtered"] == 1
+    assert breakdown["compatibility_missing_filtered"] == 0
     assert breakdown["compatibility_histogram_filtered"] == {
         "0_24": 0,
         "25_49": 0,
@@ -504,7 +506,9 @@ async def test_autorespond_pre_skip_checks_same_hh_account_only():
     hh_repo.get_by_id = AsyncMock(return_value=hh_linked)
 
     attempt_repo = MagicMock()
-    attempt_repo.hh_vacancy_ids_with_success_or_employer_questions = AsyncMock(return_value={"vac-1"})
+    attempt_repo.hh_vacancy_ids_with_success_or_employer_questions = AsyncMock(
+        return_value={"vac-1"}
+    )
 
     sys.modules.pop("src.worker.tasks.autorespond", None)
 

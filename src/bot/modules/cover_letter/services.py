@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.models.cover_letter_vacancy import CoverLetterVacancy
 from src.repositories.cover_letter_vacancy import CoverLetterVacancyRepository
 from src.services.parser.scraper import HHScraper
@@ -29,8 +30,9 @@ async def fetch_and_upsert_vacancy(
         return None
 
     scraper = HHScraper()
+    parse_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
     async with httpx.AsyncClient() as client:
-        page_data = await scraper.parse_vacancy_page(client, url)
+        page_data = await scraper.parse_vacancy_page(client, url, parse_mode=parse_mode)
 
     if not page_data:
         return None

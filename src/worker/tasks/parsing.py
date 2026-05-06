@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.config import settings
 from src.core.logging import get_logger
 from src.services.parser.scraper import HHCaptchaRequiredError
 from src.worker.app import celery_app
@@ -217,11 +218,14 @@ async def _run_parsing_company_async(
             )
         elif not use_compat:
             scraper = HHScraper()
+            list_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
             vacancies = await scraper.collect_vacancy_urls(
                 company.search_url,
                 company.keyword_filter,
                 company.target_count,
                 blacklisted_ids=blacklisted_ids,
+                parse_mode=list_mode,
+                storage_state=None,
             )
             resume_from = (vacancies, 0) if vacancies else None
 

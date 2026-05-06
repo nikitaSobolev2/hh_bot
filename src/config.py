@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     # DB-synced via admin toggle (see AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS)
     hh_ui_debug_playwright_screenshots: bool = False
     negotiations_sync_fetch_vacancy_details: bool = False
+    # When False, vacancy list + detail scraping use web/Playwright paths only (no public API JSON).
+    hh_api_vacancy_parsing_enabled: bool = True
     hh_ui_debug_screenshot_dir: str = str(_DEFAULT_PLAYWRIGHT_DEBUG_DIR)
 
     # HH server-side login assist (Playwright; optional noVNC — docs/HH_LOGIN_ASSIST.md)

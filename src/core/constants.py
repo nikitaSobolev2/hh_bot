@@ -193,6 +193,7 @@ class AppSettingKey(StrEnum):
     # Per-user daily cap for UI applies (Redis counter); 0 = unlimited (admin)
     HH_UI_APPLY_MAX_PER_DAY = "hh_ui_apply_max_per_day"
     NEGOTIATIONS_SYNC_FETCH_VACANCY_DETAILS = "negotiations_sync_fetch_vacancy_details"
+    HH_API_VACANCY_PARSING_ENABLED = "hh_api_vacancy_parsing_enabled"
 
 
 # ---------------------------------------------------------------------------

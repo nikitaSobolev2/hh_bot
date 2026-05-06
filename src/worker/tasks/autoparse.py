@@ -7,15 +7,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.core.redis import create_sync_redis
-from src.config import settings
+from src.services.celery_active import celery_task_id_known_to_workers
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.hh_captcha_retry import celery_captcha_retry_countdown
-from src.services.celery_active import celery_task_id_known_to_workers
 from src.worker.utils import run_async
 
 logger = get_logger(__name__)
@@ -175,7 +175,7 @@ def run_autoparse_company(self, company_id: int, notify_user_id: int | None = No
         )
         raise self.retry(exc=exc, countdown=countdown) from exc
     except SoftTimeLimitExceeded:
-        # Async finally usually runs; this is a fallback if the worker raised before coroutine cleanup.
+        # Fallback if worker raised before coroutine cleanup (async finally usually runs).
         logger.warning(
             "Autoparse run company Celery soft time limit exceeded",
             company_id=company_id,
@@ -222,6 +222,7 @@ def _build_autoparsed_vacancy(
     return AutoparsedVacancy(
         autoparse_company_id=company_id,
         hh_vacancy_id=vac["hh_vacancy_id"],
+        needs_employer_questions=bool(of.get("has_test")),
         url=vac.get("url", ""),
         title=vac.get("title", ""),
         description=vac.get("description", ""),
@@ -400,7 +401,7 @@ async def _run_autoparse_company_async(
     try:
 
         async def _run_lock_heartbeat() -> None:
-            """Sliding TTL on Redis run lock — covers long search + pipeline without a fixed wall clock."""
+            """Renew Redis run lock TTL while task runs (sliding window)."""
             interval = settings.autoparse_run_company_lock_renew_interval_seconds
             while True:
                 await asyncio.sleep(interval)
@@ -446,6 +447,9 @@ async def _run_autoparse_company_async(
                 return {"status": "skipped", "company_id": company_id}
 
             parse_mode = company.parse_mode or "api"
+            if not settings.hh_api_vacancy_parsing_enabled:
+                parse_mode = "web"
+            detail_parse_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
             resume_filter_id = _search_url_resume_id(company.search_url)
             web_storage = None
 
@@ -474,7 +478,9 @@ async def _run_autoparse_company_async(
                 hh_repo = HhLinkedAccountRepository(session)
                 hh_acc = await hh_repo.get_by_id(company.parse_hh_linked_account_id)
                 session_missing = (
-                    not hh_acc or hh_acc.user_id != company.user_id or not hh_acc.browser_storage_enc
+                    not hh_acc
+                    or hh_acc.user_id != company.user_id
+                    or not hh_acc.browser_storage_enc
                 )
                 if parse_mode == "web" and session_missing:
                     logger.warning(
@@ -488,9 +494,16 @@ async def _run_autoparse_company_async(
                         await _send_run_failure_notification(
                             bot_token=settings.bot_token,
                             chat_id=user.telegram_id,
-                            text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                            text=get_text(
+                                "autoparse-run-error-no-session",
+                                user.language_code or "ru",
+                            ),
                         )
-                    return {"status": "error", "reason": "no_browser_session", "company_id": company_id}
+                    return {
+                        "status": "error",
+                        "reason": "no_browser_session",
+                        "company_id": company_id,
+                    }
                 if not session_missing:
                     try:
                         cipher = HhTokenCipher(settings.hh_token_encryption_key)
@@ -507,9 +520,16 @@ async def _run_autoparse_company_async(
                                 await _send_run_failure_notification(
                                     bot_token=settings.bot_token,
                                     chat_id=user.telegram_id,
-                                    text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                                    text=get_text(
+                                        "autoparse-run-error-no-session",
+                                        user.language_code or "ru",
+                                    ),
                                 )
-                            return {"status": "error", "reason": "decrypt_failed", "company_id": company_id}
+                            return {
+                                "status": "error",
+                                "reason": "decrypt_failed",
+                                "company_id": company_id,
+                            }
                         logger.warning(
                             "Autoparse API parse optional browser session decrypt failed",
                             company_id=company_id,
@@ -530,9 +550,16 @@ async def _run_autoparse_company_async(
                         await _send_run_failure_notification(
                             bot_token=settings.bot_token,
                             chat_id=user.telegram_id,
-                            text=get_text("autoparse-run-error-no-session", user.language_code or "ru"),
+                            text=get_text(
+                                "autoparse-run-error-no-session",
+                                user.language_code or "ru",
+                            ),
                         )
-                    return {"status": "error", "reason": "no_browser_session", "company_id": company_id}
+                    return {
+                        "status": "error",
+                        "reason": "no_browser_session",
+                        "company_id": company_id,
+                    }
                 session_status, _ = await asyncio.to_thread(
                     check_negotiations_browser_session_available,
                     web_storage,
@@ -556,7 +583,11 @@ async def _run_autoparse_company_async(
                                 user.language_code or "ru",
                             ),
                         )
-                    return {"status": "error", "reason": "session_expired", "company_id": company_id}
+                    return {
+                        "status": "error",
+                        "reason": "session_expired",
+                        "company_id": company_id,
+                    }
 
         if (
             not suppress_progress
@@ -588,6 +619,7 @@ async def _run_autoparse_company_async(
             "Autoparse company starting",
             company_id=company_id,
             parse_mode=parse_mode,
+            detail_parse_mode=detail_parse_mode,
             keyword_check_enabled=(company.keyword_check_enabled is not False),
             resume_filter=bool(resume_filter_id),
             hh_linked_account_id=company.parse_hh_linked_account_id,
@@ -599,7 +631,7 @@ async def _run_autoparse_company_async(
 
         parser = HHParserService(
             parse_mode=parse_mode,
-            detail_parse_mode="api",
+            detail_parse_mode=detail_parse_mode,
             storage_state=web_storage,
         )
         scraper = parser._scraper

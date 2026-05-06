@@ -43,7 +43,11 @@ MANAGED_SETTINGS = [
             (0, "admin-hh-ui-unlimited"),
         ],
     ),
-    ("hh_ui_debug_playwright_screenshots", "Debug Playwright Screenshots (save on errors)", "toggle"),
+    (
+        "hh_ui_debug_playwright_screenshots",
+        "Debug Playwright Screenshots (save on errors)",
+        "toggle",
+    ),
     (
         "hh_ui_debug_send_error_screenshot_to_user",
         "HH UI: send error screenshot to user (Telegram)",
@@ -52,6 +56,11 @@ MANAGED_SETTINGS = [
     (
         "negotiations_sync_fetch_vacancy_details",
         "Negotiations Sync: fetch vacancy details via public API",
+        "toggle",
+    ),
+    (
+        "hh_api_vacancy_parsing_enabled",
+        "HH: use public API for vacancy parsing (list + detail)",
         "toggle",
     ),
 ]

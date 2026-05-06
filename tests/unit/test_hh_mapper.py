@@ -116,3 +116,33 @@ class TestMapApiVacancyToOrmFields:
         assert of["salary_to"] is None
         assert of["salary_currency"] == "RUR"
         assert of["salary_gross"] is True
+
+    def test_maps_has_test_true_from_api_flag(self):
+        api_response = {
+            "id": "t1",
+            "employer": {"id": "1", "name": "X"},
+            "area": {"id": "1", "name": "M"},
+            "has_test": True,
+        }
+        result = map_api_vacancy_to_orm_fields(api_response)
+        assert result["orm_fields"]["has_test"] is True
+
+    def test_maps_has_test_true_from_test_required(self):
+        api_response = {
+            "id": "t2",
+            "employer": {"id": "1", "name": "X"},
+            "area": {"id": "1", "name": "M"},
+            "has_test": False,
+            "test": {"required": True},
+        }
+        result = map_api_vacancy_to_orm_fields(api_response)
+        assert result["orm_fields"]["has_test"] is True
+
+    def test_maps_has_test_false_when_absent(self):
+        api_response = {
+            "id": "t3",
+            "employer": {"id": "1", "name": "X"},
+            "area": {"id": "1", "name": "M"},
+        }
+        result = map_api_vacancy_to_orm_fields(api_response)
+        assert result["orm_fields"]["has_test"] is False

@@ -257,6 +257,8 @@ class TestRunAutoparseCompanyLock:
         company.keyword_check_enabled = True
         company.total_runs = 0
         company.total_vacancies_found = 0
+        company.parse_hh_linked_account_id = None
+        company.parse_mode = "api"
         return company
 
     @pytest.mark.asyncio
