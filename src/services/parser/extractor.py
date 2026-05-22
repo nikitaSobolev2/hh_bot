@@ -11,7 +11,7 @@ from src.core.logging import get_logger
 from src.schemas.vacancy import PipelineResult, VacancyData, build_vacancy_api_context
 from src.services.ai.client import AIClient, close_ai_client
 from src.services.ai.prompts import VacancyCompatInput
-from src.services.parser.scraper import HHScraper
+from src.services.parser.scraper import HHScraper, OnSearchPageCallback
 
 logger = get_logger(__name__)
 
@@ -50,6 +50,19 @@ class ParsingExtractor:
         if self._browser_storage_state:
             return "web"
         return self._default_vacancy_parse_mode()
+
+    @staticmethod
+    def _search_page_heartbeat(
+        on_page_scraped: OnProgressCallback | None,
+        target_count: int,
+    ) -> OnSearchPageCallback | None:
+        if on_page_scraped is None:
+            return None
+
+        async def _heartbeat() -> None:
+            await on_page_scraped(0, target_count)
+
+        return _heartbeat
 
     def _http_client_kwargs(self) -> dict:
         if self._vacancy_parse_mode() == "web" and self._browser_storage_state:
@@ -131,6 +144,7 @@ class ParsingExtractor:
         if resume_from is not None:
             vacancies, skip_count = resume_from
         else:
+            search_heartbeat = self._search_page_heartbeat(on_page_scraped, target_count)
             vacancies = await self._scraper.collect_vacancy_urls(
                 search_url,
                 keyword_filter,
@@ -138,6 +152,7 @@ class ParsingExtractor:
                 blacklisted_ids=blacklisted_ids,
                 parse_mode=self._vacancy_parse_mode(),
                 storage_state=self._browser_storage_state,
+                on_search_page_scraped=search_heartbeat,
             )
             skip_count = 0
 
@@ -180,6 +195,7 @@ class ParsingExtractor:
         else:
             seen_ids: set[str] = set()
             start_page = 0
+            search_heartbeat = self._search_page_heartbeat(on_page_scraped, target_count)
             while True:
                 batch, next_page, has_more = await self._scraper.collect_vacancy_urls_batch(
                     base_url=search_url,
@@ -190,6 +206,7 @@ class ParsingExtractor:
                     exclude_ids=seen_ids if seen_ids else None,
                     storage_state=self._browser_storage_state,
                     parse_mode=self._vacancy_parse_mode(),
+                    on_search_page_scraped=search_heartbeat,
                 )
                 if not batch:
                     if not has_more:

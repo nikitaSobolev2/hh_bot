@@ -234,6 +234,10 @@ async def _run_parsing_company_async(
             )
         elif not use_compat:
             scraper = HHScraper()
+
+            async def _on_search_page_progress() -> None:
+                await record_staleness_progress(staleness_redis, task_key)
+
             list_mode = (
                 "web"
                 if web_storage
@@ -246,6 +250,7 @@ async def _run_parsing_company_async(
                 blacklisted_ids=blacklisted_ids,
                 parse_mode=list_mode,
                 storage_state=web_storage,
+                on_search_page_scraped=_on_search_page_progress,
             )
             resume_from = (vacancies, 0) if vacancies else None
 
@@ -265,6 +270,7 @@ async def _run_parsing_company_async(
                 await progress.update_bar(task_key, 0, current, display_total)
 
         async def _on_urls_fetched(new_urls: list[dict]) -> None:
+            await record_staleness_progress(staleness_redis, task_key)
             # Do NOT extend vacancies here: extractor already did vacancies.extend(batch)
             # before calling this callback. Extending again would duplicate URLs.
             if new_urls:

@@ -10,6 +10,7 @@ import asyncio
 import json
 import random
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -30,6 +31,8 @@ from src.services.parser.keyword_match import matches_keyword_expression
 from src.worker.circuit_breaker import CircuitBreaker
 
 logger = get_logger(__name__)
+
+OnSearchPageCallback = Callable[[], Awaitable[None]]
 
 HH_VACANCY_RE = re.compile(r"https?://(?:[a-z]+\.)?hh\.ru/vacancy/(\d+)")
 SALARY_CLASS_RE = re.compile(r"magritte-text___")
@@ -1088,6 +1091,7 @@ class HHScraper:
         known_ids_to_include: set[str] | None = None,
         parse_mode: str = "api",
         storage_state: dict | None = None,
+        on_search_page_scraped: OnSearchPageCallback | None = None,
     ) -> list[dict[str, str]]:
         """Collect vacancy URLs from search pages.
 
@@ -1188,6 +1192,7 @@ class HHScraper:
                     target=target_count,
                     has_cookies=bool(storage_state),
                 )
+                await self._notify_search_page_progress(on_search_page_scraped)
                 page += 1
         else:
             async with httpx.AsyncClient() as client:
@@ -1271,7 +1276,7 @@ class HHScraper:
                         target=target_count,
                         has_cookies=bool(storage_state),
                     )
-
+                    await self._notify_search_page_progress(on_search_page_scraped)
                     page += 1
 
         if not known:
@@ -1289,6 +1294,7 @@ class HHScraper:
         exclude_ids: set[str] | None = None,
         storage_state: dict | None = None,
         parse_mode: str = "api",
+        on_search_page_scraped: OnSearchPageCallback | None = None,
     ) -> tuple[list[dict[str, str]], int, bool]:
         """Collect a batch of vacancy URLs for incremental fetching.
 
@@ -1387,6 +1393,7 @@ class HHScraper:
                     has_cookies=bool(storage_state),
                 )
 
+                await self._notify_search_page_progress(on_search_page_scraped)
                 page += 1
                 if len(collected) >= batch_size:
                     has_more = page_had_results and page < _MAX_PAGES
@@ -1449,6 +1456,7 @@ class HHScraper:
                     target=batch_size,
                 )
 
+                await self._notify_search_page_progress(on_search_page_scraped)
                 page += 1
 
         if last_total_pages and last_total_pages > 0:
@@ -1456,6 +1464,13 @@ class HHScraper:
         else:
             has_more = page < _MAX_PAGES
         return collected[:batch_size], page, has_more
+
+    @staticmethod
+    async def _notify_search_page_progress(
+        callback: OnSearchPageCallback | None,
+    ) -> None:
+        if callback is not None:
+            await callback()
 
     async def parse_vacancy_page(
         self,
