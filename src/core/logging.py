@@ -3,8 +3,6 @@ import logging
 import sys
 
 import structlog
-from rich.console import Console
-from rich.logging import RichHandler
 
 from src.config import settings
 
@@ -65,10 +63,24 @@ class TelegramLogHandler(logging.Handler):
             pass
 
 
-def setup_logging() -> None:
+def setup_logging(*, force: bool = False) -> None:
+    """Configure structlog + root handlers.
+
+    *force*:
+        Clear root handlers and re-apply. Use in Celery worker children after
+        fork and when something has replaced ``sys.stderr`` (e.g. Celery's
+        stdio redirect): ``StreamHandler(sys.__stderr__)`` still writes the OS
+        stderr stream, unlike Rich's handler which follows ``sys.stderr``.
+    """
     global _CONFIGURED
-    if _CONFIGURED:
+    if _CONFIGURED and not force:
         return
+
+    if force:
+        root = logging.getLogger()
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+
     _CONFIGURED = True
 
     log_dir = settings.log_dir
@@ -104,15 +116,10 @@ def setup_logging() -> None:
         processor=structlog.dev.ConsoleRenderer(colors=True),
         foreign_pre_chain=shared_processors,
     )
-    console_handler = RichHandler(
-        console=Console(stderr=True),
-        rich_tracebacks=True,
-        tracebacks_show_locals=False,
-        show_time=True,
-        show_path=False,
-        markup=True,
-        level=logging.INFO,
-    )
+    # Real stderr FD — survives ``sys.stderr = Celery LoggingProxy`` and shows
+    # in ``docker logs``; RichHandler followed mutated ``sys.stderr`` and FileHandler
+    # still worked from its own file descriptor.
+    console_handler = logging.StreamHandler(sys.__stderr__)
     console_handler.setLevel(root_level)
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)

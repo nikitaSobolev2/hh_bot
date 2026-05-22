@@ -41,10 +41,11 @@ def _register_worker_managed_settings_loader() -> None:
 
     @worker_process_init.connect
     def _load_managed_settings_on_worker_start(**_kwargs: object) -> None:
-        # File + structlog (``logs/hh_bot.log``); Celery's ``--loglevel`` only affects its own stdout.
+        # File + structlog (``logs/hh_bot.log``).
+        # Celery ``--loglevel`` only affects worker bootstrap logs.
         from src.core.logging import setup_logging
 
-        setup_logging()
+        setup_logging(force=True)
 
         import asyncio
 
@@ -67,7 +68,7 @@ celery_app.conf.update(
         "hh_ui.apply_to_vacancy": {"queue": "hh_ui"},
     },
     task_track_started=True,
-    # In-repo callers fire-and-forget tasks and never fetch Celery return values via AsyncResult/.get().
+    # Callers fire-and-forget; they do not use AsyncResult/.get() for task return values.
     # Skip writing success tombstones to Redis; keep failures inspectable.
     task_ignore_result=True,
     task_store_errors_even_if_ignored=True,
