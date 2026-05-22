@@ -180,6 +180,22 @@ async def _run_parsing_company_async(
             bl_days = await settings_repo.get_value("blacklist_days", default=30)
             bl_until = (datetime.now(UTC) + timedelta(days=int(bl_days))).replace(tzinfo=None)
 
+            from src.services.hh.parse_browser_session import resolve_web_storage
+
+            web_storage = None
+            if company.parse_hh_linked_account_id is not None:
+                web_storage = await resolve_web_storage(
+                    session,
+                    user_id=user_id,
+                    account_id=company.parse_hh_linked_account_id,
+                )
+                if web_storage is None:
+                    logger.warning(
+                        "Parsing run missing browser session for linked account",
+                        company_id=parsing_company_id,
+                        hh_linked_account_id=company.parse_hh_linked_account_id,
+                    )
+
         task_key = f"parse:{parsing_company_id}"
         staleness_redis = create_staleness_redis()
         await record_staleness_progress(staleness_redis, task_key)
@@ -218,14 +234,18 @@ async def _run_parsing_company_async(
             )
         elif not use_compat:
             scraper = HHScraper()
-            list_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
+            list_mode = (
+                "web"
+                if web_storage
+                else ("api" if settings.hh_api_vacancy_parsing_enabled else "web")
+            )
             vacancies = await scraper.collect_vacancy_urls(
                 company.search_url,
                 company.keyword_filter,
                 company.target_count,
                 blacklisted_ids=blacklisted_ids,
                 parse_mode=list_mode,
-                storage_state=None,
+                storage_state=web_storage,
             )
             resume_from = (vacancies, 0) if vacancies else None
 
@@ -297,7 +317,7 @@ async def _run_parsing_company_async(
                 if await is_stale(staleness_redis, task_key, float(staleness_window)):
                     return
 
-        extractor = ParsingExtractor()
+        extractor = ParsingExtractor(browser_storage_state=web_storage)
         pipeline_coro = extractor.run_pipeline(
             search_url=company.search_url,
             keyword_filter=company.keyword_filter,

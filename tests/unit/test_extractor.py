@@ -97,6 +97,23 @@ def _make_compat_scraper(urls: list[dict], description: str = "desc", skills: li
     return scraper
 
 
+class TestVacancyParseMode:
+    def test_forces_web_mode_when_browser_storage_present(self):
+        from src.services.parser.extractor import ParsingExtractor
+
+        extractor = ParsingExtractor(browser_storage_state={"cookies": []})
+        assert extractor._vacancy_parse_mode() == "web"
+
+    def test_uses_global_setting_when_no_browser_storage(self):
+        from src.services.parser.extractor import ParsingExtractor
+
+        extractor = ParsingExtractor()
+        with patch("src.services.parser.extractor.settings.hh_api_vacancy_parsing_enabled", True):
+            assert extractor._vacancy_parse_mode() == "api"
+        with patch("src.services.parser.extractor.settings.hh_api_vacancy_parsing_enabled", False):
+            assert extractor._vacancy_parse_mode() == "web"
+
+
 class TestExtractorBatchCompat:
     """Tests for batch compatibility scoring in the extractor."""
 

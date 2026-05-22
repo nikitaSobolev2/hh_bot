@@ -5,6 +5,7 @@ class ParsingCallback(CallbackData, prefix="parsing"):
     action: str
     company_id: int = 0
     page: int = 0
+    aux_id: int = 0
 
 
 class FormatCallback(CallbackData, prefix="fmt"):

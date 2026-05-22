@@ -5,7 +5,6 @@ import contextlib
 import inspect
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 from src.config import settings
 from src.core.celery_async import normalize_celery_task_id
@@ -13,6 +12,7 @@ from src.core.i18n import get_text
 from src.core.logging import get_logger
 from src.core.redis import create_sync_redis
 from src.services.celery_active import celery_task_id_known_to_workers
+from src.services.hh.parse_browser_session import resolve_web_storage, search_url_resume_id
 from src.worker.app import celery_app
 from src.worker.base_task import HHBotTask
 from src.worker.hh_captcha_retry import celery_captcha_retry_countdown
@@ -40,18 +40,6 @@ return 0
 def _autoparse_pipeline_batch_size() -> int:
     n = settings.hh_autoparse_pipeline_batch_size
     return n if n > 0 else settings.hh_vacancy_detail_concurrency
-
-
-def _search_url_resume_id(url: str) -> str | None:
-    try:
-        values = parse_qs(urlparse(url).query).get("resume") or []
-    except ValueError:
-        return None
-    for value in values:
-        resume_id = value.strip()
-        if resume_id:
-            return resume_id
-    return None
 
 
 async def _await_if_needed(value: Any) -> Any:
@@ -343,12 +331,10 @@ async def _run_autoparse_company_async(
     from src.repositories.user import UserRepository
     from src.repositories.work_experience import WorkExperienceRepository
     from src.services.ai.client import AIClient, close_ai_client
-    from src.services.hh.crypto import HhTokenCipher
     from src.services.hh_ui.applicant_negotiations_http import (
         check_negotiations_browser_session_available,
     )
     from src.services.hh_ui.config import HhUiApplyConfig
-    from src.services.hh_ui.storage import decrypt_browser_storage
     from src.services.parser.hh_parser_service import HHParserService
     from src.services.parser.scraper import HHCaptchaRequiredError
     from src.services.task_checkpoint import TaskCheckpointService, create_checkpoint_redis
@@ -450,7 +436,7 @@ async def _run_autoparse_company_async(
             if not settings.hh_api_vacancy_parsing_enabled:
                 parse_mode = "web"
             detail_parse_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
-            resume_filter_id = _search_url_resume_id(company.search_url)
+            resume_filter_id = search_url_resume_id(company.search_url)
             web_storage = None
 
             vacancy_repo = AutoparsedVacancyRepository(session)
@@ -475,14 +461,12 @@ async def _run_autoparse_company_async(
             work_experiences = await we_repo.get_active_by_user(company.user_id)
 
             if company.parse_hh_linked_account_id:
-                hh_repo = HhLinkedAccountRepository(session)
-                hh_acc = await hh_repo.get_by_id(company.parse_hh_linked_account_id)
-                session_missing = (
-                    not hh_acc
-                    or hh_acc.user_id != company.user_id
-                    or not hh_acc.browser_storage_enc
+                web_storage = await resolve_web_storage(
+                    session,
+                    user_id=company.user_id,
+                    account_id=company.parse_hh_linked_account_id,
                 )
-                if parse_mode == "web" and session_missing:
+                if parse_mode == "web" and web_storage is None:
                     logger.warning(
                         "Autoparse web run missing browser session",
                         company_id=company_id,
@@ -504,39 +488,12 @@ async def _run_autoparse_company_async(
                         "reason": "no_browser_session",
                         "company_id": company_id,
                     }
-                if not session_missing:
-                    try:
-                        cipher = HhTokenCipher(settings.hh_token_encryption_key)
-                        web_storage = decrypt_browser_storage(hh_acc.browser_storage_enc, cipher)
-                    except Exception as exc:
-                        if parse_mode == "web":
-                            logger.warning(
-                                "Autoparse web session decrypt failed",
-                                company_id=company_id,
-                                hh_linked_account_id=company.parse_hh_linked_account_id,
-                                error=str(exc)[:200],
-                            )
-                            if user and notify_user_id is not None and pipeline_progress is None:
-                                await _send_run_failure_notification(
-                                    bot_token=settings.bot_token,
-                                    chat_id=user.telegram_id,
-                                    text=get_text(
-                                        "autoparse-run-error-no-session",
-                                        user.language_code or "ru",
-                                    ),
-                                )
-                            return {
-                                "status": "error",
-                                "reason": "decrypt_failed",
-                                "company_id": company_id,
-                            }
-                        logger.warning(
-                            "Autoparse API parse optional browser session decrypt failed",
-                            company_id=company_id,
-                            hh_linked_account_id=company.parse_hh_linked_account_id,
-                            error=str(exc)[:200],
-                        )
-                        web_storage = None
+                if web_storage is None and company.parse_hh_linked_account_id:
+                    logger.warning(
+                        "Autoparse API parse optional browser session unavailable",
+                        company_id=company_id,
+                        hh_linked_account_id=company.parse_hh_linked_account_id,
+                    )
 
             if parse_mode == "web" and resume_filter_id:
                 if not web_storage:

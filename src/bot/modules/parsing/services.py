@@ -10,6 +10,7 @@ from src.repositories.parsing import (
     ParsingCompanyRepository,
 )
 from src.repositories.work_experience import WorkExperienceRepository
+from src.services.hh.parse_browser_session import search_url_resume_id
 from src.services.parser.report import ReportGenerator
 
 
@@ -35,6 +36,7 @@ async def create_parsing_company(
     target_count: int,
     use_compatibility_check: bool = False,
     compatibility_threshold: int | None = None,
+    parse_hh_linked_account_id: int | None = None,
 ) -> int:
     repo = ParsingCompanyRepository(session)
     company = await repo.create(
@@ -46,6 +48,7 @@ async def create_parsing_company(
         status="pending",
         use_compatibility_check=use_compatibility_check,
         compatibility_threshold=compatibility_threshold,
+        parse_hh_linked_account_id=parse_hh_linked_account_id,
     )
     await session.commit()
     return company.id
@@ -104,6 +107,7 @@ async def clone_and_dispatch(
         target_count=target_count if target_count is not None else source.target_count,
         use_compatibility_check=final_use_compat,
         compatibility_threshold=final_threshold,
+        parse_hh_linked_account_id=source.parse_hh_linked_account_id,
     )
     await dispatch_parsing_task(
         new_id,
@@ -143,7 +147,12 @@ async def soft_delete_parsing(session: AsyncSession, company_id: int, user_id: i
     return True
 
 
-def format_company_detail(company: ParsingCompany, i18n: I18nContext) -> str:
+def format_company_detail(
+    company: ParsingCompany,
+    i18n: I18nContext,
+    *,
+    hh_account_label: str | None = None,
+) -> str:
     filter_val = company.keyword_filter or i18n.get("detail-filter-none")
     processed = str(company.vacancies_processed)
     total = str(company.target_count)
@@ -154,8 +163,10 @@ def format_company_detail(company: ParsingCompany, i18n: I18nContext) -> str:
         f"{i18n.get('detail-status', status=company.status)}\n"
         f"{i18n.get('detail-processed', processed=processed, total=total)}\n"
         f"{i18n.get('detail-filter', filter=filter_val)}\n"
-        f"{i18n.get('detail-created', date=created)}\n"
     )
+    if company.parse_hh_linked_account_id and hh_account_label:
+        text += f"{i18n.get('parsing-detail-hh-account', label=hh_account_label)}\n"
+    text += f"{i18n.get('detail-created', date=created)}\n"
     if company.completed_at:
         completed = company.completed_at.strftime("%Y-%m-%d %H:%M")
         text += f"{i18n.get('detail-completed', date=completed)}\n"
@@ -204,6 +215,13 @@ def format_confirmation(data: dict, include_blacklisted: bool, i18n: I18nContext
     threshold = data.get("compatibility_threshold")
     if data.get("use_compatibility_check") and threshold is not None:
         base += "\n" + i18n.get("parsing-confirm-compat", threshold=str(threshold))
+    hh_label = data.get("parse_hh_account_label")
+    if data.get("parse_hh_linked_account_id") and hh_label:
+        base += "\n" + i18n.get("parsing-confirm-hh-account", label=hh_label)
+    elif data.get("parse_hh_linked_account_id") is None and search_url_resume_id(
+        data.get("search_url") or ""
+    ):
+        base += "\n" + i18n.get("parsing-confirm-hh-account-skipped")
     return base
 
 

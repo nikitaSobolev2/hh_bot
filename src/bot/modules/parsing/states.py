@@ -5,6 +5,7 @@ class ParsingForm(StatesGroup):
     vacancy_title = State()
     search_url = State()
     keyword_filter = State()
+    hh_account = State()
     target_count = State()
     compat_check = State()
     compat_threshold = State()

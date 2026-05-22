@@ -43,8 +43,13 @@ class ParsingExtractor:
         self._browser_storage_state = browser_storage_state
 
     @staticmethod
-    def _vacancy_parse_mode() -> str:
+    def _default_vacancy_parse_mode() -> str:
         return "api" if settings.hh_api_vacancy_parsing_enabled else "web"
+
+    def _vacancy_parse_mode(self) -> str:
+        if self._browser_storage_state:
+            return "web"
+        return self._default_vacancy_parse_mode()
 
     def _http_client_kwargs(self) -> dict:
         if self._vacancy_parse_mode() == "web" and self._browser_storage_state:

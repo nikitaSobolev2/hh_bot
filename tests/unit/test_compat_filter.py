@@ -333,6 +333,7 @@ class TestParsingTaskCompatIntegration:
         company.is_deleted = False
         company.use_compatibility_check = True
         company.compatibility_threshold = 70
+        company.parse_hh_linked_account_id = None
 
         pipeline_result = PipelineResult(vacancies=[], keywords=[], skills=[])
         captured_kwargs: list[dict] = []
@@ -445,6 +446,7 @@ class TestParsingTaskCompatIntegration:
         company.is_deleted = False
         company.use_compatibility_check = False
         company.compatibility_threshold = None
+        company.parse_hh_linked_account_id = None
 
         pipeline_result = PipelineResult(vacancies=[], keywords=[], skills=[])
         captured_kwargs: list[dict] = []

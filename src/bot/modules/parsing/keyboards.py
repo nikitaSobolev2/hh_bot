@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.bot.callbacks.common import MenuCallback
+from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
 from src.bot.modules.parsing.callbacks import (
     FormatCallback,
     KeyPhrasesCallback,
@@ -521,3 +522,86 @@ def per_company_count_keyboard(company_id: int, i18n: I18nContext) -> InlineKeyb
             ],
         ]
     )
+
+
+def parsing_hh_account_keyboard(
+    accounts: list,
+    i18n: I18nContext,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for acc in accounts[:8]:
+        label = (acc.label or acc.hh_user_id)[:40]
+        if getattr(acc, "browser_storage_enc", None):
+            label = f"{label} {i18n.get('autoparse-parse-account-ready')}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=ParsingCallback(
+                        action="hh_account_pick",
+                        aux_id=acc.id,
+                    ).pack(),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("parsing-hh-account-skip"),
+                callback_data=ParsingCallback(action="hh_account_skip").pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-login-now"),
+                callback_data=ParsingCallback(action="hh_account_login_now").pack(),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-cancel"),
+                callback_data=MenuCallback(action="main").pack(),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def parsing_login_required_keyboard(i18n: I18nContext) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-login-now"),
+                callback_data=ParsingCallback(action="hh_account_login_now").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-continue-after-login"),
+                callback_data=ParsingCallback(action="hh_account_continue_after_login").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("parsing-hh-account-skip"),
+                callback_data=ParsingCallback(action="hh_account_skip").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("autoparse-parse-open-hh-accounts"),
+                callback_data=HhAccountCallback(action="menu").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=i18n.get("btn-cancel"),
+                callback_data=MenuCallback(action="main").pack(),
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -28,6 +28,9 @@ class ParsingCompany(Base):
     use_compatibility_check: Mapped[bool] = mapped_column(Boolean, default=False)
     compatibility_threshold: Mapped[int | None] = mapped_column(Integer, default=None)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    parse_hh_linked_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hh_linked_accounts.id", ondelete="SET NULL"), nullable=True
+    )
 
     user: Mapped[User] = relationship(back_populates="parsing_companies")
     vacancies: Mapped[list[ParsedVacancy]] = relationship(

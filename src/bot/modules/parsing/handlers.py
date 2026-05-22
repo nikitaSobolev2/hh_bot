@@ -1,4 +1,7 @@
+import contextlib
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +24,9 @@ from src.bot.modules.parsing.keyboards import (
     count_input_keyboard,
     format_choice_keyboard,
     language_selection_keyboard,
+    parsing_hh_account_keyboard,
     parsing_list_keyboard,
+    parsing_login_required_keyboard,
     parsing_pending_keyboard,
     per_company_count_keyboard,
     retry_compat_keyboard,
@@ -42,6 +47,9 @@ from src.bot.utils.limits import (
 )
 from src.core.i18n import I18nContext
 from src.models.user import User
+from src.repositories.hh_linked_account import HhLinkedAccountRepository
+from src.services.hh.login_assist import login_assist_available
+from src.services.hh.parse_browser_session import search_url_resume_id
 
 router = Router(name="parsing")
 
@@ -133,8 +141,192 @@ async def fsm_keyword_filter(
         keyword = ""
 
     await state.update_data(keyword_filter=keyword)
+    await _continue_parsing_hh_account_setup(
+        message, state=state, user=user, session=None, i18n=i18n
+    )
+
+
+async def _proceed_to_target_count(
+    target: CallbackQuery | Message,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
     await state.set_state(ParsingForm.target_count)
-    await message.answer(i18n.get("parsing-step4"))
+    text = i18n.get("parsing-step4")
+    if isinstance(target, CallbackQuery):
+        with contextlib.suppress(TelegramBadRequest):
+            await target.message.edit_text(text)
+        await target.answer()
+        return
+    await target.answer(text)
+
+
+async def _continue_parsing_hh_account_setup(
+    target: CallbackQuery | Message,
+    *,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession | None,
+    i18n: I18nContext,
+) -> None:
+    if session is None:
+        from src.db.engine import async_session_factory
+
+        async with async_session_factory() as session:
+            return await _continue_parsing_hh_account_setup(
+                target, state=state, user=user, session=session, i18n=i18n
+            )
+
+    data = await state.get_data()
+    url = data.get("search_url") or ""
+    if not search_url_resume_id(str(url)):
+        await state.update_data(parse_hh_linked_account_id=None)
+        await _proceed_to_target_count(target, state, i18n)
+        return
+
+    hh_repo = HhLinkedAccountRepository(session)
+    accounts = await hh_repo.list_active_for_user(user.id)
+    ready_accounts = [acc for acc in accounts if acc.browser_storage_enc]
+    preferred_account_id = data.get("parse_hh_linked_account_id")
+
+    if preferred_account_id:
+        for acc in ready_accounts:
+            if acc.id == preferred_account_id:
+                await state.update_data(
+                    parse_hh_linked_account_id=acc.id,
+                    parsing_selected_hh_account_id=acc.id,
+                )
+                await _proceed_to_target_count(target, state, i18n)
+                return
+
+    if len(ready_accounts) == 1:
+        await state.update_data(parse_hh_linked_account_id=ready_accounts[0].id)
+        await _proceed_to_target_count(target, state, i18n)
+        return
+
+    await state.set_state(ParsingForm.hh_account)
+
+    if len(accounts) > 1 or len(ready_accounts) > 1:
+        text = i18n.get("parsing-hh-account-pick")
+        kb = parsing_hh_account_keyboard(accounts, i18n)
+        if isinstance(target, CallbackQuery):
+            with contextlib.suppress(TelegramBadRequest):
+                await target.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+            await target.answer()
+            return
+        await target.answer(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    selected_account_id = accounts[0].id if accounts else None
+    await state.update_data(parsing_selected_hh_account_id=selected_account_id)
+    if accounts:
+        label = accounts[0].label or accounts[0].hh_user_id
+        text = i18n.get("autoparse-parse-login-for-account", label=label[:80])
+    else:
+        text = i18n.get("autoparse-parse-login-required")
+
+    kb = parsing_login_required_keyboard(i18n)
+    if isinstance(target, CallbackQuery):
+        with contextlib.suppress(TelegramBadRequest):
+            await target.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        await target.answer()
+        return
+    await target.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "hh_account_skip"))
+async def parsing_hh_account_skip(
+    callback: CallbackQuery,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    await state.update_data(parse_hh_linked_account_id=None)
+    await _proceed_to_target_count(callback, state, i18n)
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "hh_account_pick"))
+async def parsing_hh_account_pick(
+    callback: CallbackQuery,
+    callback_data: ParsingCallback,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    hh_repo = HhLinkedAccountRepository(session)
+    acc = await hh_repo.get_by_id(callback_data.aux_id)
+    if not acc or acc.user_id != user.id:
+        await callback.answer(i18n.get("autorespond-no-hh-account"), show_alert=True)
+        return
+
+    if acc.browser_storage_enc:
+        await state.update_data(
+            parse_hh_linked_account_id=acc.id,
+            parsing_selected_hh_account_id=acc.id,
+        )
+        await _proceed_to_target_count(callback, state, i18n)
+        return
+
+    await state.update_data(parsing_selected_hh_account_id=acc.id)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(
+            i18n.get("autoparse-parse-login-for-account", label=(acc.label or acc.hh_user_id)[:80]),
+            reply_markup=parsing_login_required_keyboard(i18n),
+            parse_mode="HTML",
+        )
+    await callback.answer()
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "hh_account_login_now"))
+async def parsing_hh_account_login_now(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    i18n: I18nContext,
+) -> None:
+    if not login_assist_available():
+        with contextlib.suppress(TelegramBadRequest):
+            await callback.message.edit_text(
+                i18n.get("autoparse-parse-no-login-assist"),
+                reply_markup=parsing_login_required_keyboard(i18n),
+            )
+        await callback.answer()
+        return
+
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.hh_login_assist import hh_login_assist_task
+
+    data = await state.get_data()
+    selected_account_id = data.get("parsing_selected_hh_account_id")
+
+    await callback.message.answer(
+        i18n.get("autoparse-parse-login-followup"),
+        reply_markup=parsing_login_required_keyboard(i18n),
+    )
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(i18n.get("autoparse-parse-login-started"))
+    await callback.answer()
+    await run_celery_task(
+        hh_login_assist_task,
+        user.id,
+        callback.message.chat.id,
+        callback.message.message_id,
+        i18n.locale,
+        hh_linked_account_id=selected_account_id,
+    )
+
+
+@router.callback_query(ParsingCallback.filter(F.action == "hh_account_continue_after_login"))
+async def parsing_hh_account_continue_after_login(
+    callback: CallbackQuery,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    await _continue_parsing_hh_account_setup(
+        callback, state=state, user=user, session=session, i18n=i18n
+    )
 
 
 @router.message(ParsingForm.target_count)
@@ -285,6 +477,16 @@ async def _confirm_and_launch(
     data = await state.get_data()
     await state.clear()
 
+    parse_hh_linked_account_id = data.get("parse_hh_linked_account_id")
+    parse_hh_account_label = None
+    if parse_hh_linked_account_id:
+        from src.repositories.hh_linked_account import HhLinkedAccountRepository
+
+        hh_repo = HhLinkedAccountRepository(session)
+        hh_acc = await hh_repo.get_by_id(parse_hh_linked_account_id)
+        if hh_acc and hh_acc.user_id == user.id:
+            parse_hh_account_label = (hh_acc.label or hh_acc.hh_user_id)[:80]
+
     company_id = await parsing_service.create_parsing_company(
         session=session,
         user_id=user.id,
@@ -294,6 +496,7 @@ async def _confirm_and_launch(
         target_count=data["target_count"],
         use_compatibility_check=data.get("use_compatibility_check", False),
         compatibility_threshold=data.get("compatibility_threshold"),
+        parse_hh_linked_account_id=parse_hh_linked_account_id,
     )
 
     await parsing_service.dispatch_parsing_task(
@@ -303,7 +506,11 @@ async def _confirm_and_launch(
         telegram_chat_id=message.chat.id,
     )
 
-    text = parsing_service.format_confirmation(data, include_blacklisted, i18n)
+    text = parsing_service.format_confirmation(
+        {**data, "parse_hh_account_label": parse_hh_account_label},
+        include_blacklisted,
+        i18n,
+    )
     await message.answer(text, reply_markup=back_to_menu_keyboard(i18n))
 
 
@@ -326,7 +533,18 @@ async def parsing_detail(
         await callback.answer(i18n.get("parsing-not-found"), show_alert=True)
         return
 
-    text = parsing_service.format_company_detail(company, i18n)
+    hh_account_label = None
+    if company.parse_hh_linked_account_id:
+        from src.repositories.hh_linked_account import HhLinkedAccountRepository
+
+        hh_repo = HhLinkedAccountRepository(session)
+        hh_acc = await hh_repo.get_by_id(company.parse_hh_linked_account_id)
+        if hh_acc and hh_acc.user_id == user.id:
+            hh_account_label = (hh_acc.label or hh_acc.hh_user_id)[:80]
+
+    text = parsing_service.format_company_detail(
+        company, i18n, hh_account_label=hh_account_label
+    )
     if company.status == "completed":
         kb = format_choice_keyboard(company.id, i18n)
     elif company.status == "failed":

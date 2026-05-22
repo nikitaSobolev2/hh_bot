@@ -1,6 +1,6 @@
 """Tests for the manual parsing task: blacklist logic and progress service integration."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -48,6 +48,7 @@ class TestManualParseBlacklist:
         company.use_compatibility_check = False
         company.compatibility_threshold = None
         company.is_deleted = False
+        company.parse_hh_linked_account_id = None
 
         settings_repo = AsyncMock()
 
@@ -193,6 +194,146 @@ class TestManualParseBlacklist:
         passed_blacklist = captured[0]
         assert not autoparse_ids.intersection(passed_blacklist)
 
+
+class TestParsingHhAccountSession:
+    @pytest.mark.asyncio
+    async def test_extractor_receives_browser_storage_when_account_linked(self):
+        captured_init: list[dict] = []
+
+        async def fake_run_pipeline(*_args, **_kwargs):
+            from src.schemas.vacancy import PipelineResult
+
+            return PipelineResult(vacancies=[], keywords=[], skills=[])
+
+        company = MagicMock()
+        company.vacancy_title = "Backend"
+        company.search_url = "https://hh.ru/search/vacancy?text=backend&resume=abc"
+        company.keyword_filter = "backend"
+        company.target_count = 10
+        company.status = "pending"
+        company.use_compatibility_check = False
+        company.compatibility_threshold = None
+        company.is_deleted = False
+        company.parse_hh_linked_account_id = 7
+
+        settings_repo = AsyncMock()
+
+        async def get_value(key, default=True):
+            vals = {
+                "task_parsing_enabled": True,
+                "cb_parsing_failure_threshold": 5,
+                "cb_parsing_recovery_timeout": 60,
+                "blacklist_days": 30,
+                "parsing_staleness_window_seconds": 180,
+            }
+            return vals.get(key, default)
+
+        settings_repo.get_value = get_value
+
+        bl_repo = AsyncMock()
+        bl_repo.get_active_ids = AsyncMock(return_value=set())
+
+        company_repo = AsyncMock()
+        company_repo.get_by_id = AsyncMock(return_value=company)
+        company_repo.update = AsyncMock()
+
+        task_repo = AsyncMock()
+        task_repo.get_by_idempotency_key = AsyncMock(return_value=None)
+
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        session.commit = AsyncMock()
+        session_factory = MagicMock(return_value=session)
+
+        mock_extractor_instance = MagicMock()
+        mock_extractor_instance.run_pipeline = AsyncMock(side_effect=fake_run_pipeline)
+        mock_extractor_instance.aclose = AsyncMock()
+
+        def capture_extractor_init(*_args, **kwargs):
+            captured_init.append(kwargs)
+            return mock_extractor_instance
+
+        with (
+            patch(
+                "src.worker.tasks.parsing._init_bot_and_locale",
+                new=AsyncMock(return_value=(None, "ru")),
+            ),
+            patch("src.worker.tasks.parsing._start_progress", new=AsyncMock(return_value=None)),
+            patch(
+                "src.worker.tasks.parsing._save_parsing_results",
+                new=AsyncMock(return_value=(0, 0, 0)),
+            ),
+            patch("src.worker.tasks.parsing._notify_user", new=AsyncMock()),
+            patch("src.worker.circuit_breaker.CircuitBreaker.is_call_allowed", return_value=True),
+            patch("src.worker.circuit_breaker.CircuitBreaker.record_success"),
+            patch(
+                "src.repositories.app_settings.AppSettingRepository",
+                return_value=settings_repo,
+            ),
+            patch("src.repositories.blacklist.BlacklistRepository", return_value=bl_repo),
+            patch(
+                "src.repositories.parsing.ParsingCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch("src.repositories.task.CeleryTaskRepository", return_value=task_repo),
+            patch(
+                "src.services.hh.parse_browser_session.resolve_web_storage",
+                new=AsyncMock(return_value={"cookies": []}),
+            ),
+            patch(
+                "src.services.parser.extractor.ParsingExtractor",
+                side_effect=capture_extractor_init,
+            ),
+            patch(
+                "src.services.task_checkpoint.TaskCheckpointService",
+                return_value=AsyncMock(
+                    load_parsing=AsyncMock(return_value=None),
+                    load_parsing_for_resume=AsyncMock(return_value=None),
+                    save_parsing=AsyncMock(),
+                    clear=AsyncMock(),
+                ),
+            ),
+            patch(
+                "src.services.task_checkpoint.create_checkpoint_redis",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.services.staleness_progress.create_staleness_redis",
+                return_value=MagicMock(set=AsyncMock(), get=AsyncMock(return_value=None)),
+            ),
+            patch(
+                "src.services.parser.scraper.HHScraper",
+                return_value=MagicMock(
+                    collect_vacancy_urls=AsyncMock(
+                        return_value=[
+                            {
+                                "url": "https://hh.ru/vacancy/1",
+                                "title": "Test",
+                                "hh_vacancy_id": "1",
+                            }
+                        ]
+                    )
+                ),
+            ),
+        ):
+            from src.worker.tasks.parsing import _run_parsing_company_async
+
+            fake_task = MagicMock()
+            fake_task.request.id = "test-id"
+            await _run_parsing_company_async(
+                session_factory,
+                fake_task,
+                parsing_company_id=1,
+                user_id=42,
+                include_blacklisted=False,
+                telegram_chat_id=0,
+            )
+
+        assert captured_init == [{"browser_storage_state": {"cookies": []}}]
+
+
+class TestManualParseCheckpointResume:
     @pytest.mark.asyncio
     async def test_resumes_from_checkpoint_when_load_parsing_for_resume_returns_data(self):
         """When load_parsing returns None (task_id mismatch) and load_parsing_for_resume
@@ -215,6 +356,7 @@ class TestManualParseBlacklist:
         company.use_compatibility_check = False
         company.compatibility_threshold = None
         company.is_deleted = False
+        company.parse_hh_linked_account_id = None
 
         settings_repo = AsyncMock()
 
@@ -454,6 +596,7 @@ class TestParsingStalenessCheck:
         company.use_compatibility_check = False
         company.compatibility_threshold = None
         company.is_deleted = False
+        company.parse_hh_linked_account_id = None
 
         settings_repo = AsyncMock()
 

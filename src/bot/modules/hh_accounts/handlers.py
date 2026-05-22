@@ -27,6 +27,7 @@ from src.models.user import User
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh.linked_account_browser_storage import persist_browser_storage_state_for_user
+from src.services.hh.login_assist import login_assist_available
 from src.services.hh.oauth_state import generate_state, store_state
 from src.services.hh.oauth_tokens import build_authorize_url
 from src.services.hh_ui.applicant_negotiations_http import check_negotiations_browser_session_available
@@ -66,14 +67,6 @@ def _browser_import_configured() -> bool:
     return bool(settings.hh_ui_apply_enabled and settings.hh_token_encryption_key)
 
 
-def _login_assist_available() -> bool:
-    return bool(
-        settings.hh_login_assist_enabled
-        and settings.hh_ui_apply_enabled
-        and settings.hh_token_encryption_key
-    )
-
-
 async def _hub_message(
     session: AsyncSession,
     user: User,
@@ -81,7 +74,7 @@ async def _hub_message(
 ) -> tuple[str, InlineKeyboardMarkup]:
     repo = HhLinkedAccountRepository(session)
     accounts = await repo.list_active_for_user(user.id)
-    show_remote = _login_assist_available()
+    show_remote = login_assist_available()
     if not accounts:
         return i18n.get("hh-accounts-empty"), hh_accounts_hub_keyboard(
             i18n, show_remote_login=show_remote
@@ -241,7 +234,7 @@ async def hh_replace_session(
     user: User,
     i18n: I18nContext,
 ) -> None:
-    if not _login_assist_available():
+    if not login_assist_available():
         await callback.answer(i18n.get("hh-login-assist-disabled"), show_alert=True)
         return
     repo = HhLinkedAccountRepository(session)
@@ -283,7 +276,7 @@ async def hh_remote_login(
     user: User,
     i18n: I18nContext,
 ) -> None:
-    if not _login_assist_available():
+    if not login_assist_available():
         await callback.answer(i18n.get("hh-login-assist-disabled"), show_alert=True)
         return
 

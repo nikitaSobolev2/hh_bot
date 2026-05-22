@@ -1,7 +1,6 @@
 """Handlers for the Autoparse feature."""
 
 import contextlib
-from urllib.parse import parse_qs, urlparse
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -43,7 +42,6 @@ from src.bot.modules.autoparse.keyboards import (
 )
 from src.bot.modules.autoparse.states import AutoparseEditForm, AutoparseForm, AutoparseSettingsForm
 from src.bot.modules.parsing import services as parsing_service
-from src.config import settings
 from src.bot.utils.limits import get_min_compat_range
 from src.core.i18n import I18nContext
 from src.models.autoparse import AutoparseCompany
@@ -55,6 +53,8 @@ from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.services.autoparse_delivery import revoke_scheduled_delivery_async
 from src.services.autoparse_feed_cards import build_feed_stats_card, create_feed_session
 from src.services.autoparse_use_cases import build_company_detail_view
+from src.services.hh.login_assist import login_assist_available
+from src.services.hh.parse_browser_session import search_url_resume_id
 
 router = Router(name="autoparse")
 router.include_router(feed_router)
@@ -70,26 +70,6 @@ def _truncate_for_edit_prompt(text: str, max_len: int = _EDIT_PROMPT_MAX_LEN) ->
     if len(t) <= max_len:
         return t
     return f"{t[:max_len]}…"
-
-
-def _search_url_resume_id(url: str) -> str | None:
-    try:
-        values = parse_qs(urlparse(url).query).get("resume") or []
-    except ValueError:
-        return None
-    for value in values:
-        resume_id = value.strip()
-        if resume_id:
-            return resume_id
-    return None
-
-
-def _login_assist_available() -> bool:
-    return bool(
-        settings.hh_login_assist_enabled
-        and settings.hh_ui_apply_enabled
-        and settings.hh_token_encryption_key
-    )
 
 
 def _parse_mode_label(i18n: I18nContext, mode: str) -> str:
@@ -281,7 +261,7 @@ async def _continue_web_parse_setup(
         or data.get("search_url")
         or ""
     )
-    if not _search_url_resume_id(str(url)):
+    if not search_url_resume_id(str(url)):
         await state.update_data(parse_pending_hh_linked_account_id=None)
         await _finalize_pending_parse_setup(
             target,
@@ -736,7 +716,7 @@ async def parse_login_now(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    if not _login_assist_available():
+    if not login_assist_available():
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(
                 i18n.get("autoparse-parse-no-login-assist"),

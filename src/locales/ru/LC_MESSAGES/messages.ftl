@@ -231,6 +231,12 @@ parsing-step3 =
     Пример: <code>frontend|backend,fullstack</code>
 
     Отправьте <code>-</code> чтобы пропустить фильтрацию:
+parsing-hh-account-pick =
+    Этот фильтр использует параметр <code>resume</code>, поэтому для парсинга нужен аккаунт HH с сохранённой браузерной сессией. Выберите аккаунт или пропустите:
+parsing-hh-account-skip = Пропустить (без сессии)
+parsing-confirm-hh-account = HH аккаунт: { $label }
+parsing-confirm-hh-account-skipped = HH аккаунт: не выбран (публичный парсинг)
+parsing-detail-hh-account = HH аккаунт: { $label }
 parsing-step4 =
     <b>Шаг 4/4</b>
 
