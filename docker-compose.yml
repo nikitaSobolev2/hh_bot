@@ -55,6 +55,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    entrypoint: ["/app/docker/entrypoint-app.sh"]
     command: python -m src
     logging:
       driver: json-file

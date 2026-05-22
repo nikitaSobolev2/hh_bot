@@ -31,6 +31,7 @@ USER appuser
 
 # Default image: bot and Celery workers (``celery`` + optional ``hh_ui`` queues; see docker-compose.yml).
 FROM base AS app
+RUN chmod +x /app/docker/entrypoint-app.sh
 RUN groupadd --gid 1000 appuser \
     && useradd --uid 1000 --gid appuser --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app
