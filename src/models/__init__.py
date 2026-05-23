@@ -27,6 +27,7 @@ from src.models.support import SupportAttachment, SupportMessage, SupportTicket
 from src.models.task import (
     BaseCeleryTask,
     CompanyCreateKeyPhrasesTask,
+    CompanyIntegrateDutiesTask,
     CompanyParseKeywordsFromDescriptionTask,
     CompanyParseTask,
     CoverLetterTask,
@@ -55,6 +56,7 @@ __all__ = [
     "BaseCeleryTask",
     "CompanyParseKeywordsFromDescriptionTask",
     "CompanyCreateKeyPhrasesTask",
+    "CompanyIntegrateDutiesTask",
     "CompanyParseTask",
     "CoverLetterTask",
     "InterviewQATask",

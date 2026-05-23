@@ -119,6 +119,8 @@ class AggregatedResult(Base):
     top_skills: Mapped[dict | None] = mapped_column(JSONB, default=None)
     key_phrases: Mapped[str | None] = mapped_column(Text, default=None)
     key_phrases_style: Mapped[str | None] = mapped_column(String(100), default=None)
+    integrated_duties: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    integrated_duties_at: Mapped[datetime | None] = mapped_column(default=None)
 
     parsing_company: Mapped[ParsingCompany] = relationship(back_populates="aggregated_result")
 

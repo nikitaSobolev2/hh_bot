@@ -11,6 +11,7 @@ from src.bot.keyboards.common import back_to_menu_keyboard
 from src.bot.modules.parsing import services as parsing_service
 from src.bot.modules.parsing.callbacks import (
     FormatCallback,
+    IntegrateDutiesCallback,
     KeyPhrasesCallback,
     ParsingCallback,
     WorkExperienceCallback,
@@ -23,6 +24,8 @@ from src.bot.modules.parsing.keyboards import (
     compat_check_keyboard,
     count_input_keyboard,
     format_choice_keyboard,
+    integrate_duties_apply_confirm_keyboard,
+    integrate_duties_result_keyboard,
     language_selection_keyboard,
     parsing_hh_account_keyboard,
     parsing_list_keyboard,
@@ -46,6 +49,7 @@ from src.bot.utils.limits import (
     get_max_work_experiences,
 )
 from src.core.i18n import I18nContext
+from src.models.parsing import AggregatedResult, ParsingCompany
 from src.models.user import User
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.hh.login_assist import login_assist_available
@@ -545,8 +549,15 @@ async def parsing_detail(
     text = parsing_service.format_company_detail(
         company, i18n, hh_account_label=hh_account_label
     )
+    has_integrated_duties = bool(
+        company.aggregated_result and company.aggregated_result.integrated_duties
+    )
     if company.status == "completed":
-        kb = format_choice_keyboard(company.id, i18n)
+        kb = format_choice_keyboard(
+            company.id,
+            i18n,
+            has_integrated_duties=has_integrated_duties,
+        )
     elif company.status == "failed":
         kb = retry_keyboard(company.id, i18n)
     else:
@@ -1296,4 +1307,140 @@ async def key_phrases_select_style(
         mode=callback_data.mode,
     )
     await callback.message.edit_text(i18n.get("keyphrase-generating"))
+    await callback.answer()
+
+
+# --------------- integrate duties into work experience ---------------
+
+
+async def _validate_integrate_duties_prerequisites(
+    session: AsyncSession,
+    user: User,
+    company_id: int,
+    i18n: I18nContext,
+) -> tuple[ParsingCompany | None, AggregatedResult | None, str | None]:
+    company = await parsing_service.get_company_for_user(session, company_id, user.id)
+    if not company or company.status != "completed":
+        return None, None, i18n.get("parsing-not-found")
+
+    agg = await parsing_service.get_aggregated_result(session, company_id)
+    if not agg or not parsing_service.get_top_keywords(agg):
+        return company, agg, i18n.get("integrate-duties-error-no-keywords")
+
+    work_experiences = await parsing_service.get_work_experiences_with_duties(session, user.id)
+    if not work_experiences:
+        return company, agg, i18n.get("integrate-duties-error-no-duties")
+
+    return company, agg, None
+
+
+@router.callback_query(IntegrateDutiesCallback.filter(F.action == "start"))
+async def integrate_duties_start(
+    callback: CallbackQuery,
+    callback_data: IntegrateDutiesCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    _, _, error = await _validate_integrate_duties_prerequisites(
+        session,
+        user,
+        callback_data.company_id,
+        i18n,
+    )
+    if error:
+        await callback.answer(error, show_alert=True)
+        return
+
+    await parsing_service.dispatch_integrate_duties_task(
+        company_id=callback_data.company_id,
+        user_id=user.id,
+        chat_id=callback.message.chat.id,
+    )
+    await callback.message.edit_text(i18n.get("integrate-duties-generating"))
+    await callback.answer()
+
+
+@router.callback_query(IntegrateDutiesCallback.filter(F.action == "view"))
+async def integrate_duties_view(
+    callback: CallbackQuery,
+    callback_data: IntegrateDutiesCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    from src.services.ai.duties_integration import format_integrated_duties_report
+
+    company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
+    agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
+    if not company or not agg or not agg.integrated_duties:
+        await callback.answer(i18n.get("integrate-duties-error-not-found"), show_alert=True)
+        return
+
+    locale = user.language_code or "ru"
+    report_text = format_integrated_duties_report(agg.integrated_duties, locale)
+    if len(report_text) > 4000:
+        report_text = report_text[:3900] + "\n…"
+
+    await callback.message.edit_text(
+        report_text,
+        reply_markup=integrate_duties_result_keyboard(
+            callback_data.company_id,
+            i18n,
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(IntegrateDutiesCallback.filter(F.action == "apply"))
+async def integrate_duties_apply(
+    callback: CallbackQuery,
+    callback_data: IntegrateDutiesCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
+    if not agg or not agg.integrated_duties:
+        await callback.answer(i18n.get("integrate-duties-error-not-found"), show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        i18n.get("integrate-duties-apply-confirm"),
+        reply_markup=integrate_duties_apply_confirm_keyboard(callback_data.company_id, i18n),
+    )
+    await callback.answer()
+
+
+@router.callback_query(IntegrateDutiesCallback.filter(F.action == "apply_confirm"))
+async def integrate_duties_apply_confirm(
+    callback: CallbackQuery,
+    callback_data: IntegrateDutiesCallback,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
+    agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
+    if not company or not agg or not agg.integrated_duties:
+        await callback.answer(i18n.get("integrate-duties-error-not-found"), show_alert=True)
+        return
+
+    updated = await parsing_service.apply_integrated_duties(
+        session,
+        user.id,
+        agg.integrated_duties,
+    )
+    if updated == 0:
+        await callback.answer(i18n.get("integrate-duties-apply-failed"), show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        i18n.get("integrate-duties-apply-success", count=str(updated)),
+        reply_markup=format_choice_keyboard(
+            company.id,
+            i18n,
+            has_integrated_duties=True,
+        ),
+    )
     await callback.answer()

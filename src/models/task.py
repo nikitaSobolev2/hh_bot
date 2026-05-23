@@ -73,6 +73,24 @@ class CompanyParseKeywordsFromDescriptionTask(BaseCeleryTask):
     __mapper_args__ = {"polymorphic_identity": "parse_keywords"}
 
 
+class CompanyIntegrateDutiesTask(BaseCeleryTask):
+    __tablename__ = "tasks_integrate_duties"
+
+    id: Mapped[int] = mapped_column(
+        ForeignKey("celery_tasks.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    parsing_company_id: Mapped[int] = mapped_column(
+        ForeignKey("parsing_companies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    generated_payload: Mapped[dict | None] = mapped_column(JSONB, default=None)
+
+    parsing_company: Mapped[ParsingCompany] = relationship(foreign_keys=[parsing_company_id])
+
+    __mapper_args__ = {"polymorphic_identity": "integrate_duties"}
+
+
 class CompanyCreateKeyPhrasesTask(BaseCeleryTask):
     __tablename__ = "tasks_create_key_phrases"
 

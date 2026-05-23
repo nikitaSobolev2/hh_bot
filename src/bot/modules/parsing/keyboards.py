@@ -8,6 +8,7 @@ from src.bot.callbacks.common import MenuCallback
 from src.bot.modules.hh_accounts.callbacks import HhAccountCallback
 from src.bot.modules.parsing.callbacks import (
     FormatCallback,
+    IntegrateDutiesCallback,
     KeyPhrasesCallback,
     ParsingCallback,
     WorkExperienceCallback,
@@ -80,33 +81,69 @@ def format_choice_keyboard(
     company_id: int,
     i18n: I18nContext | None = None,
     locale: str = "ru",
+    *,
+    has_integrated_duties: bool = False,
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=_t("btn-view-message", i18n, locale),
+                callback_data=FormatCallback(company_id=company_id, format="message").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-download-md", i18n, locale),
+                callback_data=FormatCallback(company_id=company_id, format="md").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-download-txt", i18n, locale),
+                callback_data=FormatCallback(company_id=company_id, format="txt").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-generate-keyphrases", i18n, locale),
+                callback_data=KeyPhrasesCallback(company_id=company_id, action="start").pack(),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=_t("btn-integrate-duties", i18n, locale),
+                callback_data=IntegrateDutiesCallback(
+                    company_id=company_id,
+                    action="start",
+                ).pack(),
+            )
+        ],
+    ]
+    if has_integrated_duties:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=_t("btn-view-message", i18n, locale),
-                    callback_data=FormatCallback(company_id=company_id, format="message").pack(),
+                    text=_t("btn-view-integrated-duties", i18n, locale),
+                    callback_data=IntegrateDutiesCallback(
+                        company_id=company_id,
+                        action="view",
+                    ).pack(),
                 )
-            ],
+            ]
+        )
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=_t("btn-download-md", i18n, locale),
-                    callback_data=FormatCallback(company_id=company_id, format="md").pack(),
+                    text=_t("btn-apply-integrated-duties", i18n, locale),
+                    callback_data=IntegrateDutiesCallback(
+                        company_id=company_id,
+                        action="apply",
+                    ).pack(),
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=_t("btn-download-txt", i18n, locale),
-                    callback_data=FormatCallback(company_id=company_id, format="txt").pack(),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=_t("btn-generate-keyphrases", i18n, locale),
-                    callback_data=KeyPhrasesCallback(company_id=company_id, action="start").pack(),
-                )
-            ],
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text=_t("btn-try-again", i18n, locale),
@@ -123,6 +160,59 @@ def format_choice_keyboard(
                 InlineKeyboardButton(
                     text=_t("btn-back", i18n, locale),
                     callback_data=MenuCallback(action="my_parsings").pack(),
+                )
+            ],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def integrate_duties_result_keyboard(
+    company_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-apply-integrated-duties", i18n, locale),
+                    callback_data=IntegrateDutiesCallback(
+                        company_id=company_id,
+                        action="apply",
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-back", i18n, locale),
+                    callback_data=ParsingCallback(action="detail", company_id=company_id).pack(),
+                )
+            ],
+        ]
+    )
+
+
+def integrate_duties_apply_confirm_keyboard(
+    company_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=_t("integrate-duties-btn-confirm-apply", i18n, locale),
+                    callback_data=IntegrateDutiesCallback(
+                        company_id=company_id,
+                        action="apply_confirm",
+                    ).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_t("btn-cancel", i18n, locale),
+                    callback_data=ParsingCallback(action="detail", company_id=company_id).pack(),
                 )
             ],
         ]

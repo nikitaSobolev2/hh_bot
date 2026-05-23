@@ -1803,3 +1803,73 @@ def build_resume_choice_user_content(
         f"<resumes>\n{numbered}\n</resumes>"
     )
     return "\n\n".join(lines)
+
+
+@dataclass(frozen=True)
+class WorkExperienceInput:
+    work_exp_id: int
+    company_name: str
+    stack: str
+    title: str | None = None
+    period: str | None = None
+    achievements: str | None = None
+    duties: str | None = None
+
+
+def _format_work_experience_input(index: int, entry: WorkExperienceInput) -> str:
+    parts = [f"  {index + 1}. work_exp_id={entry.work_exp_id}, {entry.company_name}"]
+    if entry.title:
+        parts[0] += f" ({entry.title})"
+    if entry.period:
+        parts[0] += f", {entry.period}"
+    parts.append(f"     Стек: {entry.stack}")
+    if entry.achievements:
+        parts.append(f"     Достижения: {entry.achievements}")
+    if entry.duties:
+        parts.append(f"     Обязанности: {entry.duties}")
+    return "\n".join(parts)
+
+
+def build_integrate_duties_system_prompt() -> str:
+    """Return system prompt for integrating parsing keywords into work duties."""
+    return (
+        "Ты — карьерный консультант, специализирующийся на написании резюме.\n"
+        "Перепиши рабочие обязанности кандидата, органично вплетая ключевые слова из парсинга.\n\n"
+        "[ПРАВИЛА]\n"
+        "1. Используй глаголы несовершенного вида (разрабатывал, поддерживал, оптимизировал).\n"
+        "2. Сохраняй количество и структуру обязанностей для каждого места работы, "
+        "насколько это возможно.\n"
+        "3. Каждое ключевое слово из списка должно быть естественно использовано "
+        "хотя бы один раз суммарно по всем блокам.\n"
+        "4. Не выдумывай новые компании и не добавляй блоки для отсутствующих work_exp_id.\n"
+        "5. Не добавляй цифры, проценты и вымышленные метрики.\n\n"
+        "[ФОРМАТ ОТВЕТА — СТРОГО]\n"
+        "Ответь ТОЛЬКО одним JSON-объектом без markdown и без текста до или после:\n"
+        '{"work_experiences":[{"work_exp_id":42,"duties":["обязанность 1","обязанность 2"]}]}\n'
+        "Поле duties — массив строк без префикса «- ».\n"
+        "Повтори объект в массиве work_experiences для каждого переданного work_exp_id.\n"
+        f"{_STRICT_OUTPUT_PROHIBITION}\n"
+        f"{_ANTI_INJECTION}"
+    )
+
+
+def build_integrate_duties_user_content(
+    vacancy_title: str,
+    keywords: list[str],
+    work_experiences: list[WorkExperienceInput],
+) -> str:
+    """Return user content for keyword integration into work experience duties."""
+    keywords_joined = ", ".join(keywords)
+    experiences_block = "\n".join(
+        _format_work_experience_input(idx, entry) for idx, entry in enumerate(work_experiences)
+    )
+    return (
+        f"Целевая вакансия: {vacancy_title}\n\n"
+        f"[КЛЮЧЕВЫЕ СЛОВА ИЗ ПАРСИНГА — TOP {len(keywords)}]\n"
+        f"{keywords_joined}\n\n"
+        f"[ОПЫТ РАБОТЫ КАНДИДАТА]\n"
+        f"{experiences_block}\n\n"
+        "[ЗАДАЧА]\n"
+        "Для каждого work_exp_id перепиши обязанности, вплетая ключевые слова естественно. "
+        "Верни JSON строго по формату из системного промпта."
+    )

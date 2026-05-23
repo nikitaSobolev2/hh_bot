@@ -10,6 +10,7 @@ from src.repositories.parsing import (
     ParsingCompanyRepository,
 )
 from src.repositories.work_experience import WorkExperienceRepository
+from src.services.ai.duties_integration import duties_list_to_text
 from src.services.hh.parse_browser_session import search_url_resume_id
 from src.services.parser.report import ReportGenerator
 
@@ -291,4 +292,70 @@ async def dispatch_key_phrases_task(
         chat_id,
         lang,
         mode,
+    )
+
+
+def get_top_keywords(agg: AggregatedResult, top_n: int = 25) -> list[str]:
+    if not agg.top_keywords:
+        return []
+    sorted_kw = sorted(agg.top_keywords.items(), key=lambda x: -x[1])
+    return [kw for kw, _ in sorted_kw[:top_n]]
+
+
+async def get_work_experiences_with_duties(
+    session: AsyncSession,
+    user_id: int,
+) -> list[UserWorkExperience]:
+    experiences = await get_active_work_experiences(session, user_id)
+    return [we for we in experiences if we.duties and we.duties.strip()]
+
+
+async def apply_integrated_duties(
+    session: AsyncSession,
+    user_id: int,
+    payload: dict,
+) -> int:
+    repo = WorkExperienceRepository(session)
+    updated = 0
+    for item in payload.get("work_experiences") or []:
+        if not isinstance(item, dict):
+            continue
+        raw_id = item.get("work_exp_id")
+        duties = item.get("duties")
+        if raw_id is None or not isinstance(duties, list):
+            continue
+        try:
+            work_exp_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        entity = await repo.get_by_id(work_exp_id)
+        if not entity or entity.user_id != user_id or not entity.is_active:
+            continue
+        cleaned = [
+            str(duty).strip().lstrip("- ").strip()
+            for duty in duties
+            if isinstance(duty, str) and duty.strip()
+        ]
+        if not cleaned:
+            continue
+        entity.duties = duties_list_to_text(cleaned)
+        updated += 1
+    if updated:
+        await session.commit()
+    return updated
+
+
+async def dispatch_integrate_duties_task(
+    company_id: int,
+    user_id: int,
+    chat_id: int,
+) -> None:
+    from src.core.celery_async import run_celery_task
+    from src.worker.tasks.integrate_duties import integrate_duties_to_work_experience_task
+
+    await run_celery_task(
+        integrate_duties_to_work_experience_task,
+        company_id,
+        user_id,
+        chat_id,
     )

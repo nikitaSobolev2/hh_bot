@@ -22,7 +22,14 @@ class KeyPhrasesCallback(CallbackData, prefix="kp"):
     mode: str = ""
 
 
+class IntegrateDutiesCallback(CallbackData, prefix="id"):
+    company_id: int
+    action: str
+    work_exp_id: int = 0
+
+
 class WorkExperienceCallback(CallbackData, prefix="we"):
     action: str
     company_id: int = 0
     work_exp_id: int = 0
+

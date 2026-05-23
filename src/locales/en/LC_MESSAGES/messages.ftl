@@ -344,6 +344,9 @@ btn-view-message = 💬 View as Message
 btn-download-md = 📄 Download .md
 btn-download-txt = 📝 Download .txt
 btn-generate-keyphrases = ✨ Generate Key Phrases (AI)
+btn-integrate-duties = 🔗 Integrate to Work Experience
+btn-view-integrated-duties = 👁 View Integrated Duties
+btn-apply-integrated-duties = ✅ Apply to Profile
 btn-cancel = ❌ Cancel
 btn-skip-count = ⏭ Skip (up to 30)
 btn-skip-blacklisted = ✅ Skip blacklisted
@@ -377,6 +380,25 @@ keyphrase-generating =
     You will see the result appear shortly.
 keyphrase-header = <b>✨ Key Phrases for { $title }</b>
 keyphrase-style-label = Style: { $style } | { $lang }
+
+# ── Integrate duties ─────────────────────────────────────
+integrate-duties-generating = ⏳ Integrating keywords into duties…
+integrate-duties-error-no-keywords = No keywords in the parsing report.
+integrate-duties-error-no-duties =
+    No work experience entries with duties filled in.
+    Add duties in the Work Experience section.
+integrate-duties-error-not-found = Integrated duties not found. Run integration first.
+integrate-duties-error-failed = ❌ Failed to integrate keywords. Please try again later.
+integrate-duties-completed-header = <b>✅ Duties with integrated keywords — { $title }</b>
+integrate-duties-report-header = <b>📋 Integrated Duties — { $title }</b>
+integrate-duties-report-keywords = <i>Keywords:</i> { $keywords }
+integrate-duties-report-company = <b>{ $company }</b>
+integrate-duties-apply-confirm =
+    Apply integrated duties to your profile?
+    Current duties in affected work experience entries will be replaced.
+integrate-duties-btn-confirm-apply = ✅ Yes, apply
+integrate-duties-apply-success = ✅ Updated work experience entries: { $count }
+integrate-duties-apply-failed = Failed to apply duties.
 
 # ── Work experience ─────────────────────────────────────
 work-exp-prompt =

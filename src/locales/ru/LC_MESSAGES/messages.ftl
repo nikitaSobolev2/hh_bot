@@ -344,6 +344,9 @@ btn-view-message = 💬 Показать сообщением
 btn-download-md = 📄 Скачать .md
 btn-download-txt = 📝 Скачать .txt
 btn-generate-keyphrases = ✨ Генерация ключевых фраз (AI)
+btn-integrate-duties = 🔗 Интегрировать в опыт работы
+btn-view-integrated-duties = 👁 Посмотреть интегрированные обязанности
+btn-apply-integrated-duties = ✅ Применить к профилю
 btn-cancel = ❌ Отмена
 btn-skip-count = ⏭ Пропустить (до 30)
 btn-skip-blacklisted = ✅ Пропустить из чёрного списка
@@ -377,6 +380,25 @@ keyphrase-generating =
     Результат появится в ближайшее время.
 keyphrase-header = <b>✨ Ключевые фразы для { $title }</b>
 keyphrase-style-label = Стиль: { $style } | { $lang }
+
+# ── Integrate duties ─────────────────────────────────────
+integrate-duties-generating = ⏳ Интегрирую ключевые слова в обязанности…
+integrate-duties-error-no-keywords = Нет ключевых слов в отчёте парсинга.
+integrate-duties-error-no-duties =
+    Нет мест работы с заполненными обязанностями.
+    Добавьте обязанности в разделе «Опыт работы».
+integrate-duties-error-not-found = Интегрированные обязанности не найдены. Сначала выполните интеграцию.
+integrate-duties-error-failed = ❌ Не удалось интегрировать ключевые слова. Попробуйте позже.
+integrate-duties-completed-header = <b>✅ Обязанности с интегрированными ключевыми словами — { $title }</b>
+integrate-duties-report-header = <b>📋 Интегрированные обязанности — { $title }</b>
+integrate-duties-report-keywords = <i>Ключевые слова:</i> { $keywords }
+integrate-duties-report-company = <b>{ $company }</b>
+integrate-duties-apply-confirm =
+    Применить интегрированные обязанности к вашему профилю?
+    Текущие обязанности в затронутых местах работы будут заменены.
+integrate-duties-btn-confirm-apply = ✅ Да, применить
+integrate-duties-apply-success = ✅ Обновлено мест работы: { $count }
+integrate-duties-apply-failed = Не удалось применить обязанности.
 
 # ── Work experience ─────────────────────────────────────
 work-exp-prompt =
