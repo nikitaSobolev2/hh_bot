@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import html
+import re
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,14 @@ if TYPE_CHECKING:
     from src.services.ai.client import AIClient, close_ai_client
 
 _AGENT_INTRO_PHRASES = ("Вот сопроводительное", "Составляю", "Вот письмо", "Готово.", "Вот ваш")
+_COVER_LETTER_META_SLOP_PREFIX = re.compile(
+    r"^Дословно из вакансии:\s*[^.]*\.\s*",
+    re.IGNORECASE,
+)
+_COVER_LETTER_LABEL_SLOP_PREFIX = re.compile(
+    r"^Название вакансии для текста письма[:\s]*[^.]*\.\s*",
+    re.IGNORECASE,
+)
 COVER_LETTER_DISPLAY_MAX = 2000
 TELEGRAM_MESSAGE_MAX = 4096
 
@@ -61,6 +70,16 @@ async def _normalize_dashes_in_token_stream(
         yield _normalize_dashes(chunk)
 
 
+def _strip_cover_letter_meta_slop(text: str) -> str:
+    """Remove model echoes of prompt field labels (e.g. «Дословно из вакансии: …»)."""
+    if not text or not text.strip():
+        return text
+    result = text.strip()
+    for pattern in (_COVER_LETTER_META_SLOP_PREFIX, _COVER_LETTER_LABEL_SLOP_PREFIX):
+        result = pattern.sub("", result, count=1)
+    return result.strip()
+
+
 def _strip_agent_wrapper(text: str) -> str:
     """Remove agent intro phrases so only the cover letter content remains.
 
@@ -80,7 +99,7 @@ def _strip_agent_wrapper(text: str) -> str:
                 result = result[idx + 2 :].lstrip()
             break
 
-    return result.rstrip()
+    return _strip_cover_letter_meta_slop(result.rstrip())
 
 
 async def generate_cover_letter_plaintext_for_autoparsed_vacancy(

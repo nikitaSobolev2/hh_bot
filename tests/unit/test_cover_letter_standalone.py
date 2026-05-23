@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.bot.modules.cover_letter.handlers import _parse_idempotency_key
 from src.bot.modules.cover_letter.services import parse_hh_vacancy_id
-from src.worker.tasks.cover_letter import _build_cover_letter_keyboard
+from src.worker.tasks.cover_letter import _build_cover_letter_keyboard, _strip_agent_wrapper
 
 
 class TestParseIdempotencyKey:
@@ -64,3 +64,16 @@ class TestBuildCoverLetterKeyboardStandalone:
         ]
         assert not any("like" in (d or "") for d in all_callback_datas)
         assert not any("back_to_vacancy" in (d or "") for d in all_callback_datas)
+
+
+class TestStripCoverLetterSlop:
+    def test_strips_doslovno_iz_vakansii_prefix(self) -> None:
+        raw = (
+            "Дословно из вакансии: Название вакансии для текста письма. "
+            "Никита — senior fullstack-разработчик."
+        )
+        assert _strip_agent_wrapper(raw) == "Никита — senior fullstack-разработчик."
+
+    def test_leaves_clean_letter_unchanged(self) -> None:
+        letter = "Никита — senior fullstack-разработчик с опытом в микросервисах."
+        assert _strip_agent_wrapper(letter) == letter

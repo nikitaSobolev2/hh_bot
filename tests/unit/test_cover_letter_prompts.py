@@ -44,6 +44,11 @@ class TestBuildCoverLetterSystemPrompt:
         prompt = build_cover_letter_system_prompt("professional")
         assert "дословно" in prompt.lower()
         assert "Должность" in prompt
+        assert "Дословно из вакансии" in prompt
+
+    def test_forbids_prompt_label_echo_in_output(self) -> None:
+        prompt = build_cover_letter_system_prompt("professional")
+        assert "Название вакансии для текста письма" in prompt
 
     def test_forbids_formal_greeting_and_closing(self) -> None:
         prompt = build_cover_letter_system_prompt("professional")
@@ -106,9 +111,9 @@ class TestBuildCoverLetterUserContent:
             vacancy_description="Full description of the vacancy.",
         )
         assert "Senior Python Developer" in content
-        assert "Название вакансии для текста письма (дословно): Senior Python Developer" in content
         assert "Tech Corp" in content
         assert "Full description" in content
+        assert "Название вакансии для текста письма" not in content
 
     def test_instructs_single_paragraph_no_metrics(self) -> None:
         content = build_cover_letter_user_content(
