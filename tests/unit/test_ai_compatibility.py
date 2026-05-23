@@ -289,6 +289,64 @@ class TestCalculateCompatibilityBatch:
 
         assert scores == {"v1": 0.0}
 
+    @pytest.mark.asyncio
+    async def test_passes_vacancies_without_context_without_scoring(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        vacancies = [
+            VacancyCompatInput("empty", "", [], ""),
+            VacancyCompatInput("ok", "Dev", ["Python"], "desc"),
+        ]
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "[Vacancy]:ok\n[Compatibility]:65\n"
+
+        with patch.object(
+            client._client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = mock_response
+            scores = await client.calculate_compatibility_batch(
+                vacancies,
+                user_tech_stack=["Python"],
+                user_work_experience="3 years",
+            )
+
+        assert scores["empty"] == 100.0
+        assert scores["ok"] == 65.0
+        mock_create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_individual_when_batch_parse_incomplete(self):
+        client = AIClient(api_key="test", base_url="http://fake", model="test")
+        vacancies = [
+            VacancyCompatInput("v1", "Dev 1", ["Python"], "desc1"),
+            VacancyCompatInput("v2", "Dev 2", ["Java"], "desc2"),
+        ]
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Cannot score without vacancy data."
+
+        with (
+            patch.object(
+                client._client.chat.completions, "create", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                client,
+                "calculate_compatibility",
+                new_callable=AsyncMock,
+                side_effect=[72.0, 48.0],
+            ) as mock_single,
+        ):
+            mock_create.return_value = mock_response
+            scores = await client.calculate_compatibility_batch(
+                vacancies,
+                user_tech_stack=["Python"],
+                user_work_experience="3 years",
+            )
+
+        assert scores == {"v1": 72.0, "v2": 48.0}
+        mock_create.assert_called_once()
+        assert mock_single.call_count == 2
+
 
 class TestExtractKeywordsBatch:
     @pytest.mark.asyncio

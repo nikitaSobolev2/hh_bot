@@ -333,6 +333,15 @@ def _parse_vacancy_analysis(text: str) -> VacancyAnalysis:
     return VacancyAnalysis(summary=summary, stack=stack, compatibility_score=compat)
 
 
+def _vacancy_has_compat_context(vacancy: VacancyCompatInput) -> bool:
+    return bool(
+        (vacancy.title or "").strip()
+        or vacancy.skills
+        or (vacancy.description or "").strip()
+        or vacancy.vacancy_api_context
+    )
+
+
 def _parse_batch_compat_response(raw: str) -> dict[str, float]:
     """Parse batch compatibility response into {hh_vacancy_id: score}.
 
@@ -615,6 +624,51 @@ class AIClient:
         if not vacancies:
             return {}
 
+        result: dict[str, float] = {}
+        scorable: list[VacancyCompatInput] = []
+        for vacancy in vacancies:
+            if _vacancy_has_compat_context(vacancy):
+                scorable.append(vacancy)
+            else:
+                result[vacancy.hh_vacancy_id] = 100.0
+
+        if not scorable:
+            return result
+
+        try:
+            batch_scores = await self._calculate_compatibility_batch_call(
+                scorable,
+                user_tech_stack=user_tech_stack,
+                user_work_experience=user_work_experience,
+            )
+        except Exception as exc:
+            logger.error("Batch compatibility scoring failed", error=_short_error(exc))
+            batch_scores = {}
+
+        missing = [v for v in scorable if v.hh_vacancy_id not in batch_scores]
+        if missing:
+            logger.warning(
+                "Batch compat falling back to single-vacancy scoring",
+                missing=len(missing),
+                total=len(scorable),
+            )
+            individual_scores = await self._score_compat_individually(
+                missing,
+                user_tech_stack=user_tech_stack,
+                user_work_experience=user_work_experience,
+            )
+            batch_scores.update(individual_scores)
+
+        result.update(batch_scores)
+        return result
+
+    async def _calculate_compatibility_batch_call(
+        self,
+        vacancies: list[VacancyCompatInput],
+        *,
+        user_tech_stack: list[str],
+        user_work_experience: str,
+    ) -> dict[str, float]:
         messages = [
             {"role": "system", "content": build_batch_compatibility_system_prompt()},
             {
@@ -637,8 +691,10 @@ class AIClient:
                 max_tokens=max_tokens,
                 temperature=0.1,
             )
-            logger.info(f"Batch compatibility response: {response.choices[0].message.content}")
             raw = (response.choices[0].message.content or "").strip()
+            if raw:
+                preview = raw if len(raw) <= 200 else raw[:200] + "…"
+                logger.debug("Batch compatibility response preview", preview=preview)
             parsed = _parse_batch_compat_response(raw)
             if len(parsed) != len(vacancies):
                 logger.warning(
@@ -646,13 +702,27 @@ class AIClient:
                     expected=len(vacancies),
                     got=len(parsed),
                 )
-            return {v.hh_vacancy_id: parsed.get(v.hh_vacancy_id, 0.0) for v in vacancies}
+            return parsed
 
-        try:
-            return await _call_with_rate_limit_retry(_call)
-        except Exception as exc:
-            logger.error("Batch compatibility scoring failed", error=_short_error(exc))
-            return {v.hh_vacancy_id: 0.0 for v in vacancies}
+        return await _call_with_rate_limit_retry(_call)
+
+    async def _score_compat_individually(
+        self,
+        vacancies: list[VacancyCompatInput],
+        *,
+        user_tech_stack: list[str],
+        user_work_experience: str,
+    ) -> dict[str, float]:
+        scores: dict[str, float] = {}
+        for vacancy in vacancies:
+            scores[vacancy.hh_vacancy_id] = await self.calculate_compatibility(
+                vacancy_title=vacancy.title,
+                vacancy_skills=vacancy.skills,
+                vacancy_description=vacancy.description,
+                user_tech_stack=user_tech_stack,
+                user_work_experience=user_work_experience,
+            )
+        return scores
 
     async def analyze_vacancies_batch(
         self,
