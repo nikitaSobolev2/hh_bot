@@ -7,11 +7,31 @@ import pytest
 import respx
 
 from src.services.hh.vacancy_public import (
+    _preflight_from_vacancy_html,
     hh_vacancy_public_is_unavailable,
     hh_vacancy_public_preflight,
     vacancy_public_json_is_archived_or_hidden,
     vacancy_public_json_requires_employer_test,
 )
+
+_VACANCY_HTML_OK = """
+<html><head><title>Dev</title></head><body>
+<div data-qa="vacancy-description">Build things</div>
+</body></html>
+"""
+
+_VACANCY_HTML_WITH_TEST = """
+<html><head><title>Dev</title></head><body>
+<div data-qa="vacancy-description">Build things</div>
+<script>{"id":"777","has_test":true,"test":{"required":true}}</script>
+</body></html>
+"""
+
+_VACANCY_HTML_ARCHIVED = """
+<html><head><title>Dev</title></head><body>
+<p>Такой вакансии нет</p>
+</body></html>
+"""
 
 
 @pytest.mark.asyncio
@@ -168,3 +188,56 @@ async def test_preflight_archived_before_employer_test():
     p = await hh_vacancy_public_preflight("333")
     assert p.unavailable is True
     assert p.requires_employer_test is False
+
+
+def test_preflight_from_vacancy_html_ok():
+    p = _preflight_from_vacancy_html(_VACANCY_HTML_OK, final_url="https://hh.ru/vacancy/1")
+    assert p.unavailable is False
+    assert p.requires_employer_test is False
+
+
+def test_preflight_from_vacancy_html_detects_employer_test():
+    p = _preflight_from_vacancy_html(
+        _VACANCY_HTML_WITH_TEST,
+        final_url="https://hh.ru/vacancy/777",
+    )
+    assert p.unavailable is False
+    assert p.requires_employer_test is True
+
+
+def test_preflight_from_vacancy_html_unavailable_when_not_found():
+    p = _preflight_from_vacancy_html(
+        _VACANCY_HTML_ARCHIVED,
+        final_url="https://hh.ru/vacancy/999",
+    )
+    assert p.unavailable is True
+    assert p.requires_employer_test is False
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_web_preflight_uses_html_page_when_api_disabled():
+    from src.config import settings
+
+    respx.get("https://hh.ru/vacancy/555").mock(
+        return_value=httpx.Response(200, text=_VACANCY_HTML_OK)
+    )
+    with patch.object(settings, "hh_api_vacancy_parsing_enabled", False):
+        p = await hh_vacancy_public_preflight("555")
+    assert p.unavailable is False
+    assert p.requires_employer_test is False
+    assert all("api.hh.ru" not in str(call.request.url) for call in respx.calls)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_web_preflight_detects_test_from_html_when_api_disabled():
+    from src.config import settings
+
+    respx.get("https://hh.ru/vacancy/777").mock(
+        return_value=httpx.Response(200, text=_VACANCY_HTML_WITH_TEST)
+    )
+    with patch.object(settings, "hh_api_vacancy_parsing_enabled", False):
+        p = await hh_vacancy_public_preflight("777")
+    assert p.unavailable is False
+    assert p.requires_employer_test is True

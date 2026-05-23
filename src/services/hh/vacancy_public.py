@@ -1,4 +1,4 @@
-"""Public HH API checks (no OAuth) for vacancy existence."""
+"""Public HH vacancy checks (no OAuth) for routing before apply."""
 
 from __future__ import annotations
 
@@ -8,24 +8,39 @@ import re
 from dataclasses import dataclass
 
 import httpx
+from bs4 import BeautifulSoup
 
+from src.config import settings
 from src.core.logging import get_logger
+from src.services.hh_ui.applicant_http import url_suggests_login_page
 from src.services.hh_ui.config import HhUiApplyConfig
-from src.services.hh_ui.runner import fetch_public_hh_api_json_via_browser
+from src.services.hh_ui.runner import (
+    fetch_public_hh_api_json_via_browser,
+    render_vacancy_detail_page_with_storage,
+    vacancy_url_from_hh_id,
+)
 
 logger = get_logger(__name__)
 
 HH_API_VACANCIES_BASE = "https://api.hh.ru/vacancies"
 _HH_VACANCY_ID_RE = re.compile(r"^\d{1,20}$")
 _DEFAULT_TIMEOUT = 15.0
+_VACANCY_DESCRIPTION_SELECTOR = '[data-qa="vacancy-description"]'
+_EMBEDDED_ARCHIVED_RE = re.compile(r'"archived"\s*:\s*true', re.IGNORECASE)
+_EMBEDDED_HIDDEN_RE = re.compile(r'"hidden"\s*:\s*true', re.IGNORECASE)
+_EMBEDDED_HAS_TEST_RE = re.compile(r'"(?:has_test|hasTests)"\s*:\s*true', re.IGNORECASE)
+_EMBEDDED_TEST_REQUIRED_RE = re.compile(
+    r'"test"\s*:\s*\{[^}]*"required"\s*:\s*true',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
 class HhVacancyPublicPreflight:
-    """Result of GET /vacancies/{id} for routing before UI/API apply."""
+    """Result of vacancy availability probe for routing before UI/API apply."""
 
     unavailable: bool
-    """404, not_found payload, ``archived``/``hidden`` in JSON, or invalid id — skip + dislike."""
+    """404, not_found payload, ``archived``/``hidden``, or invalid id — skip + dislike."""
     requires_employer_test: bool
     """Employer test on hh.ru; skip automated apply and mark needs_employer_questions."""
 
@@ -39,21 +54,15 @@ def vacancy_public_json_requires_employer_test(data: dict) -> bool:
     if data.get("has_test") is True:
         return True
     test = data.get("test")
-    if isinstance(test, dict) and test.get("required") is True:
-        return True
-    return False
+    return isinstance(test, dict) and test.get("required") is True
 
 
 def vacancy_public_json_is_archived_or_hidden(data: dict) -> bool:
     """True when vacancy JSON says archived or hidden (API fields on /vacancies/{id})."""
-    if data.get("archived") is True:
-        return True
-    if data.get("hidden") is True:
-        return True
-    return False
+    return data.get("archived") is True or data.get("hidden") is True
 
 
-def _headers() -> dict[str, str]:
+def _headers_api() -> dict[str, str]:
     return {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -66,7 +75,20 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _vacancy_public_url(hh_vacancy_id: str) -> str:
+def _headers_html() -> dict[str, str]:
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+    }
+
+
+def _vacancy_public_api_url(hh_vacancy_id: str) -> str:
     return f"{HH_API_VACANCIES_BASE}/{hh_vacancy_id}"
 
 
@@ -76,10 +98,9 @@ def _has_not_found_error(payload: object) -> bool:
     errs = payload.get("errors")
     if not isinstance(errs, list):
         return False
-    for item in errs:
-        if isinstance(item, dict) and item.get("type") == "not_found":
-            return True
-    return False
+    return any(
+        isinstance(item, dict) and item.get("type") == "not_found" for item in errs
+    )
 
 
 def _body_suggests_public_api_block(body: str) -> bool:
@@ -112,16 +133,57 @@ def _preflight_from_vacancy_json(data: dict) -> HhVacancyPublicPreflight:
     return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=needs_test)
 
 
-async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPreflight:
-    """GET /vacancies/{id}: unavailable vs employer test required (single request)."""
-    vid = str(hh_vacancy_id or "").strip()
-    if not _HH_VACANCY_ID_RE.match(vid):
+def _html_suggests_not_found(soup: BeautifulSoup) -> bool:
+    title = (soup.find("title").get_text(strip=True) if soup.find("title") else "").lower()
+    if "404" in title or "не найден" in title or "not found" in title:
+        return True
+    body_text = soup.get_text(" ", strip=True).lower()
+    return "такой вакансии нет" in body_text or "vacancy not found" in body_text
+
+
+def _html_suggests_employer_test(html: str) -> bool:
+    if _EMBEDDED_HAS_TEST_RE.search(html):
+        return True
+    return bool(_EMBEDDED_TEST_REQUIRED_RE.search(html))
+
+
+def _html_suggests_archived_or_hidden(html: str) -> bool:
+    if _EMBEDDED_ARCHIVED_RE.search(html):
+        return True
+    return bool(_EMBEDDED_HIDDEN_RE.search(html))
+
+
+def _preflight_from_vacancy_html(
+    html: str | None,
+    *,
+    final_url: str | None,
+) -> HhVacancyPublicPreflight:
+    if not html:
+        return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
+    if final_url and url_suggests_login_page(final_url):
         return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
 
-    url = _vacancy_public_url(vid)
+    soup = BeautifulSoup(html, "html.parser")
+    has_description = soup.select_one(_VACANCY_DESCRIPTION_SELECTOR) is not None
+
+    if _html_suggests_not_found(soup):
+        return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
+
+    if _html_suggests_archived_or_hidden(html) and not has_description:
+        return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
+
+    if not has_description:
+        return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
+
+    needs_test = _html_suggests_employer_test(html)
+    return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=needs_test)
+
+
+async def _hh_vacancy_api_preflight(vid: str) -> HhVacancyPublicPreflight:
+    url = _vacancy_public_api_url(vid)
     try:
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
-            resp = await client.get(url, headers=_headers())
+            resp = await client.get(url, headers=_headers_api())
     except httpx.HTTPError as exc:
         logger.warning(
             "hh_vacancy_public_request_failed",
@@ -172,11 +234,72 @@ async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPref
             )
             return _preflight_from_vacancy_json(data)
 
-    # 429, 5xx, other — do not treat as unavailable or test (allow apply attempt)
     return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
 
 
+async def _hh_vacancy_web_preflight(vid: str) -> HhVacancyPublicPreflight:
+    url = vacancy_url_from_hh_id(vid)
+    html: str | None = None
+    final_url: str | None = None
+    needs_playwright = False
+
+    try:
+        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(url, headers=_headers_html())
+            final_url = str(resp.url)
+            if resp.status_code == 404:
+                return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
+            if 200 <= resp.status_code < 300:
+                html = resp.text
+            elif resp.status_code in (403, 429):
+                needs_playwright = True
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "hh_vacancy_web_preflight_request_failed",
+            hh_vacancy_id=vid,
+            error=str(exc)[:300],
+        )
+        needs_playwright = True
+    except Exception as exc:
+        logger.warning(
+            "hh_vacancy_web_preflight_request_failed",
+            hh_vacancy_id=vid,
+            error=str(exc)[:300],
+        )
+        needs_playwright = True
+
+    if html is None or needs_playwright:
+        cfg = HhUiApplyConfig.from_settings()
+        rendered = await asyncio.to_thread(
+            render_vacancy_detail_page_with_storage,
+            storage_state=None,
+            config=cfg,
+            url=url,
+        )
+        html = rendered.html
+        final_url = rendered.final_url or final_url
+        if html:
+            logger.info(
+                "hh_vacancy_web_preflight_playwright_ok",
+                hh_vacancy_id=vid,
+                final_url=final_url,
+            )
+
+    return _preflight_from_vacancy_html(html, final_url=final_url)
+
+
+async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPreflight:
+    """Probe vacancy availability before apply (public API or HTML per admin setting)."""
+    vid = str(hh_vacancy_id or "").strip()
+    if not _HH_VACANCY_ID_RE.match(vid):
+        return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
+
+    if settings.hh_api_vacancy_parsing_enabled:
+        return await _hh_vacancy_api_preflight(vid)
+    return await _hh_vacancy_web_preflight(vid)
+
+
 async def hh_vacancy_public_is_unavailable(hh_vacancy_id: str) -> bool:
-    """True if GET /vacancies/{id} indicates skip + dislike: 404, not_found, archived, or hidden."""
+    """True if vacancy probe indicates skip + dislike: 404, not_found, archived, or hidden."""
     p = await hh_vacancy_public_preflight(hh_vacancy_id)
     return p.unavailable
