@@ -33,6 +33,13 @@ _VACANCY_HTML_ARCHIVED = """
 </body></html>
 """
 
+_VACANCY_HTML_ARCHIVED_WITH_DESCRIPTION = """
+<html><head><title>Dev</title></head><body>
+<div data-qa="vacancy-description">Archived but description still rendered</div>
+<script>{"id":"111","archived":true,"hidden":false}</script>
+</body></html>
+"""
+
 
 @pytest.mark.asyncio
 @respx.mock
@@ -209,6 +216,15 @@ def test_preflight_from_vacancy_html_unavailable_when_not_found():
     p = _preflight_from_vacancy_html(
         _VACANCY_HTML_ARCHIVED,
         final_url="https://hh.ru/vacancy/999",
+    )
+    assert p.unavailable is True
+    assert p.requires_employer_test is False
+
+
+def test_preflight_from_vacancy_html_unavailable_when_archived_with_description():
+    p = _preflight_from_vacancy_html(
+        _VACANCY_HTML_ARCHIVED_WITH_DESCRIPTION,
+        final_url="https://hh.ru/vacancy/111",
     )
     assert p.unavailable is True
     assert p.requires_employer_test is False
