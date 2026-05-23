@@ -776,7 +776,7 @@ def apply_to_vacancies_batch_ui_task(
                 autorespond_progress=autorespond_progress,
             )
         )
-        _maybe_enqueue_next_ui_batch_from_tail(
+        outcome = _maybe_enqueue_next_ui_batch_from_tail(
             user_id=user_id,
             chat_id=chat_id,
             message_id=message_id,
@@ -789,6 +789,15 @@ def apply_to_vacancies_batch_ui_task(
             autorespond_progress=autorespond_progress,
             batch_result=result,
         )
+        if (
+            outcome == "deferred"
+            and autorespond_progress
+            and autorespond_progress.get("task_key")
+        ):
+            _schedule_autorespond_ui_tail_watchdog(
+                chat_id=int(chat_id),
+                task_key=str(autorespond_progress["task_key"]),
+            )
         return result
     except SoftTimeLimitExceeded:
         if tk:
@@ -834,6 +843,26 @@ def apply_to_vacancies_batch_ui_task(
             clear_hh_ui_batch_active_sync(int(chat_id), str(tk))
 
 
+_AUTORESPOND_TAIL_WATCHDOG_MAX_ATTEMPTS = 50
+
+
+def _schedule_autorespond_ui_tail_watchdog(
+    *,
+    chat_id: int,
+    task_key: str,
+    watchdog_attempt: int = 0,
+) -> None:
+    """Re-check tail after parent heartbeat TTL if parent looked alive at batch end."""
+    delay_s = int(settings.autorespond_parent_loop_heartbeat_stale_seconds) + 15
+    celery_app.send_task(
+        "autorespond.recover_ui_tail_if_stale",
+        args=[int(chat_id), str(task_key)],
+        kwargs={"watchdog_attempt": watchdog_attempt},
+        countdown=delay_s,
+        queue="hh_ui",
+    )
+
+
 def _maybe_enqueue_next_ui_batch_from_tail(
     *,
     user_id: int,
@@ -847,44 +876,50 @@ def _maybe_enqueue_next_ui_batch_from_tail(
     silent_feed: bool,
     autorespond_progress: dict | None,
     batch_result: dict,
-) -> None:
-    """When ``run_autorespond`` stopped but Redis still holds parent tail rows, enqueue the next batch.
+) -> str:
+    """Chain the next UI batch from Redis tail when the parent stopped dispatching.
 
-    The parent normally calls ``.delay()`` for every chunk while its loop runs. If the parent
-    task exited (crash, timeout, worker restart) before dispatching the rest, only the first
-    ``hh_ui`` task(s) exist; this picks up the remaining rows from ``save_autorespond_ui_tail_sync``.
+    Returns ``chained``, ``deferred``, ``empty``, or ``skipped``.
     """
     if not autorespond_progress or not autorespond_progress.get("task_key"):
-        return
+        return "skipped"
     if not isinstance(batch_result, dict) or batch_result.get("status") != "ok":
-        return
+        return "skipped"
     if batch_result.get("abort"):
-        return
+        return "skipped"
     task_key = str(autorespond_progress["task_key"])
     from src.core.celery_async import normalize_celery_task_id
     from src.services.autorespond_progress import (
         clear_autorespond_parent_loop_active_sync,
         hh_ui_batch_resume_payload,
-        is_autorespond_parent_loop_active_sync,
         pop_autorespond_ui_tail_batch_sync,
+        should_defer_ui_tail_chain_to_parent_sync,
     )
-    from src.services.celery_active import celery_task_id_is_active
 
     parent_celery_id = normalize_celery_task_id(autorespond_progress.get("celery_task_id"))
-    # Parent loop flag is cleared in ``run_autorespond`` ``finally`` when dispatch finished.
-    # Only while that flag is set may the parent still be enqueueing more ``.delay()`` calls.
-    # Do NOT call ``celery_task_id_is_active`` when the flag is clear: ``inspect().active()``
-    # can falsely keep the parent id (timing / broker) and block tail recovery forever.
-    if is_autorespond_parent_loop_active_sync(int(chat_id), task_key):
-        if parent_celery_id and celery_task_id_is_active(parent_celery_id):
-            logger.info(
-                "hh_ui_apply_batch_tail_chain_skip_parent_dispatching",
-                chat_id=chat_id,
-                task_key=task_key,
-                parent_celery_id=parent_celery_id,
-            )
-            return
-        # Stale loop flag (e.g. parent process killed without ``finally``).
+    defer, defer_reason = should_defer_ui_tail_chain_to_parent_sync(
+        int(chat_id),
+        task_key,
+        parent_celery_id,
+        heartbeat_stale_seconds=float(settings.autorespond_parent_loop_heartbeat_stale_seconds),
+    )
+    if defer:
+        logger.info(
+            "hh_ui_apply_batch_tail_chain_skip_parent_dispatching",
+            chat_id=chat_id,
+            task_key=task_key,
+            parent_celery_id=parent_celery_id,
+            reason=defer_reason,
+        )
+        return "deferred"
+    if defer_reason != "parent_loop_inactive":
+        logger.warning(
+            "hh_ui_apply_batch_tail_chain_recover_orphaned_tail",
+            chat_id=chat_id,
+            task_key=task_key,
+            parent_celery_id=parent_celery_id,
+            reason=defer_reason,
+        )
         clear_autorespond_parent_loop_active_sync(int(chat_id), task_key)
     batch = pop_autorespond_ui_tail_batch_sync(
         int(chat_id), task_key, settings.hh_ui_apply_batch_size
@@ -895,7 +930,7 @@ def _maybe_enqueue_next_ui_batch_from_tail(
             chat_id=chat_id,
             task_key=task_key,
         )
-        return
+        return "empty"
     resume = hh_ui_batch_resume_payload(
         user_id=user_id,
         chat_id=chat_id,
@@ -916,6 +951,74 @@ def _maybe_enqueue_next_ui_batch_from_tail(
         next_batch=len(batch),
     )
     apply_to_vacancies_batch_ui_task.delay(**{**resume, "items": batch})
+    from src.services.autorespond_progress import save_hh_ui_resume_envelope_sync
+
+    save_hh_ui_resume_envelope_sync(int(chat_id), task_key, resume)
+    return "chained"
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="autorespond.recover_ui_tail_if_stale",
+    queue="hh_ui",
+    soft_time_limit=120,
+    time_limit=150,
+)
+def recover_autorespond_ui_tail_if_stale_task(
+    self,
+    chat_id: int,
+    task_key: str,
+    watchdog_attempt: int = 0,
+) -> dict:
+    """Watchdog: chain UI tail when parent heartbeat went stale without dispatching."""
+    from src.services.autorespond_progress import (
+        load_autorespond_ui_tail_sync,
+        load_hh_ui_resume_envelope_sync,
+    )
+
+    tail = load_autorespond_ui_tail_sync(int(chat_id), str(task_key))
+    if not tail:
+        return {"status": "ok", "reason": "no_tail"}
+    resume = load_hh_ui_resume_envelope_sync(int(chat_id), str(task_key))
+    if not resume:
+        logger.warning(
+            "autorespond_tail_watchdog_no_resume_envelope",
+            chat_id=chat_id,
+            task_key=task_key,
+        )
+        return {"status": "error", "reason": "no_resume_envelope"}
+    ar_prog = resume.get("autorespond_progress")
+    locale = "ru"
+    if isinstance(ar_prog, dict) and ar_prog.get("locale"):
+        locale = str(ar_prog["locale"])
+    outcome = _maybe_enqueue_next_ui_batch_from_tail(
+        user_id=int(resume["user_id"]),
+        chat_id=int(resume["chat_id"]),
+        message_id=int(resume.get("message_id") or 0),
+        locale=locale,
+        hh_linked_account_id=int(resume["hh_linked_account_id"]),
+        feed_session_id=int(resume.get("feed_session_id") or 0),
+        cover_letter_style=str(resume.get("cover_letter_style") or ""),
+        cover_task_enabled=bool(resume.get("cover_task_enabled")),
+        silent_feed=bool(resume.get("silent_feed", True)),
+        autorespond_progress=ar_prog if isinstance(ar_prog, dict) else None,
+        batch_result={"status": "ok", "processed": 0},
+    )
+    if outcome == "deferred" and watchdog_attempt + 1 < _AUTORESPOND_TAIL_WATCHDOG_MAX_ATTEMPTS:
+        _schedule_autorespond_ui_tail_watchdog(
+            chat_id=int(chat_id),
+            task_key=str(task_key),
+            watchdog_attempt=watchdog_attempt + 1,
+        )
+    elif outcome == "deferred":
+        logger.warning(
+            "autorespond_tail_watchdog_gave_up",
+            chat_id=chat_id,
+            task_key=task_key,
+            watchdog_attempt=watchdog_attempt,
+        )
+    return {"status": "ok", "outcome": outcome, "watchdog_attempt": watchdog_attempt}
 
 
 async def _apply_ui_async(

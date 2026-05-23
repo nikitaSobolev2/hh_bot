@@ -33,6 +33,30 @@ from src.worker.utils import run_async
 logger = get_logger(__name__)
 
 
+async def _autorespond_vacancy_preflight(hh_vacancy_id: str):
+    """Bounded httpx-only preflight for the parent loop (no Playwright — avoids worker wedging)."""
+    from src.services.hh.vacancy_public import (
+        HhVacancyPublicPreflight,
+        hh_vacancy_public_preflight,
+    )
+
+    try:
+        return await asyncio.wait_for(
+            hh_vacancy_public_preflight(
+                hh_vacancy_id,
+                allow_playwright_fallback=False,
+            ),
+            timeout=settings.autorespond_preflight_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "autorespond_preflight_timeout",
+            hh_vacancy_id=hh_vacancy_id,
+            timeout_s=settings.autorespond_preflight_timeout_seconds,
+        )
+        return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
+
+
 async def _wait_for_autorespond_work_units(
     chat_id: int,
     task_key: str,
@@ -389,9 +413,12 @@ async def _run_autorespond_async(
         clear_hh_ui_batch_checkpoint_sync,
         clear_hh_ui_resume_envelope_sync,
         is_autorespond_cancelled_sync,
+        hh_ui_batch_resume_payload,
         load_autorespond_employer_test_count_sync,
         save_autorespond_ui_tail_sync,
+        save_hh_ui_resume_envelope_sync,
         set_autorespond_parent_loop_active_sync,
+        touch_autorespond_parent_loop_heartbeat_sync,
         tick_autorespond_bar,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
@@ -404,7 +431,6 @@ async def _run_autorespond_async(
         resolve_resume_id_for_autorespond_vacancy,
     )
     from src.bot.modules.autoparse import feed_services as feed_services_autorespond
-    from src.services.hh.vacancy_public import hh_vacancy_public_preflight
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -760,18 +786,24 @@ async def _run_autorespond_async(
                     }
                     for vac, rid in ui_batch_buffer
                 ]
-                apply_to_vacancies_batch_ui_task.delay(
-                    user.id,
-                    user.telegram_id,
-                    0,
-                    locale,
-                    hh_acc_id,
-                    0,
-                    batch_payload,
-                    cover_letter_style,
-                    cover_task_enabled,
+                resume_kwargs = hh_ui_batch_resume_payload(
+                    user_id=user.id,
+                    chat_id=user.telegram_id,
+                    message_id=0,
+                    locale=locale,
+                    hh_linked_account_id=hh_acc_id,
+                    feed_session_id=0,
+                    cover_letter_style=cover_letter_style,
+                    cover_task_enabled=cover_task_enabled,
                     silent_feed=True,
                     autorespond_progress=ar_prog,
+                )
+                if task_key and user.telegram_id:
+                    save_hh_ui_resume_envelope_sync(
+                        user.telegram_id, task_key, resume_kwargs
+                    )
+                apply_to_vacancies_batch_ui_task.delay(
+                    **{**resume_kwargs, "items": batch_payload},
                 )
                 queued += n
                 ui_batch_buffer.clear()
@@ -780,6 +812,8 @@ async def _run_autorespond_async(
                         queue_ui_items.pop(0)
                 if task_key and user.telegram_id:
                     save_autorespond_ui_tail_sync(user.telegram_id, task_key, list(queue_ui_items))
+                if task_key and user.telegram_id:
+                    touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
 
             if settings.hh_ui_apply_enabled and task_key and user.telegram_id:
                 set_autorespond_parent_loop_active_sync(user.telegram_id, task_key)
@@ -811,13 +845,18 @@ async def _run_autorespond_async(
                         "negotiations_sync": sync_res,
                     }
 
+                if task_key and user.telegram_id:
+                    touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
+
                 if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
                     if vac.needs_employer_questions:
                         employer_tests += 1
                     skipped += 1
                     continue
 
-                preflight = await hh_vacancy_public_preflight(vac.hh_vacancy_id)
+                preflight = await _autorespond_vacancy_preflight(vac.hh_vacancy_id)
+                if task_key and user.telegram_id:
+                    touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
                 if preflight.unavailable:
                     skipped += 1
                     async with session_factory() as s_merge:
@@ -932,6 +971,8 @@ async def _run_autorespond_async(
                         resume_items,
                         stored_autorespond_resume_id=company.autorespond_resume_id,
                     )
+                    if task_key and user.telegram_id:
+                        touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
                     if not resume_id:
                         skipped += 1
                         if ar_prog and progress_bot:
@@ -973,6 +1014,8 @@ async def _run_autorespond_async(
                         resume_items,
                         stored_autorespond_resume_id=company.autorespond_resume_id,
                     )
+                    if task_key and user.telegram_id:
+                        touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
                     if not resume_id:
                         skipped += 1
                         if ar_prog and progress_bot:

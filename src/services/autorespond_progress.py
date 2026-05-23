@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from redis.exceptions import RedisError, WatchError
@@ -179,6 +180,11 @@ def autorespond_parent_loop_key(chat_id: int, task_key: str) -> str:
     return f"progress:autorespond_parent_loop:{chat_id}:{task_key}"
 
 
+def autorespond_parent_loop_heartbeat_key(chat_id: int, task_key: str) -> str:
+    """Unix timestamp (seconds) refreshed while parent autorespond loop makes progress."""
+    return f"progress:autorespond_parent_loop_hb:{chat_id}:{task_key}"
+
+
 def hh_ui_batch_resume_payload(
     *,
     user_id: int,
@@ -348,12 +354,63 @@ def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
         r.close()
 
 
+def touch_autorespond_parent_loop_heartbeat_sync(chat_id: int, task_key: str) -> None:
+    r = _sync_redis()
+    try:
+        r.set(
+            autorespond_parent_loop_heartbeat_key(chat_id, task_key),
+            str(int(time.time())),
+            ex=_DONE_TTL_S,
+        )
+    finally:
+        r.close()
+
+
+def clear_autorespond_parent_loop_heartbeat_sync(chat_id: int, task_key: str) -> None:
+    r = _sync_redis()
+    try:
+        r.delete(autorespond_parent_loop_heartbeat_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+def autorespond_parent_loop_heartbeat_age_seconds_sync(
+    chat_id: int,
+    task_key: str,
+) -> float | None:
+    """Seconds since last parent-loop heartbeat; ``None`` when missing."""
+    r = _sync_redis()
+    try:
+        raw = r.get(autorespond_parent_loop_heartbeat_key(chat_id, task_key))
+        if not raw:
+            return None
+        try:
+            ts = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, time.time() - ts)
+    finally:
+        r.close()
+
+
+def is_autorespond_parent_loop_heartbeat_stale_sync(
+    chat_id: int,
+    task_key: str,
+    max_age_seconds: float,
+) -> bool:
+    age = autorespond_parent_loop_heartbeat_age_seconds_sync(chat_id, task_key)
+    if age is None:
+        return True
+    return age > max_age_seconds
+
+
 def set_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
     r = _sync_redis()
     try:
         r.set(autorespond_parent_loop_key(chat_id, task_key), "1", ex=_DONE_TTL_S)
     finally:
         r.close()
+    touch_autorespond_parent_loop_heartbeat_sync(chat_id, task_key)
 
 
 def clear_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
@@ -362,6 +419,36 @@ def clear_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> No
         r.delete(autorespond_parent_loop_key(chat_id, task_key))
     finally:
         r.close()
+    clear_autorespond_parent_loop_heartbeat_sync(chat_id, task_key)
+
+
+def should_defer_ui_tail_chain_to_parent_sync(
+    chat_id: int,
+    task_key: str,
+    parent_celery_id: str | None,
+    *,
+    heartbeat_stale_seconds: float,
+) -> tuple[bool, str]:
+    """Whether ``hh_ui`` should wait for parent ``flush_ui_batch`` instead of tail-chaining.
+
+    Returns ``(defer, reason)``. Defer only when parent loop flag is set, heartbeat is
+    fresh, and the parent Celery task id is still listed on workers.
+    """
+    from src.services.celery_active import celery_task_id_is_active
+
+    if not is_autorespond_parent_loop_active_sync(chat_id, task_key):
+        return False, "parent_loop_inactive"
+    heartbeat_stale = is_autorespond_parent_loop_heartbeat_stale_sync(
+        chat_id, task_key, heartbeat_stale_seconds
+    )
+    parent_on_workers = bool(parent_celery_id and celery_task_id_is_active(parent_celery_id))
+    if not heartbeat_stale and parent_on_workers:
+        return True, "parent_dispatching"
+    if heartbeat_stale and parent_on_workers:
+        return False, "heartbeat_stale_parent_wedged"
+    if not parent_on_workers:
+        return False, "parent_task_not_on_workers"
+    return False, "heartbeat_stale"
 
 
 def is_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> bool:
@@ -498,6 +585,23 @@ async def set_autorespond_cancelled(chat_id: int, task_key: str) -> None:
     redis = create_progress_redis()
     try:
         await redis.set(autorespond_cancel_redis_key(chat_id, task_key), "1", ex=_DONE_TTL_S)
+    finally:
+        await redis.aclose()
+
+
+def clear_autorespond_cancelled_sync(chat_id: int, task_key: str) -> None:
+    """Remove stale autorespond cancel flag when a new pipeline run starts."""
+    r = _sync_redis()
+    try:
+        r.delete(autorespond_cancel_redis_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+async def clear_autorespond_cancelled(chat_id: int, task_key: str) -> None:
+    redis = create_progress_redis()
+    try:
+        await redis.delete(autorespond_cancel_redis_key(chat_id, task_key))
     finally:
         await redis.aclose()
 

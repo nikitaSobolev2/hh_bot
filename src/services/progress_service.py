@@ -238,6 +238,10 @@ class ProgressService:
             state["group"] = dict(group)
         with contextlib.suppress(Exception):
             clear_user_cancelled_sync(self._chat_id, task_key)
+        with contextlib.suppress(Exception):
+            from src.services.autorespond_progress import clear_autorespond_cancelled_sync
+
+            clear_autorespond_cancelled_sync(self._chat_id, task_key)
         if celery_task_id is not None:
             nid = normalize_celery_task_id(celery_task_id)
             if nid:

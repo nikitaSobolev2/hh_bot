@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     hh_ui_apply_task_time_limit: int = Field(default=600, ge=120, le=7200)
     # Batched UI apply: one Chromium session per chunk (see ``hh_ui.apply_to_vacancies_batch``).
     hh_ui_apply_batch_size: int = Field(default=4, ge=1, le=50)
+    # Parent ``run_autorespond`` loop: tail chain defers while heartbeat is fresh and parent
+    # Celery task is on workers. Stale heartbeat → hh_ui batch chains from Redis tail.
+    autorespond_parent_loop_heartbeat_stale_seconds: int = Field(default=120, ge=30, le=600)
+    # Autorespond preflight uses httpx only (no Playwright) — avoids blocking the parent worker.
+    autorespond_preflight_timeout_seconds: float = Field(default=25.0, ge=5.0, le=120.0)
     hh_ui_apply_batch_task_soft_time_limit: int = Field(default=2400, ge=300, le=14400)
     hh_ui_apply_batch_task_time_limit: int = Field(default=3000, ge=600, le=18000)
     hh_ui_apply_max_retries: int = Field(default=5, ge=1, le=10)

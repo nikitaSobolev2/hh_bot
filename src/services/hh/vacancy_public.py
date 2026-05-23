@@ -169,7 +169,7 @@ def _preflight_from_vacancy_html(
     if _html_suggests_not_found(soup):
         return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
 
-    if _html_suggests_archived_or_hidden(html) and not has_description:
+    if _html_suggests_archived_or_hidden(html):
         return HhVacancyPublicPreflight(unavailable=True, requires_employer_test=False)
 
     if not has_description:
@@ -179,7 +179,11 @@ def _preflight_from_vacancy_html(
     return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=needs_test)
 
 
-async def _hh_vacancy_api_preflight(vid: str) -> HhVacancyPublicPreflight:
+async def _hh_vacancy_api_preflight(
+    vid: str,
+    *,
+    allow_playwright_fallback: bool = True,
+) -> HhVacancyPublicPreflight:
     url = _vacancy_public_api_url(vid)
     try:
         async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
@@ -213,7 +217,7 @@ async def _hh_vacancy_api_preflight(vid: str) -> HhVacancyPublicPreflight:
 
     body_preview = (resp.text or "")[:800]
     try_playwright = resp.status_code in (403, 429) or _body_suggests_public_api_block(body_preview)
-    if try_playwright:
+    if try_playwright and allow_playwright_fallback:
         cfg = HhUiApplyConfig.from_settings()
         data = await asyncio.to_thread(
             fetch_public_hh_api_json_via_browser,
@@ -234,10 +238,21 @@ async def _hh_vacancy_api_preflight(vid: str) -> HhVacancyPublicPreflight:
             )
             return _preflight_from_vacancy_json(data)
 
+    if try_playwright and not allow_playwright_fallback:
+        logger.info(
+            "hh_vacancy_public_playwright_skipped",
+            hh_vacancy_id=vid,
+            status=resp.status_code,
+        )
+
     return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
 
 
-async def _hh_vacancy_web_preflight(vid: str) -> HhVacancyPublicPreflight:
+async def _hh_vacancy_web_preflight(
+    vid: str,
+    *,
+    allow_playwright_fallback: bool = True,
+) -> HhVacancyPublicPreflight:
     url = vacancy_url_from_hh_id(vid)
     html: str | None = None
     final_url: str | None = None
@@ -269,6 +284,13 @@ async def _hh_vacancy_web_preflight(vid: str) -> HhVacancyPublicPreflight:
         needs_playwright = True
 
     if html is None or needs_playwright:
+        if not allow_playwright_fallback:
+            logger.info(
+                "hh_vacancy_web_preflight_playwright_skipped",
+                hh_vacancy_id=vid,
+                needs_playwright=needs_playwright,
+            )
+            return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
         cfg = HhUiApplyConfig.from_settings()
         rendered = await asyncio.to_thread(
             render_vacancy_detail_page_with_storage,
@@ -288,15 +310,25 @@ async def _hh_vacancy_web_preflight(vid: str) -> HhVacancyPublicPreflight:
     return _preflight_from_vacancy_html(html, final_url=final_url)
 
 
-async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPreflight:
+async def hh_vacancy_public_preflight(
+    hh_vacancy_id: str,
+    *,
+    allow_playwright_fallback: bool = True,
+) -> HhVacancyPublicPreflight:
     """Probe vacancy availability before apply (public API or HTML per admin setting)."""
     vid = str(hh_vacancy_id or "").strip()
     if not _HH_VACANCY_ID_RE.match(vid):
         return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
 
     if settings.hh_api_vacancy_parsing_enabled:
-        return await _hh_vacancy_api_preflight(vid)
-    return await _hh_vacancy_web_preflight(vid)
+        return await _hh_vacancy_api_preflight(
+            vid,
+            allow_playwright_fallback=allow_playwright_fallback,
+        )
+    return await _hh_vacancy_web_preflight(
+        vid,
+        allow_playwright_fallback=allow_playwright_fallback,
+    )
 
 
 async def hh_vacancy_public_is_unavailable(hh_vacancy_id: str) -> bool:

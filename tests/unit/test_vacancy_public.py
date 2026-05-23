@@ -117,6 +117,24 @@ def test_vacancy_public_json_requires_employer_test_flags():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_web_preflight_skips_playwright_when_disabled():
+    with patch("src.services.hh.vacancy_public.settings") as mock_settings:
+        mock_settings.hh_api_vacancy_parsing_enabled = False
+        respx.get("https://hh.ru/vacancy/777").mock(return_value=httpx.Response(403))
+        with patch(
+            "src.services.hh.vacancy_public.render_vacancy_detail_page_with_storage",
+        ) as render_mock:
+            result = await hh_vacancy_public_preflight(
+                "777",
+                allow_playwright_fallback=False,
+            )
+    render_mock.assert_not_called()
+    assert result.unavailable is False
+    assert result.requires_employer_test is False
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_preflight_requires_test_on_200():
     body = {
         "id": "129569197",
