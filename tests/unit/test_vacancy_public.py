@@ -52,7 +52,11 @@ async def test_not_unavailable_on_500():
 @respx.mock
 async def test_not_unavailable_on_429():
     respx.get("https://api.hh.ru/vacancies/42").mock(return_value=httpx.Response(429))
-    assert await hh_vacancy_public_is_unavailable("42") is False
+    with patch(
+        "src.services.hh.vacancy_public.fetch_public_hh_api_json_via_browser",
+        return_value=None,
+    ):
+        assert await hh_vacancy_public_is_unavailable("42") is False
 
 
 @pytest.mark.asyncio

@@ -32,11 +32,13 @@ from src.services.hh_ui.apply_retry import (
     apply_retry_delay_seconds,
 )
 from src.services.hh_ui.config import HhUiApplyConfig
-from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult, ResumeOption
+from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesResult
 from src.services.hh_ui.playwright_support import (
-    CHROMIUM_LAUNCH_ARGS,
     HH_UI_VIEWPORT,
     dispose_sync_browser_context,
+    is_playwright_browser_dead_error,
+    launch_chromium_sync,
+    playwright_browser_slot_sync,
 )
 from src.services.hh_ui.vacancy_response_popup import (
     POPUP_INCOMPLETE_DETAIL,
@@ -245,14 +247,11 @@ def render_search_page_with_storage(
         url=url,
         has_storage=bool(storage_state),
     )
-    with sync_playwright() as p:
+    with playwright_browser_slot_sync(), sync_playwright() as p:
         browser = None
         context = None
         try:
-            browser = p.chromium.launch(
-                headless=config.headless,
-                args=list(CHROMIUM_LAUNCH_ARGS),
-            )
+            browser = launch_chromium_sync(p, headless=config.headless)
             context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
             if storage_state:
                 context_kwargs["storage_state"] = storage_state
@@ -344,14 +343,11 @@ def render_vacancy_detail_page_with_storage(
         url=url,
         has_storage=bool(storage_state),
     )
-    with sync_playwright() as p:
+    with playwright_browser_slot_sync(), sync_playwright() as p:
         browser = None
         context = None
         try:
-            browser = p.chromium.launch(
-                headless=config.headless,
-                args=list(CHROMIUM_LAUNCH_ARGS),
-            )
+            browser = launch_chromium_sync(p, headless=config.headless)
             context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
             if storage_state:
                 context_kwargs["storage_state"] = storage_state
@@ -420,14 +416,11 @@ def fetch_public_hh_api_json_via_browser(
         api_url=api_url,
         has_storage=bool(storage_state),
     )
-    with sync_playwright() as p:
+    with playwright_browser_slot_sync(), sync_playwright() as p:
         browser = None
         context = None
         try:
-            browser = p.chromium.launch(
-                headless=config.headless,
-                args=list(CHROMIUM_LAUNCH_ARGS),
-            )
+            browser = launch_chromium_sync(p, headless=config.headless)
             context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
             if storage_state:
                 context_kwargs["storage_state"] = storage_state
@@ -495,14 +488,11 @@ def _screenshot_url_with_storage(
     url: str,
 ) -> bytes | None:
     """Open Chromium with the same Playwright storage_state and screenshot (e.g. HTTP-detected captcha)."""
-    with sync_playwright() as p:
+    with playwright_browser_slot_sync(), sync_playwright() as p:
         browser = None
         context = None
         try:
-            browser = p.chromium.launch(
-                headless=config.headless,
-                args=list(CHROMIUM_LAUNCH_ARGS),
-            )
+            browser = launch_chromium_sync(p, headless=config.headless)
             context = browser.new_context(
                 storage_state=storage_state,
                 viewport=HH_UI_VIEWPORT,
@@ -751,14 +741,11 @@ def apply_to_vacancy_ui(
             detail="invalid_vacancy_url",
         )
 
-    with sync_playwright() as p:
+    with playwright_browser_slot_sync(), sync_playwright() as p:
         browser = None
         context = None
         try:
-            browser = p.chromium.launch(
-                headless=config.headless,
-                args=list(CHROMIUM_LAUNCH_ARGS),
-            )
+            browser = launch_chromium_sync(p, headless=config.headless)
             context = browser.new_context(
                 storage_state=storage_state,
                 viewport=HH_UI_VIEWPORT,
@@ -1329,16 +1316,25 @@ def _apply_vacancy_flow_on_page(
 
 def _is_target_closed_error(exc: BaseException) -> bool:
     """True when Playwright page/context/browser died (crash or explicit close)."""
-    name = type(exc).__name__
-    if "TargetClosed" in name or "BrowserClosed" in name:
-        return True
-    msg = str(exc).lower()
-    return "has been closed" in msg or "target closed" in msg or "browser has been closed" in msg
+    return is_playwright_browser_dead_error(exc)
 
 
 def _is_page_goto_timeout_error(exc: BaseException) -> bool:
     """Navigation timeout (slow host or overloaded worker)."""
     return isinstance(exc, PlaywrightTimeoutError)
+
+
+def _relaunch_batch_browser_session(
+    playwright: Any,
+    *,
+    storage_state: dict[str, Any],
+    config: HhUiApplyConfig,
+    browser: Any | None,
+    context: Any | None,
+) -> tuple[Any, Any, Any]:
+    """Close wedged session and start a fresh Chromium for batch retry."""
+    dispose_sync_browser_context(context, browser)
+    return _launch_batch_browser_session(playwright, storage_state, config)
 
 
 def _launch_batch_browser_session(
@@ -1347,10 +1343,7 @@ def _launch_batch_browser_session(
     config: HhUiApplyConfig,
 ) -> tuple[Any, Any, Any]:
     """New Chromium + context + page for :func:`apply_to_vacancies_ui_batch`."""
-    browser = playwright.chromium.launch(
-        headless=config.headless,
-        args=list(CHROMIUM_LAUNCH_ARGS),
-    )
+    browser = launch_chromium_sync(playwright, headless=config.headless)
     context = browser.new_context(
         storage_state=storage_state,
         viewport=HH_UI_VIEWPORT,
@@ -1396,7 +1389,7 @@ def apply_to_vacancies_ui_batch(
     if not items:
         return results, None
 
-    with sync_playwright() as p:
+    with playwright_browser_slot_sync(), sync_playwright() as p:
         browser = None
         context = None
         try:
@@ -1446,6 +1439,13 @@ def apply_to_vacancies_ui_batch(
                             )
                             attempt += 1
                             if attempt < max_retries:
+                                browser, context, page = _relaunch_batch_browser_session(
+                                    p,
+                                    storage_state=storage_state,
+                                    config=config,
+                                    browser=browser,
+                                    context=context,
+                                )
                                 delay = apply_retry_delay_seconds(
                                     attempt - 1,
                                     retry_initial_seconds,
@@ -1461,7 +1461,10 @@ def apply_to_vacancies_ui_batch(
                         if not _is_target_closed_error(exc):
                             raise
                         target_closed_recoveries += 1
-                        if target_closed_recoveries > _HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM:
+                        if (
+                            target_closed_recoveries
+                            > _HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM
+                        ):
                             logger.error(
                                 "hh_ui_batch_target_closed_recoveries_exhausted",
                                 log_user_id=log_user_id,
@@ -1482,9 +1485,12 @@ def apply_to_vacancies_ui_batch(
                             recovery_n=target_closed_recoveries,
                             error=str(exc)[:400],
                         )
-                        dispose_sync_browser_context(context, browser)
-                        browser, context, page = _launch_batch_browser_session(
-                            p, storage_state, config
+                        browser, context, page = _relaunch_batch_browser_session(
+                            p,
+                            storage_state=storage_state,
+                            config=config,
+                            browser=browser,
+                            context=context,
                         )
                         continue
                     if last is None:

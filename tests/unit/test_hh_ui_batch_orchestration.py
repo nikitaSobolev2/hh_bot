@@ -1,5 +1,9 @@
 """Batch UI apply wiring (mocked Playwright)."""
 
+from contextlib import contextmanager
+
+import pytest
+
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
 from src.services.hh_ui.vacancy_response_popup import (
@@ -7,6 +11,19 @@ from src.services.hh_ui.vacancy_response_popup import (
     POPUP_XSRF_ERROR_DETAIL,
 )
 from src.services.hh_ui.runner import VacancyApplySpec, apply_to_vacancies_ui_batch
+
+
+@contextmanager
+def _noop_playwright_browser_slot_sync():
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _patch_playwright_browser_slot(monkeypatch):
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner.playwright_browser_slot_sync",
+        _noop_playwright_browser_slot_sync,
+    )
 
 
 def test_apply_to_vacancies_ui_batch_single_launch(monkeypatch) -> None:
@@ -559,3 +576,84 @@ def test_batch_xsrf_cooldown_resets_after_non_xsrf(monkeypatch) -> None:
         max_retries=1,
     )
     assert sleeps == [10.0, 10.0]
+
+
+def test_batch_recovers_from_page_crashed_without_aborting_batch(monkeypatch) -> None:
+    """Page.goto crash relaunches browser and completes item instead of raising."""
+    launches = {"n": 0}
+    gotos = {"n": 0}
+
+    class FakePage:
+        def goto(self, *a, **k):
+            gotos["n"] += 1
+            if gotos["n"] == 1:
+                raise RuntimeError("Page.goto: Page crashed")
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakeBrowser:
+        def new_context(self, **k):
+            return FakeContext()
+
+        def close(self):
+            return None
+
+    class FakeChromium:
+        def launch(self, **k):
+            launches["n"] += 1
+            return FakeBrowser()
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner.sync_playwright",
+        lambda: FakePlaywright(),
+    )
+    monkeypatch.setattr("src.services.hh_ui.runner._jitter", lambda c: None)
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner._apply_vacancy_flow_on_page",
+        lambda page, **kwargs: ApplyResult(outcome=ApplyOutcome.SUCCESS),
+    )
+
+    cfg = HhUiApplyConfig(
+        headless=True,
+        navigation_timeout_ms=1000,
+        action_timeout_ms=1000,
+        min_action_delay_ms=0,
+        max_action_delay_ms=0,
+        screenshot_on_error=False,
+        use_popup_api=False,
+        debug_screenshot_dir=None,
+        attach_error_screenshot_bytes=False,
+    )
+    spec = VacancyApplySpec(
+        autoparsed_vacancy_id=1,
+        hh_vacancy_id="1",
+        vacancy_url="https://hh.ru/vacancy/1",
+        resume_hh_id="r1",
+        cover_letter="",
+    )
+    out, reason = apply_to_vacancies_ui_batch(
+        storage_state={},
+        items=[spec],
+        config=cfg,
+        max_retries=1,
+    )
+    assert reason is None
+    assert out[0][1].outcome == ApplyOutcome.SUCCESS
+    assert launches["n"] == 2
+    assert gotos["n"] == 2
+

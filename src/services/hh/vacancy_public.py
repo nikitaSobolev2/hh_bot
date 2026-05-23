@@ -159,7 +159,12 @@ async def hh_vacancy_public_preflight(hh_vacancy_id: str) -> HhVacancyPublicPref
             config=cfg,
             api_url=url,
         )
-        if isinstance(data, dict) and data and not _has_not_found_error(data):
+        if (
+            isinstance(data, dict)
+            and data.get("id")
+            and not _has_not_found_error(data)
+            and not _body_suggests_public_api_block(json.dumps(data))
+        ):
             logger.info(
                 "hh_vacancy_public_playwright_json_ok",
                 hh_vacancy_id=vid,

@@ -1,5 +1,6 @@
 """Tests for HH UI runner helpers (no real browser)."""
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from src.services.hh_ui.config import HhUiApplyConfig
@@ -25,6 +26,11 @@ def test_normalize_hh_vacancy_url_relative() -> None:
 
 def test_normalize_hh_vacancy_url_fallback() -> None:
     assert normalize_hh_vacancy_url("", "42") == "https://hh.ru/vacancy/42"
+
+
+@contextmanager
+def _noop_playwright_browser_slot_sync():
+    yield
 
 
 def test_render_search_page_with_storage_scrolls_once_and_returns_html() -> None:
@@ -114,7 +120,13 @@ def test_render_search_page_with_storage_scrolls_once_and_returns_html() -> None
     )
 
     fake_sync_playwright = FakeSyncPlaywright()
-    with patch("src.services.hh_ui.runner.sync_playwright", return_value=fake_sync_playwright):
+    with (
+        patch(
+            "src.services.hh_ui.runner.playwright_browser_slot_sync",
+            _noop_playwright_browser_slot_sync,
+        ),
+        patch("src.services.hh_ui.runner.sync_playwright", return_value=fake_sync_playwright),
+    ):
         result = render_search_page_with_storage(
             storage_state={"cookies": []},
             config=cfg,
@@ -214,7 +226,13 @@ def test_render_search_page_with_storage_skips_scroll_when_page_is_full() -> Non
     )
 
     fake_sync_playwright = FakeSyncPlaywright()
-    with patch("src.services.hh_ui.runner.sync_playwright", return_value=fake_sync_playwright):
+    with (
+        patch(
+            "src.services.hh_ui.runner.playwright_browser_slot_sync",
+            _noop_playwright_browser_slot_sync,
+        ),
+        patch("src.services.hh_ui.runner.sync_playwright", return_value=fake_sync_playwright),
+    ):
         result = render_search_page_with_storage(
             storage_state={"cookies": []},
             config=cfg,
