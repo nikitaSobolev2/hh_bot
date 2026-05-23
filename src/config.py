@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     autorespond_parent_loop_heartbeat_stale_seconds: int = Field(default=120, ge=30, le=600)
     # Autorespond preflight uses httpx only (no Playwright) — avoids blocking the parent worker.
     autorespond_preflight_timeout_seconds: float = Field(default=25.0, ge=5.0, le=120.0)
+    autorespond_loop_progress_log_every: int = Field(default=25, ge=1, le=500)
+    autorespond_resume_resolve_timeout_seconds: float = Field(
+        default=130.0, ge=30.0, le=600.0
+    )
+    autorespond_progress_tick_timeout_seconds: float = Field(
+        default=45.0, ge=5.0, le=120.0
+    )
     hh_ui_apply_batch_task_soft_time_limit: int = Field(default=2400, ge=300, le=14400)
     hh_ui_apply_batch_task_time_limit: int = Field(default=3000, ge=600, le=18000)
     hh_ui_apply_max_retries: int = Field(default=5, ge=1, le=10)

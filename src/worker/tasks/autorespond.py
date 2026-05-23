@@ -15,8 +15,8 @@ from src.core.logging import get_logger
 from src.models.autoparse import AutoparsedVacancy
 from src.repositories.app_settings import AppSettingRepository
 from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
-from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
+from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.services.hh.client import HhApiClient, HhApiError, apply_to_vacancy_with_resume
 from src.services.hh.token_service import ensure_access_token
 from src.services.hh_ui.rate_limit import (
@@ -55,6 +55,58 @@ async def _autorespond_vacancy_preflight(hh_vacancy_id: str):
             timeout_s=settings.autorespond_preflight_timeout_seconds,
         )
         return HhVacancyPublicPreflight(unavailable=False, requires_employer_test=False)
+
+
+async def _tick_autorespond_bar_bounded(**kwargs) -> None:
+    """Progress bar update with wall-clock cap so Telegram stalls cannot block the loop."""
+    from src.services.autorespond_progress import tick_autorespond_bar
+
+    try:
+        await asyncio.wait_for(
+            tick_autorespond_bar(**kwargs),
+            timeout=settings.autorespond_progress_tick_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "autorespond_progress_tick_timeout",
+            chat_id=kwargs.get("chat_id"),
+            task_key=kwargs.get("task_key"),
+            timeout_s=settings.autorespond_progress_tick_timeout_seconds,
+        )
+
+
+async def _resolve_resume_for_autorespond_bounded(
+    cover_ai_client,
+    vac,
+    resume_items: list[dict[str, str]],
+    *,
+    stored_autorespond_resume_id: str | None,
+):
+    from src.services.ai.resume_selection import (
+        fallback_resume_id,
+        resolve_resume_id_for_autorespond_vacancy,
+    )
+
+    try:
+        return await asyncio.wait_for(
+            resolve_resume_id_for_autorespond_vacancy(
+                cover_ai_client,
+                vac,
+                resume_items,
+                stored_autorespond_resume_id=stored_autorespond_resume_id,
+            ),
+            timeout=settings.autorespond_resume_resolve_timeout_seconds,
+        )
+    except TimeoutError:
+        picked = fallback_resume_id(resume_items, stored_autorespond_resume_id)
+        logger.warning(
+            "autorespond_resume_resolve_timeout",
+            vacancy_id=vac.id,
+            hh_vacancy_id=vac.hh_vacancy_id,
+            resume_id_prefix=picked[:12],
+            timeout_s=settings.autorespond_resume_resolve_timeout_seconds,
+        )
+        return picked
 
 
 async def _wait_for_autorespond_work_units(
@@ -399,11 +451,15 @@ async def _run_autorespond_async(
     suppress_progress: bool = False,
     progress_task_key: str | None = None,
 ) -> dict:
+    from src.bot.modules.autoparse import feed_services as feed_services_autorespond
     from src.bot.modules.autoparse import services as ap_service
     from src.core.constants import AppSettingKey
     from src.core.i18n import get_text
     from src.repositories.autoparse import AutoparseCompanyRepository
+    from src.repositories.hh_linked_account import HhLinkedAccountRepository
     from src.repositories.user import UserRepository
+    from src.services.ai.client import AIClient, close_ai_client
+    from src.services.ai.resume_selection import normalize_hh_resume_cache_items
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
         clear_autorespond_employer_test_counter,
@@ -412,25 +468,17 @@ async def _run_autorespond_async(
         clear_autorespond_ui_tail_sync,
         clear_hh_ui_batch_checkpoint_sync,
         clear_hh_ui_resume_envelope_sync,
-        is_autorespond_cancelled_sync,
         hh_ui_batch_resume_payload,
+        is_autorespond_cancelled_sync,
         load_autorespond_employer_test_count_sync,
         save_autorespond_ui_tail_sync,
         save_hh_ui_resume_envelope_sync,
         set_autorespond_parent_loop_active_sync,
         touch_autorespond_parent_loop_heartbeat_sync,
-        tick_autorespond_bar,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
     from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
     from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
-    from src.repositories.hh_linked_account import HhLinkedAccountRepository
-    from src.services.ai.client import AIClient, close_ai_client
-    from src.services.ai.resume_selection import (
-        normalize_hh_resume_cache_items,
-        resolve_resume_id_for_autorespond_vacancy,
-    )
-    from src.bot.modules.autoparse import feed_services as feed_services_autorespond
 
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
@@ -805,6 +853,14 @@ async def _run_autorespond_async(
                 apply_to_vacancies_batch_ui_task.delay(
                     **{**resume_kwargs, "items": batch_payload},
                 )
+                logger.info(
+                    "autorespond_flush_ui_batch",
+                    company_id=company_id,
+                    user_id=user.id,
+                    task_key=task_key,
+                    batch_size=n,
+                    queued_after=queued + n,
+                )
                 queued += n
                 ui_batch_buffer.clear()
                 for _ in range(n):
@@ -848,69 +904,87 @@ async def _run_autorespond_async(
                 if task_key and user.telegram_id:
                     touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
 
+                if idx == 1 or idx % settings.autorespond_loop_progress_log_every == 0:
+                    logger.info(
+                        "autorespond_loop_progress",
+                        company_id=company_id,
+                        user_id=user.id,
+                        trigger=trigger,
+                        idx=idx,
+                        capped_total=len(capped),
+                        queued=queued,
+                        skipped=skipped,
+                        failed=failed,
+                        ui_buffer=len(ui_batch_buffer),
+                        hh_ui_apply_enabled=settings.hh_ui_apply_enabled,
+                    )
+
                 if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
                     if vac.needs_employer_questions:
                         employer_tests += 1
                     skipped += 1
                     continue
 
-                preflight = await _autorespond_vacancy_preflight(vac.hh_vacancy_id)
-                if task_key and user.telegram_id:
-                    touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
-                if preflight.unavailable:
-                    skipped += 1
-                    async with session_factory() as s_merge:
-                        await feed_services_autorespond.merge_dislike_vacancy_into_feed_sessions(
-                            s_merge,
-                            user.id,
-                            company_id,
-                            vac.id,
-                        )
-                    if ar_prog and progress_bot:
-                        await tick_autorespond_bar(
-                            bot=progress_bot,
-                            chat_id=user.telegram_id,
-                            task_key=ar_prog["task_key"],
-                            total=ar_prog["total"],
-                            locale=ar_prog["locale"],
-                            footer_failed_line=get_text(
-                                "autorespond-progress-failed", locale, count=failed
-                            ),
-                            title=ar_prog.get("title"),
-                            celery_task_id=ar_prog.get("celery_task_id"),
-                            bar_index=int(ar_prog.get("bar_index", 0)),
-                            finish_progress_task=bool(
-                                ar_prog.get("finish_progress_task", True)
-                            ),
-                        )
-                    continue
-                if preflight.requires_employer_test:
-                    skipped += 1
-                    employer_tests += 1
-                    async with session_factory() as s_eq:
-                        vac_repo = AutoparsedVacancyRepository(s_eq)
-                        row = await vac_repo.get_by_id(vac.id)
-                        if row:
-                            await vac_repo.update(row, needs_employer_questions=True)
-                        await s_eq.commit()
-                    if ar_prog and progress_bot:
-                        await tick_autorespond_bar(
-                            bot=progress_bot,
-                            chat_id=user.telegram_id,
-                            task_key=ar_prog["task_key"],
-                            total=ar_prog["total"],
-                            locale=ar_prog["locale"],
-                            footer_failed_line=get_text(
-                                "autorespond-progress-failed", locale, count=failed
-                            ),
-                            title=ar_prog.get("title"),
-                            celery_task_id=ar_prog.get("celery_task_id"),
-                            bar_index=int(ar_prog.get("bar_index", 0)),
-                            finish_progress_task=bool(
-                                ar_prog.get("finish_progress_task", True)
-                            ),
-                        )
-                    continue
+                # hh_ui worker re-runs public preflight at apply time; skip 800+ sequential
+                # HTTP probes here (was blocking the parent worker for tens of minutes).
+                if not settings.hh_ui_apply_enabled:
+                    preflight = await _autorespond_vacancy_preflight(vac.hh_vacancy_id)
+                    if task_key and user.telegram_id:
+                        touch_autorespond_parent_loop_heartbeat_sync(user.telegram_id, task_key)
+                    if preflight.unavailable:
+                        skipped += 1
+                        async with session_factory() as s_merge:
+                            await feed_services_autorespond.merge_dislike_vacancy_into_feed_sessions(
+                                s_merge,
+                                user.id,
+                                company_id,
+                                vac.id,
+                            )
+                        if ar_prog and progress_bot:
+                            await _tick_autorespond_bar_bounded(
+                                bot=progress_bot,
+                                chat_id=user.telegram_id,
+                                task_key=ar_prog["task_key"],
+                                total=ar_prog["total"],
+                                locale=ar_prog["locale"],
+                                footer_failed_line=get_text(
+                                    "autorespond-progress-failed", locale, count=failed
+                                ),
+                                title=ar_prog.get("title"),
+                                celery_task_id=ar_prog.get("celery_task_id"),
+                                bar_index=int(ar_prog.get("bar_index", 0)),
+                                finish_progress_task=bool(
+                                    ar_prog.get("finish_progress_task", True)
+                                ),
+                            )
+                        continue
+                    if preflight.requires_employer_test:
+                        skipped += 1
+                        employer_tests += 1
+                        async with session_factory() as s_eq:
+                            vac_repo = AutoparsedVacancyRepository(s_eq)
+                            row = await vac_repo.get_by_id(vac.id)
+                            if row:
+                                await vac_repo.update(row, needs_employer_questions=True)
+                            await s_eq.commit()
+                        if ar_prog and progress_bot:
+                            await _tick_autorespond_bar_bounded(
+                                bot=progress_bot,
+                                chat_id=user.telegram_id,
+                                task_key=ar_prog["task_key"],
+                                total=ar_prog["total"],
+                                locale=ar_prog["locale"],
+                                footer_failed_line=get_text(
+                                    "autorespond-progress-failed", locale, count=failed
+                                ),
+                                title=ar_prog.get("title"),
+                                celery_task_id=ar_prog.get("celery_task_id"),
+                                bar_index=int(ar_prog.get("bar_index", 0)),
+                                finish_progress_task=bool(
+                                    ar_prog.get("finish_progress_task", True)
+                                ),
+                            )
+                        continue
 
                 if settings.hh_ui_apply_enabled:
                     if not try_acquire_ui_apply_slot_sync(user.id):
@@ -965,7 +1039,7 @@ async def _run_autorespond_async(
                         }
                     if len(resume_items) > 1 and cover_ai_client is None:
                         cover_ai_client = AIClient()
-                    resume_id = await resolve_resume_id_for_autorespond_vacancy(
+                    resume_id = await _resolve_resume_for_autorespond_bounded(
                         cover_ai_client,
                         vac,
                         resume_items,
@@ -976,7 +1050,7 @@ async def _run_autorespond_async(
                     if not resume_id:
                         skipped += 1
                         if ar_prog and progress_bot:
-                            await tick_autorespond_bar(
+                            await _tick_autorespond_bar_bounded(
                                 bot=progress_bot,
                                 chat_id=user.telegram_id,
                                 task_key=ar_prog["task_key"],
@@ -1008,7 +1082,7 @@ async def _run_autorespond_async(
                 else:
                     if len(resume_items) > 1 and cover_ai_client is None:
                         cover_ai_client = AIClient()
-                    resume_id = await resolve_resume_id_for_autorespond_vacancy(
+                    resume_id = await _resolve_resume_for_autorespond_bounded(
                         cover_ai_client,
                         vac,
                         resume_items,
@@ -1019,7 +1093,7 @@ async def _run_autorespond_async(
                     if not resume_id:
                         skipped += 1
                         if ar_prog and progress_bot:
-                            await tick_autorespond_bar(
+                            await _tick_autorespond_bar_bounded(
                                 bot=progress_bot,
                                 chat_id=user.telegram_id,
                                 task_key=ar_prog["task_key"],
@@ -1111,7 +1185,7 @@ async def _run_autorespond_async(
                         skipped += 1
 
                     if ar_prog and progress_bot:
-                        await tick_autorespond_bar(
+                        await _tick_autorespond_bar_bounded(
                             bot=progress_bot,
                             chat_id=user.telegram_id,
                             task_key=ar_prog["task_key"],
@@ -1233,9 +1307,9 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
     progress_task_key: str | None = None,
 ) -> dict:
     """Single Celery task: autoparse then autorespond with one pinned progress entry."""
+    from src.core.i18n import get_text
     from src.repositories.autoparse import AutoparseCompanyRepository
     from src.repositories.user import UserRepository
-    from src.core.i18n import get_text
     from src.services.progress_service import ProgressService, create_progress_redis
     from src.worker.tasks.autoparse import _run_autoparse_company_async
 
