@@ -7,7 +7,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from src.core.constants import TELEGRAM_SAFE_LIMIT
 from src.core.i18n import get_text
+from src.services.telegram.text_utils import split_text_for_telegram
 
 _JSON_OBJECT_RE = re.compile(
     r'\{\s*"work_experiences"\s*:\s*\[.*?\]\s*\}',
@@ -177,8 +179,16 @@ def payload_to_result(payload: dict[str, Any]) -> IntegratedDutiesResult:
     return IntegratedDutiesResult(keywords_used=keywords, work_experiences=blocks)
 
 
-def format_integrated_duties_report(payload: dict[str, Any], locale: str = "ru") -> str:
-    """Format stored integrated duties payload as HTML for Telegram."""
+def _format_company_block(block: IntegratedWorkExperienceBlock, locale: str) -> str:
+    header = block.company_name or str(block.work_exp_id)
+    if block.title:
+        header = f"{header} ({block.title})"
+    lines = [get_text("integrate-duties-report-company", locale, company=header)]
+    lines.extend(f"• {duty}" for duty in block.duties)
+    return "\n".join(lines)
+
+
+def _format_report_intro(payload: dict[str, Any], locale: str) -> str:
     result = payload_to_result(payload)
     lines = [
         get_text(
@@ -188,23 +198,98 @@ def format_integrated_duties_report(payload: dict[str, Any], locale: str = "ru")
         )
     ]
     if result.keywords_used:
-        keywords_line = get_text(
-            "integrate-duties-report-keywords",
-            locale,
-            keywords=", ".join(result.keywords_used),
+        lines.append(
+            get_text(
+                "integrate-duties-report-keywords",
+                locale,
+                keywords=", ".join(result.keywords_used),
+            )
         )
-        lines.append(keywords_line)
-
-    for block in result.work_experiences:
-        header = block.company_name or str(block.work_exp_id)
-        if block.title:
-            header = f"{header} ({block.title})"
-        lines.append("")
-        lines.append(get_text("integrate-duties-report-company", locale, company=header))
-        for duty in block.duties:
-            lines.append(f"• {duty}")
-
     return "\n".join(lines)
+
+
+def format_integrated_duties_report(payload: dict[str, Any], locale: str = "ru") -> str:
+    """Format stored integrated duties payload as HTML for Telegram."""
+    result = payload_to_result(payload)
+    intro = _format_report_intro(payload, locale)
+    blocks = [_format_company_block(block, locale) for block in result.work_experiences]
+    if not blocks:
+        return intro
+    return intro + "\n\n" + "\n\n".join(blocks)
+
+
+def paginate_integrated_duties_report(
+    payload: dict[str, Any],
+    locale: str = "ru",
+    *,
+    max_len: int = TELEGRAM_SAFE_LIMIT,
+    completed_header: str | None = None,
+) -> list[str]:
+    """Split integrated duties report into Telegram-sized pages at company boundaries."""
+    result = payload_to_result(payload)
+    intro = _format_report_intro(payload, locale)
+    if completed_header:
+        intro = f"{completed_header}\n\n{intro}"
+
+    company_blocks = [_format_company_block(block, locale) for block in result.work_experiences]
+    if not company_blocks:
+        return [intro[:max_len]]
+
+    pages: list[str] = []
+    current_parts: list[str] = [intro]
+    current_len = len(intro)
+
+    def flush_page() -> None:
+        nonlocal current_parts, current_len
+        if current_parts:
+            pages.append("\n\n".join(current_parts))
+        current_parts = []
+        current_len = 0
+
+    for block_text in company_blocks:
+        separator = "\n\n" if current_parts else ""
+        addition = f"{separator}{block_text}" if current_parts else block_text
+
+        if current_len + len(addition) <= max_len:
+            current_parts.append(block_text)
+            current_len += len(addition)
+            continue
+
+        if current_parts:
+            flush_page()
+
+        if len(block_text) <= max_len:
+            current_parts = [block_text]
+            current_len = len(block_text)
+            continue
+
+        for chunk in split_text_for_telegram(block_text, max_len=max_len):
+            pages.append(chunk)
+
+    if current_parts:
+        flush_page()
+
+    return pages or [intro[:max_len]]
+
+
+def get_integrated_duties_report_page(
+    payload: dict[str, Any],
+    locale: str = "ru",
+    *,
+    page: int = 0,
+    max_len: int = TELEGRAM_SAFE_LIMIT,
+    completed_header: str | None = None,
+) -> tuple[str, int]:
+    """Return one report page and total page count."""
+    pages = paginate_integrated_duties_report(
+        payload,
+        locale,
+        max_len=max_len,
+        completed_header=completed_header,
+    )
+    total_pages = len(pages)
+    page_index = max(0, min(page, total_pages - 1)) if total_pages else 0
+    return pages[page_index], total_pages
 
 
 def duties_list_to_text(duties: list[str]) -> str:

@@ -26,6 +26,7 @@ class IntegrateDutiesCallback(CallbackData, prefix="id"):
     company_id: int
     action: str
     work_exp_id: int = 0
+    page: int = 0
 
 
 class WorkExperienceCallback(CallbackData, prefix="we"):

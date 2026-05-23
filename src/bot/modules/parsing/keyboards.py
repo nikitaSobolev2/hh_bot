@@ -167,13 +167,61 @@ def format_choice_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def integrate_duties_result_keyboard(
+def integrate_duties_report_keyboard(
     company_id: int,
     i18n: I18nContext | None = None,
     locale: str = "ru",
+    *,
+    page: int = 0,
+    total_pages: int = 1,
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text=_t("btn-prev", i18n, locale),
+                    callback_data=IntegrateDutiesCallback(
+                        company_id=company_id,
+                        action="view",
+                        page=page - 1,
+                    ).pack(),
+                )
+            )
+        page_label = _t(
+            "integrate-duties-report-page",
+            i18n,
+            locale,
+            current=str(page + 1),
+            total=str(total_pages),
+        )
+        nav.append(
+            InlineKeyboardButton(
+                text=page_label,
+                callback_data=IntegrateDutiesCallback(
+                    company_id=company_id,
+                    action="view",
+                    page=page,
+                ).pack(),
+            )
+        )
+        if page < total_pages - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text=_t("btn-next", i18n, locale),
+                    callback_data=IntegrateDutiesCallback(
+                        company_id=company_id,
+                        action="view",
+                        page=page + 1,
+                    ).pack(),
+                )
+            )
+        rows.append(nav)
+
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text=_t("btn-apply-integrated-duties", i18n, locale),
@@ -190,6 +238,24 @@ def integrate_duties_result_keyboard(
                 )
             ],
         ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def integrate_duties_result_keyboard(
+    company_id: int,
+    i18n: I18nContext | None = None,
+    locale: str = "ru",
+    *,
+    page: int = 0,
+    total_pages: int = 1,
+) -> InlineKeyboardMarkup:
+    return integrate_duties_report_keyboard(
+        company_id,
+        i18n,
+        locale,
+        page=page,
+        total_pages=total_pages,
     )
 
 

@@ -9,7 +9,7 @@ from src.core.logging import get_logger
 from src.services.ai.duties_integration import (
     IntegratedWorkExperienceBlock,
     build_integrated_duties_payload,
-    format_integrated_duties_report,
+    get_integrated_duties_report_page,
     parse_integrated_duties_response,
 )
 from src.worker.app import celery_app
@@ -288,20 +288,27 @@ async def _integrate_duties_async(
                 agg.integrated_duties_at = datetime.now(UTC).replace(tzinfo=None)
             await session.commit()
 
-        report_text = format_integrated_duties_report(payload, locale)
-        if len(report_text) > 4000:
-            report_text = report_text[:3900] + "\n…"
-
         header = get_text(
             "integrate-duties-completed-header",
             locale,
             title=company.vacancy_title,
         )
+        report_text, total_pages = get_integrated_duties_report_page(
+            payload,
+            locale,
+            page=0,
+            completed_header=header,
+        )
         await _notify_user(
             bot,
             telegram_chat_id,
-            f"{header}\n\n{report_text}",
-            reply_markup=integrate_duties_result_keyboard(parsing_company_id, locale=locale),
+            report_text,
+            reply_markup=integrate_duties_result_keyboard(
+                parsing_company_id,
+                locale=locale,
+                page=0,
+                total_pages=total_pages,
+            ),
         )
 
         await _save_task_record(

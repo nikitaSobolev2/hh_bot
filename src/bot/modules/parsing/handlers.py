@@ -25,7 +25,7 @@ from src.bot.modules.parsing.keyboards import (
     count_input_keyboard,
     format_choice_keyboard,
     integrate_duties_apply_confirm_keyboard,
-    integrate_duties_result_keyboard,
+    integrate_duties_report_keyboard,
     language_selection_keyboard,
     parsing_hh_account_keyboard,
     parsing_list_keyboard,
@@ -1313,6 +1313,39 @@ async def key_phrases_select_style(
 # --------------- integrate duties into work experience ---------------
 
 
+async def _show_integrated_duties_report(
+    message,
+    *,
+    company_id: int,
+    payload: dict,
+    user: User,
+    i18n: I18nContext,
+    page: int = 0,
+    completed_header: str | None = None,
+) -> None:
+    from src.bot.utils.limits import get_max_message_length
+    from src.services.ai.duties_integration import get_integrated_duties_report_page
+
+    locale = user.language_code or "ru"
+    max_len = get_max_message_length(user, "default")
+    report_text, total_pages = get_integrated_duties_report_page(
+        payload,
+        locale,
+        page=page,
+        max_len=max_len,
+        completed_header=completed_header,
+    )
+    await message.edit_text(
+        report_text,
+        reply_markup=integrate_duties_report_keyboard(
+            company_id,
+            i18n,
+            page=page,
+            total_pages=total_pages,
+        ),
+    )
+
+
 async def _validate_integrate_duties_prerequisites(
     session: AsyncSession,
     user: User,
@@ -1369,25 +1402,19 @@ async def integrate_duties_view(
     session: AsyncSession,
     i18n: I18nContext,
 ) -> None:
-    from src.services.ai.duties_integration import format_integrated_duties_report
-
     company = await parsing_service.get_company_for_user(session, callback_data.company_id, user.id)
     agg = await parsing_service.get_aggregated_result(session, callback_data.company_id)
     if not company or not agg or not agg.integrated_duties:
         await callback.answer(i18n.get("integrate-duties-error-not-found"), show_alert=True)
         return
 
-    locale = user.language_code or "ru"
-    report_text = format_integrated_duties_report(agg.integrated_duties, locale)
-    if len(report_text) > 4000:
-        report_text = report_text[:3900] + "\n…"
-
-    await callback.message.edit_text(
-        report_text,
-        reply_markup=integrate_duties_result_keyboard(
-            callback_data.company_id,
-            i18n,
-        ),
+    await _show_integrated_duties_report(
+        callback.message,
+        company_id=callback_data.company_id,
+        payload=agg.integrated_duties,
+        user=user,
+        i18n=i18n,
+        page=callback_data.page,
     )
     await callback.answer()
 

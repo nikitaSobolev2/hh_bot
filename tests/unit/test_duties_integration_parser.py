@@ -87,3 +87,60 @@ def test_build_integrated_duties_payload_and_report():
 
 def test_duties_list_to_text_formats_bullets():
     assert duties_list_to_text(["First", "Second"]) == "- First\n- Second"
+
+
+def test_paginate_integrated_duties_report_splits_by_company_blocks():
+    from src.services.ai.duties_integration import (
+        IntegratedWorkExperienceBlock,
+        paginate_integrated_duties_report,
+    )
+
+    long_duty = "Разрабатывал " + ("API " * 200)
+    payload = build_integrated_duties_payload(
+        vacancy_title="Backend",
+        keywords_used=["Python"],
+        blocks=[
+            IntegratedWorkExperienceBlock(1, "Company A", "Dev", [long_duty]),
+            IntegratedWorkExperienceBlock(2, "Company B", "Dev", ["Short duty"]),
+        ],
+    )
+
+    pages = paginate_integrated_duties_report(payload, locale="en", max_len=500)
+
+    assert len(pages) >= 2
+    assert "Company A" in pages[0] or "Company A" in pages[1]
+    assert any("Company B" in page for page in pages)
+
+
+def test_get_integrated_duties_report_page_returns_requested_page():
+    from src.services.ai.duties_integration import (
+        IntegratedWorkExperienceBlock,
+        get_integrated_duties_report_page,
+        paginate_integrated_duties_report,
+    )
+
+    payload = build_integrated_duties_payload(
+        vacancy_title="Backend Developer Role",
+        keywords_used=["Python", "Docker", "Kubernetes"],
+        blocks=[
+            IntegratedWorkExperienceBlock(
+                1,
+                "Company A With Long Name",
+                "Senior Developer",
+                ["Duty A " * 20],
+            ),
+            IntegratedWorkExperienceBlock(
+                2,
+                "Company B With Long Name",
+                "Middle Developer",
+                ["Duty B " * 20],
+            ),
+        ],
+    )
+    pages = paginate_integrated_duties_report(payload, locale="en", max_len=250)
+    assert len(pages) >= 2
+
+    text, total = get_integrated_duties_report_page(payload, locale="en", page=1, max_len=250)
+
+    assert total == len(pages)
+    assert text == pages[1]

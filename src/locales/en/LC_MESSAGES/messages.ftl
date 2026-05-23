@@ -393,6 +393,7 @@ integrate-duties-completed-header = <b>✅ Duties with integrated keywords — {
 integrate-duties-report-header = <b>📋 Integrated Duties — { $title }</b>
 integrate-duties-report-keywords = <i>Keywords:</i> { $keywords }
 integrate-duties-report-company = <b>{ $company }</b>
+integrate-duties-report-page = Page { $current }/{ $total }
 integrate-duties-apply-confirm =
     Apply integrated duties to your profile?
     Current duties in affected work experience entries will be replaced.
