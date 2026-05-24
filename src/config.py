@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     )
     hh_ui_apply_batch_task_soft_time_limit: int = Field(default=2400, ge=300, le=14400)
     hh_ui_apply_batch_task_time_limit: int = Field(default=3000, ge=600, le=18000)
+    # Per-vacancy cap inside ``hh_ui.apply_to_vacancies_batch`` (includes AI retries).
+    hh_ui_batch_cover_letter_timeout_seconds: float = Field(default=90.0, ge=10.0, le=600.0)
+    # Redis lock for global Chromium slot; renewed while a batch holds the browser.
+    playwright_browser_lock_ttl_seconds: int = Field(default=120, ge=60, le=900)
+    playwright_browser_lock_renew_interval_seconds: int = Field(default=45, ge=15, le=300)
+    playwright_browser_lock_wait_seconds: float = Field(default=180.0, ge=30.0, le=600.0)
     hh_ui_apply_max_retries: int = Field(default=5, ge=1, le=10)
     hh_ui_apply_retry_initial_seconds: float = Field(default=10.0, ge=1.0, le=300.0)
     hh_ui_apply_retry_delay_cap_seconds: float = Field(default=600.0, ge=10.0, le=3600.0)
@@ -180,6 +186,13 @@ class Settings(BaseSettings):
             raise ValueError(
                 "hh_ui_apply_batch_task_time_limit must be greater than "
                 "hh_ui_apply_batch_task_soft_time_limit"
+            )
+        pw_ttl = self.playwright_browser_lock_ttl_seconds
+        pw_renew = self.playwright_browser_lock_renew_interval_seconds
+        if pw_ttl < pw_renew * 2:
+            raise ValueError(
+                "playwright_browser_lock_ttl_seconds should be at least twice "
+                "playwright_browser_lock_renew_interval_seconds"
             )
         list_max = self.hh_public_api_list_delay_max_seconds
         list_min = self.hh_public_api_list_delay_min_seconds

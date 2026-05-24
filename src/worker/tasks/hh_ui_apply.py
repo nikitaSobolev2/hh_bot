@@ -58,6 +58,47 @@ def _coerce_debug_screenshots_flag(raw: object) -> bool:
     return bool(raw)
 
 
+async def _generate_batch_cover_letter_bounded(
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    vacancy_id: int,
+    cover_letter_style: str,
+    *,
+    cover_ai,
+) -> tuple[str, bool]:
+    """Return (letter, skipped_due_to_ai). On timeout/error apply without a cover letter."""
+    from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
+
+    try:
+        letter = await asyncio.wait_for(
+            generate_cover_letter_plaintext_for_autoparsed_vacancy(
+                session_factory,
+                user_id,
+                vacancy_id,
+                cover_letter_style,
+                ai_client=cover_ai,
+            ),
+            timeout=settings.hh_ui_batch_cover_letter_timeout_seconds,
+        )
+        return letter or "", False
+    except TimeoutError:
+        logger.warning(
+            "hh_ui_batch_cover_letter_timeout",
+            user_id=user_id,
+            vacancy_id=vacancy_id,
+            timeout_s=settings.hh_ui_batch_cover_letter_timeout_seconds,
+        )
+        return "", True
+    except Exception as exc:
+        logger.warning(
+            "hh_ui_batch_cover_letter_failed",
+            user_id=user_id,
+            vacancy_id=vacancy_id,
+            error=str(exc)[:300],
+        )
+        return "", True
+
+
 def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
     """Return (status, error_code) for hh_application_attempts.
 
@@ -336,13 +377,11 @@ async def _apply_batch_ui_async(
     autorespond_progress: dict | None = None,
 ) -> dict:
     """Apply to several vacancies in one Playwright session (autorespond batch)."""
-    from src.bot.modules.autoparse import feed_services
     from src.services.autorespond_progress import (
         hh_ui_batch_resume_payload,
         is_autorespond_cancelled_sync,
         save_hh_ui_batch_checkpoint_sync,
     )
-    from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
 
     if (
         autorespond_progress
@@ -537,43 +576,13 @@ async def _apply_batch_ui_async(
             if cover_task_enabled:
                 if cover_ai is None:
                     cover_ai = AIClient()
-                try:
-                    letter = await generate_cover_letter_plaintext_for_autoparsed_vacancy(
-                        session_factory,
-                        user_id,
-                        vid,
-                        cover_letter_style,
-                        ai_client=cover_ai,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "hh_ui_batch_cover_letter_failed",
-                        user_id=user_id,
-                        vacancy_id=vid,
-                        error=str(exc)[:300],
-                    )
-                    await _finalize_batch_item_async(
-                        self=self,
-                        session_factory=session_factory,
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        locale=locale,
-                        hh_linked_account_id=hh_linked_account_id,
-                        feed_session_id=feed_session_id,
-                        it=it,
-                        result=ApplyResult(
-                            outcome=ApplyOutcome.ERROR,
-                            detail=f"cover_letter:{exc}"[:500],
-                        ),
-                        items=items,
-                        finalized_vids=finalized_vids,
-                        bot=bot,
-                        silent_feed=silent_feed,
-                        send_error_screenshot_to_user=send_error_screenshot_to_user,
-                        autorespond_progress=autorespond_progress,
-                        resume_blob=resume_blob,
-                    )
-                    continue
+                letter, _skipped_cover = await _generate_batch_cover_letter_bounded(
+                    session_factory,
+                    user_id,
+                    vid,
+                    cover_letter_style,
+                    cover_ai=cover_ai,
+                )
             specs.append(
                 VacancyApplySpec(
                     autoparsed_vacancy_id=vid,
@@ -830,6 +839,24 @@ def apply_to_vacancies_batch_ui_task(
                             silent_feed=silent_feed,
                             autorespond_progress=autorespond_progress,
                         )
+            tail_outcome = _maybe_enqueue_next_ui_batch_from_tail(
+                user_id=user_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                locale=locale,
+                hh_linked_account_id=hh_linked_account_id,
+                feed_session_id=feed_session_id,
+                cover_letter_style=cover_letter_style,
+                cover_task_enabled=cover_task_enabled,
+                silent_feed=silent_feed,
+                autorespond_progress=autorespond_progress,
+                batch_result={"status": "ok", "processed": len(items)},
+            )
+            if tail_outcome == "deferred" and autorespond_progress:
+                _schedule_autorespond_ui_tail_watchdog(
+                    chat_id=int(chat_id),
+                    task_key=str(tk),
+                )
         else:
             logger.warning(
                 "hh_ui_apply_batch_soft_timeout",
