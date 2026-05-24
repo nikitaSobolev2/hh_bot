@@ -7,6 +7,19 @@ class TestStripSymbols:
     def test_replaces_special_characters_with_spaces(self):
         assert strip_symbols("hello-world!") == "hello world"
 
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("hello-world", "hello world"),
+            ("hello/world", "hello world"),
+            ("hello\\world", "hello world"),
+            ("hello|world", "hello world"),
+            ("a/b\\c|d", "a b c d"),
+        ],
+    )
+    def test_replaces_title_separators_with_spaces(self, raw: str, expected: str):
+        assert strip_symbols(raw) == expected
+
     def test_keeps_letters_numbers_spaces(self):
         assert strip_symbols("Frontend 2024") == "Frontend 2024"
 
@@ -123,6 +136,18 @@ class TestMatchesKeywordExpression:
             "Коммерческий опыт backend-разработки на PHP",
             "backend",
         )
+
+    @pytest.mark.parametrize(
+        "title,keyword",
+        [
+            ("Коммерческий опыт backend/разработки на PHP", "backend"),
+            ("Коммерческий опыт backend\\разработки на PHP", "backend"),
+            ("Frontend|Backend generalist", "backend"),
+            ("Frontend|Backend generalist", "frontend"),
+        ],
+    )
+    def test_title_separator_compounds_match_keyword(self, title: str, keyword: str):
+        assert matches_keyword_expression(title, keyword)
 
     def test_space_separated_implies_and_without_operators(self):
         """``python django`` normalizes to ``python,django`` when no ``,|!``."""

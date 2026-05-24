@@ -22,14 +22,21 @@ inside a longer word.
 
 import re
 
+_TITLE_SEPARATOR_RE = re.compile(r"[-/\\|]+")
 _NON_ALPHA_RE = re.compile(r"[^a-zA-Zа-яА-ЯёЁ0-9\s]")
 _MULTI_SPACE_RE = re.compile(r" +")
 _WORD_BOUNDARY_PART_RE_TEMPLATE = r"(?<!\w){}(?!\w)"
 
 
 def strip_symbols(text: str) -> str:
-    """Replace punctuation with spaces so hyphen/slash compounds become separate tokens."""
-    cleaned = _NON_ALPHA_RE.sub(" ", text)
+    """Replace title separators and other punctuation with spaces for token matching.
+
+    ``-``, ``/``, ``\\``, and ``|`` in vacancy titles become word boundaries first
+    (e.g. ``backend/frontend``, ``node\\js``, ``C|C++``), then remaining punctuation
+    is stripped the same way.
+    """
+    cleaned = _TITLE_SEPARATOR_RE.sub(" ", text)
+    cleaned = _NON_ALPHA_RE.sub(" ", cleaned)
     return _MULTI_SPACE_RE.sub(" ", cleaned).strip()
 
 
