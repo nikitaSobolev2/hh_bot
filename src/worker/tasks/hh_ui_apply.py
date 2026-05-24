@@ -321,6 +321,9 @@ async def _finalize_pump_item_async(
                 finish_progress_task=bool(
                     autorespond_progress.get("finish_progress_task", True)
                 ),
+                streaming_autorespond=bool(
+                    autorespond_progress.get("streaming_autorespond")
+                ),
             )
         except Exception as exc:
             logger.warning(
@@ -648,6 +651,23 @@ async def _apply_pump_async(
                 task_key=task_key,
                 chat_id=int(chat_id),
                 resume_envelope=resume_envelope,
+            )
+        elif (
+            abort_reason is None
+            and not _pump_cancelled()
+            and autorespond_progress
+            and autorespond_progress.get("streaming_autorespond")
+        ):
+            from src.services.autorespond_progress import (
+                maybe_finish_streaming_autorespond_progress,
+            )
+
+            await maybe_finish_streaming_autorespond_progress(
+                bot=bot,
+                chat_id=int(chat_id),
+                task_key=task_key,
+                locale=str(autorespond_progress.get("locale") or locale),
+                bar_index=int(autorespond_progress.get("bar_index", 0)),
             )
 
         return {

@@ -72,6 +72,10 @@ async def test_on_autoparsed_rows_enqueues_when_compat_ready() -> None:
         ),
         patch("src.services.autorespond_streaming.seed_ready_to_apply", return_value=1),
         patch("src.services.autorespond_streaming.save_pipeline_envelope"),
+        patch(
+            "src.services.autorespond_streaming.get_autorespond_done_count_sync",
+            return_value=0,
+        ),
         patch.object(feed, "_kick_pump_if_needed", new=AsyncMock()) as pump_mock,
     ):
         enqueued = await feed.on_autoparsed_rows([_vac(vid=42)])
@@ -120,3 +124,41 @@ async def test_on_autoparsed_rows_skips_without_compatibility_score() -> None:
 
     assert enqueued == 0
     assert feed._work_units == 0
+
+
+@pytest.mark.asyncio
+async def test_finalize_marks_streaming_parse_complete() -> None:
+    from src.services.autorespond_streaming import (
+        StreamingAutorespondContext,
+        StreamingAutorespondFeed,
+    )
+
+    ctx = StreamingAutorespondContext(
+        session_factory=MagicMock(),
+        company_id=1,
+        user_id=7,
+        chat_id=99,
+        task_key="pipeline:1:abc",
+        locale="ru",
+        celery_task_id="celery-1",
+        hh_linked_account_id=2,
+        progress=MagicMock(),
+        progress_bot=MagicMock(),
+    )
+    feed = StreamingAutorespondFeed(ctx)
+    feed._work_units = 2
+
+    with (
+        patch(
+            "src.services.autorespond_streaming.mark_streaming_parse_complete",
+        ) as mark_done,
+        patch(
+            "src.services.autorespond_streaming.maybe_finish_streaming_autorespond_progress",
+            new_callable=AsyncMock,
+        ) as maybe_finish,
+    ):
+        result = await feed.finalize()
+
+    mark_done.assert_called_once_with(99, "pipeline:1:abc")
+    maybe_finish.assert_awaited_once()
+    assert result["queued"] == 2

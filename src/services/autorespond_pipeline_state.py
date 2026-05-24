@@ -68,6 +68,11 @@ def pipeline_envelope_key(chat_id: int, task_key: str) -> str:
     return f"{_PIPELINE_ENVELOPE_KEY_PREFIX}{chat_id}:{task_key}"
 
 
+def streaming_parse_complete_key(chat_id: int, task_key: str) -> str:
+    """STR: set when autoparse phase finished for a streaming manual pipeline run."""
+    return f"autorespond:pipeline:streaming_done:{chat_id}:{task_key}"
+
+
 # ---------------------------------------------------------------------------
 # Envelope (recovery hint)
 # ---------------------------------------------------------------------------
@@ -103,6 +108,22 @@ def clear_pipeline_envelope(chat_id: int, task_key: str) -> None:
     r = _sync_redis()
     try:
         r.delete(pipeline_envelope_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+def mark_streaming_parse_complete(chat_id: int, task_key: str) -> None:
+    r = _sync_redis()
+    try:
+        r.set(streaming_parse_complete_key(chat_id, task_key), "1", ex=_PIPELINE_TTL_S)
+    finally:
+        r.close()
+
+
+def is_streaming_parse_complete(chat_id: int, task_key: str) -> bool:
+    r = _sync_redis()
+    try:
+        return r.get(streaming_parse_complete_key(chat_id, task_key)) is not None
     finally:
         r.close()
 
@@ -404,6 +425,7 @@ def clear_all_pipeline_state(chat_id: int, task_key: str) -> None:
             pump_heartbeat_key(chat_id, task_key),
             pump_lock_key(chat_id, task_key),
             pipeline_envelope_key(chat_id, task_key),
+            streaming_parse_complete_key(chat_id, task_key),
         )
     finally:
         r.close()

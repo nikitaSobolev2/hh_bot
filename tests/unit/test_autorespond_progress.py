@@ -444,3 +444,135 @@ async def test_tick_autorespond_bar_finishes_task_group_pipeline_when_done() -> 
     assert finished is True
     svc.finish_task.assert_awaited_once()
     assert redis.delete.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_tick_autorespond_bar_streaming_defers_finish_until_parse_complete() -> None:
+    from src.services.autorespond_progress import tick_autorespond_bar
+
+    redis = MagicMock()
+    redis.incr = AsyncMock(return_value=1)
+    redis.expire = AsyncMock()
+    redis.get = AsyncMock(return_value="0")
+    redis.delete = AsyncMock()
+    redis.aclose = AsyncMock()
+
+    svc = MagicMock()
+    svc.update_bar = AsyncMock()
+    svc.update_footer = AsyncMock()
+    svc.finish_task = AsyncMock()
+
+    with (
+        patch(
+            "src.services.autorespond_progress.create_progress_redis",
+            return_value=redis,
+        ),
+        patch(
+            "src.services.autorespond_progress._rehydrate_autorespond_progress_task_if_missing",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_progress.ProgressService",
+            return_value=svc,
+        ),
+        patch(
+            "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.services.progress_cancel.is_user_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_progress.resolve_autorespond_tick_total",
+            return_value=1,
+        ),
+        patch(
+            "src.services.autorespond_progress.streaming_autorespond_ready_to_finish",
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_progress.finish_task_group_autorespond_progress",
+            new_callable=AsyncMock,
+        ) as mock_finish_group,
+    ):
+        finished = await tick_autorespond_bar(
+            bot=MagicMock(),
+            chat_id=7,
+            task_key="pipeline:1:abc",
+            total=1,
+            locale="en",
+            finish_progress_task=False,
+            streaming_autorespond=True,
+        )
+
+    assert finished is False
+    mock_finish_group.assert_not_awaited()
+    svc.finish_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tick_autorespond_bar_streaming_finishes_when_pipeline_converged() -> None:
+    from src.services.autorespond_progress import tick_autorespond_bar
+
+    redis = MagicMock()
+    redis.incr = AsyncMock(return_value=3)
+    redis.expire = AsyncMock()
+    redis.get = AsyncMock(return_value="0")
+    redis.delete = AsyncMock()
+    redis.aclose = AsyncMock()
+
+    svc = MagicMock()
+    svc.update_bar = AsyncMock()
+    svc.update_footer = AsyncMock()
+    svc.finish_task = AsyncMock()
+
+    with (
+        patch(
+            "src.services.autorespond_progress.create_progress_redis",
+            return_value=redis,
+        ),
+        patch(
+            "src.services.autorespond_progress._rehydrate_autorespond_progress_task_if_missing",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_progress.ProgressService",
+            return_value=svc,
+        ),
+        patch(
+            "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.services.progress_cancel.is_user_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_progress.resolve_autorespond_tick_total",
+            return_value=3,
+        ),
+        patch(
+            "src.services.autorespond_progress.streaming_autorespond_ready_to_finish",
+            return_value=True,
+        ),
+        patch(
+            "src.services.autorespond_progress.finish_task_group_autorespond_progress",
+            new_callable=AsyncMock,
+        ) as mock_finish_group,
+    ):
+        finished = await tick_autorespond_bar(
+            bot=MagicMock(),
+            chat_id=7,
+            task_key="pipeline:1:abc",
+            total=1,
+            locale="en",
+            finish_progress_task=False,
+            streaming_autorespond=True,
+        )
+
+    assert finished is True
+    mock_finish_group.assert_awaited_once()
+    svc.finish_task.assert_not_awaited()

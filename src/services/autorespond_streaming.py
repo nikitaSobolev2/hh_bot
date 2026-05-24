@@ -27,6 +27,7 @@ from src.services.autoparse.compatibility import compatibility_score_needs_regen
 from src.services.autorespond_pipeline_state import (
     clear_pump_lock,
     mark_pregen_pending,
+    mark_streaming_parse_complete,
     save_pipeline_envelope,
     seed_ready_to_apply,
 )
@@ -34,7 +35,9 @@ from src.services.autorespond_progress import (
     clear_autorespond_done_counter,
     clear_autorespond_employer_test_counter,
     clear_autorespond_failed_counter,
+    get_autorespond_done_count_sync,
     hh_ui_batch_resume_payload,
+    maybe_finish_streaming_autorespond_progress,
 )
 from src.services.hh_ui.runner import normalize_hh_vacancy_url
 
@@ -147,6 +150,10 @@ class StreamingAutorespondFeed:
 
     async def _ensure_resume_envelope(self) -> dict[str, Any]:
         if self._resume_envelope is not None:
+            ar = self._resume_envelope.get("autorespond_progress")
+            if isinstance(ar, dict):
+                ar["total"] = max(0, self._work_units)
+                ar["streaming_autorespond"] = True
             return self._resume_envelope
         ar_prog = {
             "task_key": self.ctx.task_key,
@@ -156,6 +163,7 @@ class StreamingAutorespondFeed:
             "celery_task_id": self.ctx.celery_task_id,
             "bar_index": self.ctx.bar_index,
             "finish_progress_task": False,
+            "streaming_autorespond": True,
         }
         self._resume_envelope = hh_ui_batch_resume_payload(
             user_id=self.ctx.user_id,
@@ -285,10 +293,13 @@ class StreamingAutorespondFeed:
             },
         )
         if self.ctx.progress and self._work_units > 0:
+            current_done = get_autorespond_done_count_sync(
+                self.ctx.chat_id, self.ctx.task_key
+            )
             await self.ctx.progress.update_bar(
                 self.ctx.task_key,
                 self.ctx.bar_index,
-                0,
+                current_done,
                 self._work_units,
             )
         await self._kick_pump_if_needed()
@@ -354,6 +365,8 @@ class StreamingAutorespondFeed:
         """Tick pre-skipped units; leave pump running until the bar converges."""
         from src.worker.tasks.autorespond import _tick_autorespond_bar_bounded
 
+        mark_streaming_parse_complete(self.ctx.chat_id, self.ctx.task_key)
+
         if self._pre_skipped_ids and self.ctx.progress and self._work_units > 0:
             for _vid in self._pre_skipped_ids:
                 await _tick_autorespond_bar_bounded(
@@ -367,6 +380,7 @@ class StreamingAutorespondFeed:
                     celery_task_id=self.ctx.celery_task_id,
                     bar_index=self.ctx.bar_index,
                     finish_progress_task=False,
+                    streaming_autorespond=True,
                 )
 
         if self._work_units <= 0 and self.ctx.progress:
@@ -380,6 +394,14 @@ class StreamingAutorespondFeed:
                 bar_index=self.ctx.bar_index,
                 total=0,
                 applications_skipped=True,
+            )
+        elif self._work_units > 0 and self.ctx.progress:
+            await maybe_finish_streaming_autorespond_progress(
+                bot=self.ctx.progress_bot,
+                chat_id=self.ctx.chat_id,
+                task_key=self.ctx.task_key,
+                locale=self.ctx.locale,
+                bar_index=self.ctx.bar_index,
             )
 
         logger.info(

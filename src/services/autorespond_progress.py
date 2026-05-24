@@ -449,6 +449,76 @@ async def clear_autorespond_done_counter(chat_id: int, task_key: str) -> None:
         await redis.aclose()
 
 
+def get_autorespond_done_count_sync(chat_id: int, task_key: str) -> int:
+    r = _sync_redis()
+    try:
+        return int(r.get(autorespond_done_redis_key(chat_id, task_key)) or 0)
+    finally:
+        r.close()
+
+
+def resolve_autorespond_tick_total(
+    chat_id: int, task_key: str, fallback_total: int, *, streaming: bool
+) -> int:
+    """Use pipeline envelope total while streaming so pump ticks stay in sync with enqueues."""
+    if not streaming:
+        return fallback_total
+    from src.services.autorespond_pipeline_state import load_pipeline_envelope
+
+    envelope = load_pipeline_envelope(chat_id, task_key)
+    if envelope:
+        return max(fallback_total, int(envelope.get("total_work_units") or 0))
+    return fallback_total
+
+
+def streaming_autorespond_ready_to_finish(
+    chat_id: int, task_key: str, done: int, total: int
+) -> bool:
+    from src.services.autorespond_pipeline_state import (
+        is_streaming_parse_complete,
+        pregen_pending_count,
+        ready_remaining_count,
+    )
+
+    if not is_streaming_parse_complete(chat_id, task_key):
+        return False
+    if total <= 0 or done < total:
+        return False
+    if ready_remaining_count(chat_id, task_key) > 0:
+        return False
+    if pregen_pending_count(chat_id, task_key) > 0:
+        return False
+    return True
+
+
+async def maybe_finish_streaming_autorespond_progress(
+    *,
+    bot: Any,
+    chat_id: int,
+    task_key: str,
+    locale: str,
+    bar_index: int = 0,
+) -> bool:
+    """Finish task-group bar once streaming autoparse ended and all work units converged."""
+    redis = create_progress_redis()
+    try:
+        done = int(await redis.get(autorespond_done_redis_key(chat_id, task_key)) or 0)
+        total = resolve_autorespond_tick_total(chat_id, task_key, 0, streaming=True)
+        if not streaming_autorespond_ready_to_finish(chat_id, task_key, done, total):
+            return False
+        await finish_task_group_autorespond_progress(
+            bot=bot,
+            chat_id=chat_id,
+            task_key=task_key,
+            locale=locale,
+            bar_index=bar_index,
+            total=total,
+        )
+        return True
+    finally:
+        await redis.aclose()
+
+
 async def clear_autorespond_failed_counter(chat_id: int, task_key: str) -> None:
     redis = create_progress_redis()
     try:
@@ -718,19 +788,23 @@ async def tick_autorespond_bar(
     celery_task_id: str | None = None,
     bar_index: int = 0,
     finish_progress_task: bool = True,
+    streaming_autorespond: bool = False,
 ) -> bool:
     """Increment done counter, refresh bar, finish pinned progress when done >= total.
 
     Returns True if the autorespond progress task was finished (all steps accounted for).
     """
-    if total <= 0:
-        return False
-
     if is_autorespond_cancelled_sync(chat_id, task_key):
         return False
     from src.services.progress_cancel import is_user_cancelled_sync
 
     if is_user_cancelled_sync(chat_id, task_key):
+        return False
+
+    total = resolve_autorespond_tick_total(
+        chat_id, task_key, total, streaming=streaming_autorespond
+    )
+    if total <= 0:
         return False
 
     redis = create_progress_redis()
@@ -785,6 +859,20 @@ async def tick_autorespond_bar(
                 finish_progress_task=finish_progress_task,
             )
             if not finish_progress_task:
+                if streaming_autorespond:
+                    if streaming_autorespond_ready_to_finish(
+                        chat_id, task_key, done, total
+                    ):
+                        await finish_task_group_autorespond_progress(
+                            bot=bot,
+                            chat_id=chat_id,
+                            task_key=task_key,
+                            locale=locale,
+                            bar_index=bar_index,
+                            total=total,
+                        )
+                        return True
+                    return False
                 await finish_task_group_autorespond_progress(
                     bot=bot,
                     chat_id=chat_id,
