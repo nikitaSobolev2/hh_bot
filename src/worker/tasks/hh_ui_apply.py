@@ -40,7 +40,10 @@ from src.services.autorespond_pipeline_state import (
     pop_ready_batch,
     pregen_pending_count,
     ready_remaining_count,
+    release_pump_lock,
+    renew_pump_lock,
     touch_pump_heartbeat,
+    try_acquire_pump_lock,
 )
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh_ui.config import HhUiApplyConfig
@@ -368,6 +371,26 @@ async def _apply_pump_async(
         ensure_autorespond_progress_task_state_if_missing,
         is_autorespond_cancelled_sync,
     )
+    from src.services.progress_cancel import is_user_cancelled_sync
+
+    pump_owner = str(getattr(getattr(self, "request", None), "id", None) or "unknown")
+
+    def _pump_cancelled() -> bool:
+        return is_autorespond_cancelled_sync(int(chat_id), task_key) or is_user_cancelled_sync(
+            int(chat_id), task_key
+        )
+
+    if _pump_cancelled():
+        return {"status": "skipped", "processed": 0, "abort": "cancelled"}
+
+    if not try_acquire_pump_lock(int(chat_id), task_key, pump_owner):
+        logger.info(
+            "apply_pump_skipped_lock_held",
+            chat_id=chat_id,
+            task_key=task_key,
+            owner=pump_owner,
+        )
+        return {"status": "skipped", "processed": 0, "abort": "pump_lock_held"}
 
     bot = self.create_bot()
     autorespond_progress = _autorespond_progress_from_envelope(resume_envelope)
@@ -445,11 +468,12 @@ async def _apply_pump_async(
             soft_time_limit=soft_limit,
             grace_seconds=grace,
         ):
-            if is_autorespond_cancelled_sync(int(chat_id), task_key):
+            if _pump_cancelled():
                 abort_reason = "cancelled"
                 break
             await guard.wait_if_overloaded("apply_pump_between_batches")
             touch_pump_heartbeat(int(chat_id), task_key)
+            renew_pump_lock(int(chat_id), task_key, pump_owner)
 
             batch_specs = pop_ready_batch(int(chat_id), task_key, batch_size)
             if not batch_specs:
@@ -606,7 +630,12 @@ async def _apply_pump_async(
                 break
 
         # End of shift: decide whether to chain.
-        if abort_reason is None and ready_remaining_count(int(chat_id), task_key) > 0:
+        release_pump_lock(int(chat_id), task_key, pump_owner)
+        if (
+            abort_reason is None
+            and not _pump_cancelled()
+            and ready_remaining_count(int(chat_id), task_key) > 0
+        ):
             logger.info(
                 "apply_pump_chaining_self",
                 chat_id=chat_id,
@@ -627,6 +656,7 @@ async def _apply_pump_async(
             "abort": abort_reason,
         }
     finally:
+        release_pump_lock(int(chat_id), task_key, pump_owner)
         with contextlib.suppress(Exception):
             await bot.session.close()
 
@@ -653,13 +683,20 @@ def apply_pump_task(
             lambda sf: _apply_pump_async(self, sf, task_key, int(chat_id), resume_envelope)
         )
     except SoftTimeLimitExceeded:
+        from src.services.autorespond_progress import is_autorespond_cancelled_sync
+        from src.services.progress_cancel import is_user_cancelled_sync
+
         # Chain ourselves so the bar still converges; recover_stalled is the fallback.
         logger.warning(
             "apply_pump_soft_time_limit_chain",
             chat_id=chat_id,
             task_key=task_key,
         )
-        if ready_remaining_count(int(chat_id), task_key) > 0:
+        if (
+            ready_remaining_count(int(chat_id), task_key) > 0
+            and not is_autorespond_cancelled_sync(int(chat_id), task_key)
+            and not is_user_cancelled_sync(int(chat_id), task_key)
+        ):
             apply_pump_task.delay(
                 task_key=task_key,
                 chat_id=int(chat_id),

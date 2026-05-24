@@ -909,6 +909,7 @@ async def _run_autorespond_async(
             },
         )
 
+        from src.services.autorespond_pipeline_state import clear_pump_lock
         from src.worker.tasks.cover_letter import pregenerate_for_apply_task
         from src.worker.tasks.hh_ui_apply import apply_pump_task
 
@@ -923,6 +924,7 @@ async def _run_autorespond_async(
                     cover_letter_style=cover_letter_style,
                 )
 
+        clear_pump_lock(chat_id, task_key)
         apply_pump_task.delay(
             task_key=task_key,
             chat_id=chat_id,

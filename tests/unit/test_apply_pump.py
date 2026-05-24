@@ -37,6 +37,8 @@ def _build_async_pump_async(monkeypatch: pytest.MonkeyPatch):
     bot.session.close = AsyncMock()
     self = MagicMock()
     self.create_bot.return_value = bot
+    self.request = MagicMock()
+    self.request.id = "test-pump-owner"
 
     session = MagicMock()
     session.__aenter__ = AsyncMock(return_value=session)
@@ -75,7 +77,23 @@ def _build_async_pump_async(monkeypatch: pytest.MonkeyPatch):
         lambda: guard,
     )
     monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.try_acquire_pump_lock",
+        lambda *a, **k: True,
+    )
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.release_pump_lock",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.renew_pump_lock",
+        lambda *a, **k: True,
+    )
+    monkeypatch.setattr(
         "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+        lambda *a, **k: False,
+    )
+    monkeypatch.setattr(
+        "src.services.progress_cancel.is_user_cancelled_sync",
         lambda *a, **k: False,
     )
     monkeypatch.setattr(
@@ -254,5 +272,47 @@ async def test_apply_pump_aborts_on_cancellation(monkeypatch: pytest.MonkeyPatch
 
     result = await _apply_pump_async(self, session_factory, "autorespond:1:abc", 42, _envelope())
     assert result["abort"] == "cancelled"
-    # Cancelled runs do NOT chain self (recover_stalled cleans the run if needed).
+    delay_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_pump_skips_when_lock_not_acquired(monkeypatch: pytest.MonkeyPatch) -> None:
+    self, session_factory, _bot = _build_async_pump_async(monkeypatch)
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.try_acquire_pump_lock",
+        lambda *a, **k: False,
+    )
+
+    from src.worker.tasks.hh_ui_apply import _apply_pump_async
+
+    result = await _apply_pump_async(self, session_factory, "autorespond:1:abc", 42, _envelope())
+    assert result == {"status": "skipped", "processed": 0, "abort": "pump_lock_held"}
+
+
+@pytest.mark.asyncio
+async def test_apply_pump_does_not_chain_when_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    self, session_factory, _bot = _build_async_pump_async(monkeypatch)
+
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pop_ready_batch", lambda *a, **k: [])
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pregen_pending_count", lambda *a, **k: 0)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.touch_pump_heartbeat", MagicMock())
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.ready_remaining_count",
+        lambda *a, **k: 7,
+    )
+    monkeypatch.setattr(
+        "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+        lambda *a, **k: True,
+    )
+
+    delay_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.apply_pump_task",
+        MagicMock(delay=delay_mock),
+    )
+
+    from src.worker.tasks.hh_ui_apply import _apply_pump_async
+
+    result = await _apply_pump_async(self, session_factory, "autorespond:1:abc", 42, _envelope())
+    assert result["abort"] == "cancelled"
     delay_mock.assert_not_called()

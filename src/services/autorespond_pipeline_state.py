@@ -58,6 +58,11 @@ def pump_heartbeat_key(chat_id: int, task_key: str) -> str:
     return f"autorespond:pipeline:pump_hb:{chat_id}:{task_key}"
 
 
+def pump_lock_key(chat_id: int, task_key: str) -> str:
+    """STR: Celery task id of the single active ``apply_pump`` for this run."""
+    return f"autorespond:pipeline:pump_lock:{chat_id}:{task_key}"
+
+
 def pipeline_envelope_key(chat_id: int, task_key: str) -> str:
     """STR JSON: kwargs needed to re-enqueue ``apply_pump`` from ``recover_stalled``."""
     return f"{_PIPELINE_ENVELOPE_KEY_PREFIX}{chat_id}:{task_key}"
@@ -325,6 +330,55 @@ def clear_pump_heartbeat(chat_id: int, task_key: str) -> None:
         r.close()
 
 
+_PUMP_LOCK_TTL_S = 120
+
+
+def try_acquire_pump_lock(chat_id: int, task_key: str, owner: str) -> bool:
+    """Claim the sole apply-pump slot for this run. Returns False if another pump holds it."""
+    if not owner:
+        return False
+    r = _sync_redis()
+    try:
+        return bool(
+            r.set(pump_lock_key(chat_id, task_key), owner, nx=True, ex=_PUMP_LOCK_TTL_S)
+        )
+    finally:
+        r.close()
+
+
+def renew_pump_lock(chat_id: int, task_key: str, owner: str) -> bool:
+    """Extend lock TTL while this pump is alive. Returns False if ownership was lost."""
+    r = _sync_redis()
+    key = pump_lock_key(chat_id, task_key)
+    try:
+        current = r.get(key)
+        if current is None or str(current) != owner:
+            return False
+        r.expire(key, _PUMP_LOCK_TTL_S)
+        return True
+    finally:
+        r.close()
+
+
+def release_pump_lock(chat_id: int, task_key: str, owner: str) -> None:
+    r = _sync_redis()
+    key = pump_lock_key(chat_id, task_key)
+    try:
+        current = r.get(key)
+        if current is not None and str(current) == owner:
+            r.delete(key)
+    finally:
+        r.close()
+
+
+def clear_pump_lock(chat_id: int, task_key: str) -> None:
+    r = _sync_redis()
+    try:
+        r.delete(pump_lock_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
 # ---------------------------------------------------------------------------
 # Aggregate cleanup
 # ---------------------------------------------------------------------------
@@ -348,6 +402,7 @@ def clear_all_pipeline_state(chat_id: int, task_key: str) -> None:
             pregen_cache_key(chat_id, task_key),
             pregen_pending_key(chat_id, task_key),
             pump_heartbeat_key(chat_id, task_key),
+            pump_lock_key(chat_id, task_key),
             pipeline_envelope_key(chat_id, task_key),
         )
     finally:

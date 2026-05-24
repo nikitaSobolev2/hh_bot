@@ -185,24 +185,19 @@ class TestHandleProgressCancel:
                 "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
             ),
             patch(
+                "src.bot.modules.progress.handlers.clear_pump_lock",
+            ),
+            patch(
                 "src.bot.modules.progress.handlers.clear_all_pipeline_state",
             ),
+            patch(
+                "src.bot.modules.progress.handlers.finalize_autorespond_on_cancel",
+                new_callable=AsyncMock,
+            ) as mock_finalize,
             patch(
                 "src.bot.modules.progress.handlers.set_autorespond_cancelled",
                 new_callable=AsyncMock,
             ) as mock_cancel,
-            patch(
-                "src.bot.modules.progress.handlers.clear_autorespond_done_counter",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "src.bot.modules.progress.handlers.clear_autorespond_failed_counter",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "src.bot.modules.progress.handlers.clear_autorespond_employer_test_counter",
-                new_callable=AsyncMock,
-            ),
             patch(
                 "src.bot.modules.progress.handlers.set_user_cancelled_sync",
             ),
@@ -210,6 +205,7 @@ class TestHandleProgressCancel:
             await handle_progress_cancel(callback, user, _make_i18n())
 
         mock_cancel.assert_awaited_once()
+        mock_finalize.assert_awaited_once()
         callback.answer.assert_awaited_with(
             "Task cancelled.",
             show_alert=True,
@@ -324,18 +320,6 @@ class TestHandleProgressCancel:
                 new_callable=AsyncMock,
             ) as mock_cancel,
             patch(
-                "src.bot.modules.progress.handlers.clear_autorespond_done_counter",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "src.bot.modules.progress.handlers.clear_autorespond_failed_counter",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "src.bot.modules.progress.handlers.clear_autorespond_employer_test_counter",
-                new_callable=AsyncMock,
-            ),
-            patch(
                 "src.bot.modules.progress.handlers.clear_hh_ui_batch_checkpoint_sync",
             ),
             patch(
@@ -345,10 +329,17 @@ class TestHandleProgressCancel:
                 "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
             ),
             patch(
+                "src.bot.modules.progress.handlers.clear_pump_lock",
+            ),
+            patch(
                 "src.bot.modules.progress.handlers.clear_all_pipeline_state",
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_hh_ui_batch_active_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.finalize_autorespond_on_cancel",
+                new_callable=AsyncMock,
             ),
             patch(
                 "src.bot.modules.progress.handlers.set_user_cancelled_sync",

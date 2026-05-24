@@ -32,8 +32,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-from html import escape
 import json
+from html import escape
 
 from src.core.celery_async import normalize_celery_task_id
 from src.core.i18n import get_text
@@ -219,6 +219,7 @@ class ProgressService:
         steps: list[dict[str, str]] | None = None,
         active_step_index: int | None = None,
         group: dict[str, str | int] | None = None,
+        clear_cancel_flags: bool = True,
     ) -> None:
         """Register a new task and show or update the pinned progress message."""
         bars = []
@@ -236,12 +237,13 @@ class ProgressService:
             state["active_step_index"] = active_step_index
         if group is not None:
             state["group"] = dict(group)
-        with contextlib.suppress(Exception):
-            clear_user_cancelled_sync(self._chat_id, task_key)
-        with contextlib.suppress(Exception):
-            from src.services.autorespond_progress import clear_autorespond_cancelled_sync
+        if clear_cancel_flags:
+            with contextlib.suppress(Exception):
+                clear_user_cancelled_sync(self._chat_id, task_key)
+            with contextlib.suppress(Exception):
+                from src.services.autorespond_progress import clear_autorespond_cancelled_sync
 
-            clear_autorespond_cancelled_sync(self._chat_id, task_key)
+                clear_autorespond_cancelled_sync(self._chat_id, task_key)
         if celery_task_id is not None:
             nid = normalize_celery_task_id(celery_task_id)
             if nid:

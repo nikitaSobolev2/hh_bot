@@ -135,6 +135,39 @@ def test_load_checkpoint_empty_items_returns_resume(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_rehydrate_skips_when_autorespond_cancelled() -> None:
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    svc = MagicMock()
+    svc.start_task = AsyncMock()
+
+    with (
+        patch(
+            "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+            return_value=True,
+        ),
+    ):
+        from src.services.autorespond_progress import (
+            _rehydrate_autorespond_progress_task_if_missing,
+        )
+
+        result = await _rehydrate_autorespond_progress_task_if_missing(
+            redis=redis,
+            svc=svc,
+            chat_id=7,
+            task_key="pipeline:2:abc",
+            total=10,
+            locale="ru",
+            title="Test",
+            celery_task_id=None,
+            bar_index=2,
+        )
+
+    assert result is False
+    svc.start_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_refresh_autorespond_reenqueues_apply_pump_when_pipeline_pending() -> None:
     callback = MagicMock()
     callback.answer = AsyncMock()
@@ -373,6 +406,14 @@ async def test_tick_autorespond_bar_does_not_finish_task_group_progress() -> Non
         patch(
             "src.services.autorespond_progress.ProgressService",
             return_value=svc,
+        ),
+        patch(
+            "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.services.progress_cancel.is_user_cancelled_sync",
+            return_value=False,
         ),
     ):
         finished = await tick_autorespond_bar(

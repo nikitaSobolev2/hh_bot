@@ -477,6 +477,12 @@ async def _rehydrate_autorespond_progress_task_if_missing(
     bar_index: int = 0,
 ) -> bool:
     """If ProgressService task JSON is missing, run ``start_task``. Returns True if rehydrated."""
+    from src.services.progress_cancel import is_user_cancelled_sync
+
+    if is_autorespond_cancelled_sync(chat_id, task_key):
+        return False
+    if is_user_cancelled_sync(chat_id, task_key):
+        return False
     state_key = f"progress:task:{chat_id}:{task_key}"
     if await redis.get(state_key):
         return False
@@ -517,6 +523,7 @@ async def _rehydrate_autorespond_progress_task_if_missing(
                 },
             ],
             active_step_index=2,
+            clear_cancel_flags=False,
         )
     else:
         await svc.start_task(
@@ -538,8 +545,61 @@ async def _rehydrate_autorespond_progress_task_if_missing(
                 },
             ],
             active_step_index=1,
+            clear_cancel_flags=False,
         )
     return True
+
+
+async def finalize_autorespond_on_cancel(
+    *,
+    bot: Any,
+    chat_id: int,
+    task_key: str,
+    locale: str,
+    bar_index: int | None = None,
+) -> None:
+    """Mark autorespond bar complete after user cancel so queued pumps cannot restart it."""
+    redis = create_progress_redis()
+    try:
+        svc = ProgressService(bot, chat_id, redis, locale)
+        raw = await redis.get(svc._task_key(task_key))
+        if not raw:
+            return
+        state = json.loads(raw)
+        bars = state.get("bars") or []
+        ix = bar_index if bar_index is not None else max(0, len(bars) - 1)
+        total = int(bars[ix].get("total") or 0) if ix < len(bars) else 0
+        if total > 0:
+            await redis.set(
+                autorespond_done_redis_key(chat_id, task_key),
+                str(total),
+                ex=_DONE_TTL_S,
+            )
+            await svc.update_bar(task_key, ix, total, total)
+        for step in state.get("steps") or []:
+            if step.get("state") == "running":
+                step["state"] = "skipped"
+        await redis.set(
+            svc._task_key(task_key),
+            json.dumps(state),
+            ex=_DONE_TTL_S,
+        )
+        await svc.finish_task(
+            task_key,
+            shortage_note=get_text("progress-task-cancelled", locale),
+            complete_bars=True,
+        )
+        await redis.delete(autorespond_done_redis_key(chat_id, task_key))
+        await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
+        await redis.delete(autorespond_employer_test_redis_key(chat_id, task_key))
+        clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+        clear_hh_ui_resume_envelope_sync(chat_id, task_key)
+        clear_autorespond_ui_tail_sync(chat_id, task_key)
+        from src.services.autorespond_pipeline_state import clear_all_pipeline_state
+
+        clear_all_pipeline_state(chat_id, task_key)
+    finally:
+        await redis.aclose()
 
 
 async def ensure_autorespond_progress_task_state_if_missing(
@@ -559,6 +619,12 @@ async def ensure_autorespond_progress_task_state_if_missing(
     if total <= 0:
         return
     task_key = str(autorespond_progress["task_key"])
+    if is_autorespond_cancelled_sync(chat_id, task_key):
+        return
+    from src.services.progress_cancel import is_user_cancelled_sync
+
+    if is_user_cancelled_sync(chat_id, task_key):
+        return
     title = autorespond_progress.get("title")
     celery_task_id = autorespond_progress.get("celery_task_id")
     loc = str(autorespond_progress.get("locale") or locale)
@@ -617,6 +683,13 @@ async def tick_autorespond_bar(
     Returns True if the autorespond progress task was finished (all steps accounted for).
     """
     if total <= 0:
+        return False
+
+    if is_autorespond_cancelled_sync(chat_id, task_key):
+        return False
+    from src.services.progress_cancel import is_user_cancelled_sync
+
+    if is_user_cancelled_sync(chat_id, task_key):
         return False
 
     redis = create_progress_redis()

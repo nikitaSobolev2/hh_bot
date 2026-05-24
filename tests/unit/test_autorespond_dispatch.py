@@ -164,6 +164,10 @@ async def test_dispatch_filters_capped_pre_skipped_and_seeds_ready_zset(
         "src.worker.tasks.autorespond.mark_pregen_pending",
         lambda chat_id, task_key, vids: pending_marked.extend(vids),
     )
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.clear_pump_lock",
+        MagicMock(),
+    )
     envelope_calls: list[dict] = []
     monkeypatch.setattr(
         "src.worker.tasks.autorespond.save_pipeline_envelope",

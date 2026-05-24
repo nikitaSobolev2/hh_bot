@@ -20,7 +20,9 @@ class _FakeRedis:
     def get(self, key: str):
         return self.kv.get(key)
 
-    def set(self, key: str, value: str, ex: int | None = None):
+    def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+        if nx and key in self.kv:
+            return None
         self.kv[key] = value
         return True
 
@@ -199,6 +201,20 @@ def test_store_pregen_letter_removes_from_pending_and_caches(fake_redis: _FakeRe
     assert pregen_letter_exists(7, "t", 2)
     assert fetch_pregen_letter(7, "t", 2) == "hello"
     assert fetch_pregen_letter(7, "t", 99) is None
+
+
+def test_pump_lock_exclusive_per_run(fake_redis: _FakeRedis) -> None:
+    from src.services.autorespond_pipeline_state import (
+        clear_pump_lock,
+        release_pump_lock,
+        try_acquire_pump_lock,
+    )
+
+    assert try_acquire_pump_lock(7, "t", "owner-a") is True
+    assert try_acquire_pump_lock(7, "t", "owner-b") is False
+    release_pump_lock(7, "t", "owner-a")
+    assert try_acquire_pump_lock(7, "t", "owner-b") is True
+    clear_pump_lock(7, "t")
 
 
 def test_pump_heartbeat_age_seconds_returns_fresh_value(fake_redis: _FakeRedis) -> None:
