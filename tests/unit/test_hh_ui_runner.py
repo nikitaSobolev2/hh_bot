@@ -7,6 +7,7 @@ from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.runner import (
     normalize_hh_vacancy_url,
     render_search_page_with_storage,
+    search_page_html_diagnostics_for_log,
     vacancy_url_from_hh_id,
 )
 
@@ -31,6 +32,17 @@ def test_normalize_hh_vacancy_url_fallback() -> None:
 @contextmanager
 def _noop_playwright_browser_slot_sync():
     yield
+
+
+def test_search_page_html_diagnostics_for_log_detects_markers() -> None:
+    html = (
+        '<html><body><div data-qa="vacancy-serp__vacancy">'
+        '<a href="/vacancy/1">Job</a></div></body></html>'
+    )
+    diag = search_page_html_diagnostics_for_log(html)
+    assert diag["contains_vacancy_card_marker"] is True
+    assert diag["html_length"] == len(html)
+    assert "vacancy-serp__vacancy" in diag["html_excerpt"]
 
 
 def test_render_search_page_with_storage_scrolls_once_and_returns_html() -> None:
@@ -67,6 +79,15 @@ def test_render_search_page_with_storage_scrolls_once_and_returns_html() -> None
 
         def wait_for_timeout(self, ms: int) -> None:
             return None
+
+        def wait_for_load_state(self, state: str, **kwargs) -> None:
+            return None
+
+        def inner_text(self, selector: str) -> str:
+            return ""
+
+        def title(self) -> str:
+            return "HH search"
 
         def content(self) -> str:
             return "<html><body>loaded</body></html>"

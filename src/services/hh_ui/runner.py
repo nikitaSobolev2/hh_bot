@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import re
@@ -36,6 +37,7 @@ from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult, ListResumesRe
 from src.services.hh_ui.playwright_support import (
     HH_UI_VIEWPORT,
     dispose_sync_browser_context,
+    hh_browser_context_kwargs,
     is_playwright_browser_dead_error,
     launch_chromium_sync,
     playwright_browser_slot_sync,
@@ -59,8 +61,18 @@ _HH_UI_BATCH_MAX_TARGET_CLOSED_RECOVERIES_PER_ITEM = 8
 _XSRF_POLL_INTERVAL_S = 0.25
 _XSRF_WAIT_CAP_MS = 15_000
 _SEARCH_RESULTS_CARD_SELECTOR = '[data-qa="vacancy-serp__vacancy"]'
+_SEARCH_RESULTS_FALLBACK_CARD_SELECTORS: tuple[str, ...] = (
+    '[data-qa="serp-item__title"]',
+)
 _SEARCH_RESULTS_FULL_PAGE_CARD_COUNT = 50
+_SEARCH_PAGE_HTML_LOG_LEN = 2500
+_SEARCH_PAGE_POLL_INTERVAL_S = 0.35
 _VACANCY_DESCRIPTION_SELECTOR = '[data-qa="vacancy-description"]'
+_EMPTY_SEARCH_RESULT_PHRASES: tuple[str, ...] = (
+    "ничего не найдено",
+    "нет подходящих вакансий",
+    "no suitable vacancies",
+)
 
 
 def _wait_for_xsrf_for_popup(
@@ -227,10 +239,107 @@ class VacancyDetailRenderResult:
 
 
 def _count_search_cards(page: Any) -> int:
+    best = 0
+    for selector in (_SEARCH_RESULTS_CARD_SELECTOR, *_SEARCH_RESULTS_FALLBACK_CARD_SELECTORS):
+        try:
+            best = max(best, int(page.locator(selector).count()))
+        except Exception:
+            continue
+    return best
+
+
+def search_page_html_diagnostics_for_log(html: str | None) -> dict[str, Any]:
+    """Compact HTML/page markers for logs when vacancy search render finds zero cards."""
+    text = html or ""
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    lowered = collapsed.lower()
+    return {
+        "html_length": len(text),
+        "html_excerpt": collapsed[:_SEARCH_PAGE_HTML_LOG_LEN],
+        "contains_vacancy_card_marker": 'data-qa="vacancy-serp__vacancy"' in text,
+        "contains_serp_title_marker": 'data-qa="serp-item__title"' in text,
+        "contains_captcha_marker": "smartcaptcha" in lowered or "captcha" in lowered,
+        "contains_login_marker": "account/login" in lowered,
+    }
+
+
+def _page_suggests_empty_search_results(page: Any) -> bool:
     try:
-        return int(page.locator(_SEARCH_RESULTS_CARD_SELECTOR).count())
+        body_text = page.inner_text("body").lower()
     except Exception:
-        return 0
+        return False
+    return any(phrase in body_text for phrase in _EMPTY_SEARCH_RESULT_PHRASES)
+
+
+def _dismiss_cookie_banner(page: Any) -> None:
+    for hint in sel.COOKIE_ACCEPT:
+        try:
+            loc = page.locator(hint).first
+            if loc.count() > 0 and loc.is_visible():
+                loc.click(timeout=2000)
+                return
+        except Exception:
+            continue
+
+
+def _wait_for_search_page_load(page: Any, config: HhUiApplyConfig) -> None:
+    """Best-effort SPA hydration after ``domcontentloaded``."""
+    load_cap = min(15_000, config.navigation_timeout_ms)
+    idle_cap = min(20_000, config.navigation_timeout_ms)
+    with contextlib.suppress(Exception):
+        page.wait_for_load_state("load", timeout=load_cap)
+    with contextlib.suppress(Exception):
+        page.wait_for_load_state("networkidle", timeout=idle_cap)
+
+
+def _wait_for_search_cards(page: Any, config: HhUiApplyConfig) -> tuple[int, str | None]:
+    """Poll until vacancy cards appear, page reports empty results, or timeout."""
+    deadline = time.monotonic() + config.navigation_timeout_ms / 1000.0
+    last_reason: str | None = "waiting_for_cards"
+    while time.monotonic() < deadline:
+        if _detect_captcha(page):
+            return 0, "captcha"
+        if url_suggests_login_page(page.url):
+            return 0, "login_redirect"
+        count = _count_search_cards(page)
+        if count > 0:
+            return count, None
+        if _page_suggests_empty_search_results(page):
+            return 0, "empty_results_message"
+        time.sleep(_SEARCH_PAGE_POLL_INTERVAL_S)
+    return _count_search_cards(page), last_reason or "wait_timeout"
+
+
+def _log_empty_search_page_render(
+    *,
+    log_user_id: int | None,
+    url: str,
+    final_url: str | None,
+    html: str | None,
+    page: Any,
+    cards_before: int,
+    cards_after: int,
+    wait_reason: str | None,
+) -> None:
+    diagnostics = search_page_html_diagnostics_for_log(html)
+    page_title: str | None = None
+    body_excerpt: str | None = None
+    with contextlib.suppress(Exception):
+        page_title = page.title()
+    with contextlib.suppress(Exception):
+        body_excerpt = re.sub(r"\s+", " ", page.inner_text("body")).strip()[:800]
+    logger.warning(
+        "render_search_page_empty",
+        log_user_id=log_user_id,
+        url=url,
+        final_url=final_url,
+        cards_before_scroll=cards_before,
+        cards_after_scroll=cards_after,
+        wait_reason=wait_reason,
+        page_title=page_title,
+        body_excerpt=body_excerpt,
+        **diagnostics,
+    )
 
 
 def render_search_page_with_storage(
@@ -252,32 +361,27 @@ def render_search_page_with_storage(
         context = None
         try:
             browser = launch_chromium_sync(p, headless=config.headless)
-            context_kwargs: dict[str, Any] = {"viewport": HH_UI_VIEWPORT}
-            if storage_state:
-                context_kwargs["storage_state"] = storage_state
-            context = browser.new_context(**context_kwargs)
+            context = browser.new_context(**hh_browser_context_kwargs(storage_state))
             page = context.new_page()
             page.goto(
                 url,
                 wait_until="domcontentloaded",
                 timeout=config.navigation_timeout_ms,
             )
-            try:
-                page.locator(_SEARCH_RESULTS_CARD_SELECTOR).first.wait_for(
-                    state="attached",
-                    timeout=min(config.action_timeout_ms, config.navigation_timeout_ms),
-                )
-            except Exception:
-                pass
+            _wait_for_search_page_load(page, config)
+            _dismiss_cookie_banner(page)
+            cards_before, wait_reason = _wait_for_search_cards(page, config)
             _jitter(config)
-            cards_before = _count_search_cards(page)
             if cards_before < _SEARCH_RESULTS_FULL_PAGE_CARD_COUNT:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(max(config.min_action_delay_ms, 1000))
                 cards_after = _count_search_cards(page)
+                if cards_after == 0 and cards_before > 0:
+                    cards_after = cards_before
             else:
                 cards_after = cards_before
             final_url = page.url
+            html = page.content()
             logger.info(
                 "render_search_page_done",
                 log_user_id=log_user_id,
@@ -288,9 +392,21 @@ def render_search_page_with_storage(
                 cards_after_scroll=cards_after,
                 login_detected=url_suggests_login_page(final_url),
                 captcha_detected=_detect_captcha(page),
+                wait_reason=wait_reason,
             )
+            if cards_after == 0:
+                _log_empty_search_page_render(
+                    log_user_id=log_user_id,
+                    url=url,
+                    final_url=final_url,
+                    html=html,
+                    page=page,
+                    cards_before=cards_before,
+                    cards_after=cards_after,
+                    wait_reason=wait_reason,
+                )
             return SearchPageRenderResult(
-                html=page.content(),
+                html=html,
                 final_url=final_url,
                 cards_before_scroll=cards_before,
                 cards_after_scroll=cards_after,
@@ -1344,10 +1460,7 @@ def _launch_batch_browser_session(
 ) -> tuple[Any, Any, Any]:
     """New Chromium + context + page for :func:`apply_to_vacancies_ui_batch`."""
     browser = launch_chromium_sync(playwright, headless=config.headless)
-    context = browser.new_context(
-        storage_state=storage_state,
-        viewport=HH_UI_VIEWPORT,
-    )
+    context = browser.new_context(**hh_browser_context_kwargs(storage_state))
     page = context.new_page()
     return browser, context, page
 

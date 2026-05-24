@@ -25,6 +25,7 @@ from src.services.hh_ui.runner import (
     fetch_public_hh_api_json_via_browser,
     render_search_page_with_storage,
     render_vacancy_detail_page_with_storage,
+    search_page_html_diagnostics_for_log,
 )
 from src.services.parser.hh_mapper import map_api_vacancy_to_orm_fields
 from src.services.parser.keyword_match import matches_keyword_expression
@@ -59,6 +60,30 @@ def _advance_empty_raw_page_counter(consecutive_empty: int, raw_blocks: int) -> 
         return 0, False
     next_count = consecutive_empty + 1
     return next_count, next_count >= _CONSECUTIVE_EMPTY_RAW_PAGES_STOP
+
+
+def _log_web_search_empty_raw_page(
+    *,
+    page: int,
+    url: str,
+    parse_mode: str,
+    consecutive_empty: int,
+    rendered: object,
+) -> None:
+    """Log empty SERP scrape with HTML excerpt for debugging headless render issues."""
+    html = getattr(rendered, "html", None)
+    diagnostics = search_page_html_diagnostics_for_log(html if isinstance(html, str) else None)
+    logger.info(
+        "No raw vacancy blocks on page",
+        page=page,
+        url=url,
+        parse_mode=parse_mode,
+        consecutive_empty=consecutive_empty,
+        final_url=getattr(rendered, "final_url", None),
+        cards_before_scroll=getattr(rendered, "cards_before_scroll", None),
+        cards_after_scroll=getattr(rendered, "cards_after_scroll", None),
+        **diagnostics,
+    )
 # HH search list: retry same page (transient 403/429/5xx); do not unbound-block workers.
 _SEARCH_LIST_MAX_ATTEMPTS = 30
 _SEARCH_LIST_BODY_LOG_LEN = 800
@@ -1169,6 +1194,13 @@ class HHScraper:
                     raw_blocks,
                 )
                 if should_stop:
+                    _log_web_search_empty_raw_page(
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        consecutive_empty=consecutive_empty_raw_pages,
+                        rendered=rendered,
+                    )
                     logger.info(
                         "Stopping search pagination after consecutive empty raw pages",
                         page=page + 1,
@@ -1178,12 +1210,12 @@ class HHScraper:
                     )
                     break
                 if raw_blocks == 0:
-                    logger.info(
-                        "No raw vacancy blocks on page",
+                    _log_web_search_empty_raw_page(
                         page=page + 1,
                         url=url,
                         parse_mode=parse_mode,
                         consecutive_empty=consecutive_empty_raw_pages,
+                        rendered=rendered,
                     )
                     page += 1
                     continue
@@ -1391,6 +1423,13 @@ class HHScraper:
                     raw_blocks,
                 )
                 if should_stop:
+                    _log_web_search_empty_raw_page(
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        consecutive_empty=consecutive_empty_raw_pages,
+                        rendered=rendered,
+                    )
                     logger.info(
                         "Stopping search pagination after consecutive empty raw pages",
                         page=page + 1,
@@ -1400,12 +1439,12 @@ class HHScraper:
                     )
                     return collected[:batch_size], page, False
                 if raw_blocks == 0:
-                    logger.info(
-                        "No raw vacancy blocks on page",
+                    _log_web_search_empty_raw_page(
                         page=page + 1,
                         url=url,
                         parse_mode=parse_mode,
                         consecutive_empty=consecutive_empty_raw_pages,
+                        rendered=rendered,
                     )
                     page += 1
                     continue

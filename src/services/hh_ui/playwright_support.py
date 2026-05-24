@@ -27,6 +27,27 @@ CHROMIUM_LAUNCH_ARGS: tuple[str, ...] = (
 # Fixed desktop viewport so Magritte bottom-sheet selectors match desktop layouts.
 HH_UI_VIEWPORT: dict[str, int] = {"width": 1280, "height": 900}
 
+# Realistic desktop Chrome UA — default headless Chromium UA is often blocked by HH SPA.
+HH_UI_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+)
+
+
+def hh_browser_context_kwargs(
+    storage_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Shared Playwright context options for HH UI sessions."""
+    kwargs: dict[str, Any] = {
+        "viewport": HH_UI_VIEWPORT,
+        "user_agent": HH_UI_USER_AGENT,
+        "locale": "ru-RU",
+        "timezone_id": "Europe/Moscow",
+    }
+    if storage_state:
+        kwargs["storage_state"] = storage_state
+    return kwargs
+
 _PLAYWRIGHT_BROWSER_LOCK_KEY = "lock:playwright:chromium"
 _PLAYWRIGHT_BROWSER_LOCK_POLL_S = 0.25
 _CHROMIUM_LAUNCH_TIMEOUT_MS = 120_000
