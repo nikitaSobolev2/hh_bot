@@ -155,13 +155,20 @@ class TestCollectVacancyUrls:
     """Tests for collect_vacancy_urls pagination and stop conditions."""
 
     @pytest.mark.asyncio
-    async def test_stops_when_api_returns_empty_items(
+    async def test_stops_after_three_consecutive_empty_api_pages(
         self, sample_vacancy_api_response: dict
     ) -> None:
-        """Stops when the API returns a page with no vacancy items."""
+        """Stops only after three consecutive API pages with no raw vacancy items."""
         scraper = HHScraper()
         empty_response = {**sample_vacancy_api_response, "items": []}
-        mock_fetch = AsyncMock(side_effect=[sample_vacancy_api_response, empty_response])
+        mock_fetch = AsyncMock(
+            side_effect=[
+                sample_vacancy_api_response,
+                empty_response,
+                empty_response,
+                empty_response,
+            ]
+        )
 
         with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
             result = await scraper.collect_vacancy_urls(
@@ -171,7 +178,7 @@ class TestCollectVacancyUrls:
             )
 
         assert len(result) == 2
-        assert mock_fetch.call_count == 2
+        assert mock_fetch.call_count == 4
 
     @pytest.mark.asyncio
     async def test_web_mode_collects_cards_from_html_fixture(self) -> None:
@@ -261,11 +268,13 @@ class TestCollectVacancyUrlsBatch:
         assert "67890" not in returned_ids
 
     @pytest.mark.asyncio
-    async def test_has_more_false_when_no_pages(self) -> None:
-        """has_more is False when no vacancy items on page."""
+    async def test_has_more_false_after_three_consecutive_empty_api_pages(self) -> None:
+        """has_more is False after three consecutive pages with no raw vacancy items."""
         scraper = HHScraper()
         empty_api_response = {"items": [], "pages": 0, "page": 0, "per_page": 100}
-        mock_fetch = AsyncMock(return_value=empty_api_response)
+        mock_fetch = AsyncMock(
+            side_effect=[empty_api_response, empty_api_response, empty_api_response]
+        )
 
         with patch.object(scraper, "_fetch_vacancy_search_page", mock_fetch):
             urls, _, has_more = await scraper.collect_vacancy_urls_batch(
@@ -277,6 +286,51 @@ class TestCollectVacancyUrlsBatch:
 
         assert urls == []
         assert has_more is False
+        assert mock_fetch.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_web_mode_continues_after_single_empty_raw_page(self) -> None:
+        """Web mode keeps paginating when one page has zero raw vacancy blocks."""
+        scraper = HHScraper()
+        html = (
+            Path(__file__).resolve().parents[2] / "docs" / "vacancies-list-page.html"
+        ).read_text(encoding="utf-8")
+        empty_html = "<html><body></body></html>"
+        render_results = [
+            SearchPageRenderResult(
+                html=empty_html,
+                final_url="https://hh.ru/search/vacancy?page=0",
+                cards_before_scroll=0,
+                cards_after_scroll=0,
+            ),
+            SearchPageRenderResult(
+                html=html,
+                final_url="https://hh.ru/search/vacancy?page=1",
+                cards_before_scroll=20,
+                cards_after_scroll=50,
+            ),
+        ]
+
+        with (
+            patch(
+                "src.services.parser.scraper.render_search_page_with_storage",
+                side_effect=render_results,
+            ) as mock_render,
+            patch(
+                "src.services.parser.scraper.asyncio.to_thread",
+                new=AsyncMock(side_effect=lambda fn, **kwargs: fn(**kwargs)),
+            ),
+            patch.object(scraper, "_fetch_page_with_meta", new=AsyncMock()),
+        ):
+            result = await scraper.collect_vacancy_urls(
+                "https://hh.ru/search/vacancy?text=python",
+                keyword="",
+                target_count=5,
+                parse_mode="web",
+            )
+
+        assert result
+        assert mock_render.call_count == 2
 
     @pytest.mark.asyncio
     async def test_does_not_fetch_beyond_last_page_index(

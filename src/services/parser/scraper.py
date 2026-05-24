@@ -50,6 +50,15 @@ _DETAIL_FIELD_PREFIXES: dict[str, str] = {
 
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _MAX_PAGES = 100  # Up to 100 pages × 100 per_page (HH API max per page)
+_CONSECUTIVE_EMPTY_RAW_PAGES_STOP = 3
+
+
+def _advance_empty_raw_page_counter(consecutive_empty: int, raw_blocks: int) -> tuple[int, bool]:
+    """Track consecutive pages with zero raw vacancy blocks; stop after threshold."""
+    if raw_blocks > 0:
+        return 0, False
+    next_count = consecutive_empty + 1
+    return next_count, next_count >= _CONSECUTIVE_EMPTY_RAW_PAGES_STOP
 # HH search list: retry same page (transient 403/429/5xx); do not unbound-block workers.
 _SEARCH_LIST_MAX_ATTEMPTS = 30
 _SEARCH_LIST_BODY_LOG_LEN = 800
@@ -1109,6 +1118,7 @@ class HHScraper:
         last_total_pages: int | None = None
         if parse_mode == "web":
             cfg = HhUiApplyConfig.from_settings()
+            consecutive_empty_raw_pages = 0
             while new_collected_count < target_count:
                 if page >= _MAX_PAGES:
                     logger.warning(
@@ -1153,18 +1163,32 @@ class HHScraper:
                     )
                     break
                 soup = BeautifulSoup(rendered.html, "html.parser")
-                page_results = self._extract_vacancies_from_page(soup, keyword)
                 raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
-                page_had_results = bool(page_results) or raw_blocks > 0
-
-                if not page_had_results:
+                consecutive_empty_raw_pages, should_stop = _advance_empty_raw_page_counter(
+                    consecutive_empty_raw_pages,
+                    raw_blocks,
+                )
+                if should_stop:
                     logger.info(
-                        "No vacancy items on page",
+                        "Stopping search pagination after consecutive empty raw pages",
                         page=page + 1,
                         url=url,
                         parse_mode=parse_mode,
+                        consecutive_empty=consecutive_empty_raw_pages,
                     )
                     break
+                if raw_blocks == 0:
+                    logger.info(
+                        "No raw vacancy blocks on page",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        consecutive_empty=consecutive_empty_raw_pages,
+                    )
+                    page += 1
+                    continue
+
+                page_results = self._extract_vacancies_from_page(soup, keyword)
 
                 new_count, _, blacklisted_skipped = self._collect_new_from_page(
                     page_results,
@@ -1196,6 +1220,7 @@ class HHScraper:
                 page += 1
         else:
             async with httpx.AsyncClient() as client:
+                consecutive_empty_raw_pages = 0
                 while new_collected_count < target_count:
                     if page >= _MAX_PAGES:
                         logger.warning(
@@ -1230,28 +1255,33 @@ class HHScraper:
                         break
 
                     items = data.get("items", [])
-                    if not items:
+                    raw_blocks = len(items)
+                    consecutive_empty_raw_pages, should_stop = _advance_empty_raw_page_counter(
+                        consecutive_empty_raw_pages,
+                        raw_blocks,
+                    )
+                    if should_stop:
                         logger.info(
-                            "No vacancy items on page",
+                            "Stopping search pagination after consecutive empty raw pages",
                             page=page + 1,
                             url=api_url,
                             parse_mode=parse_mode,
+                            consecutive_empty=consecutive_empty_raw_pages,
                         )
                         break
+                    if raw_blocks == 0:
+                        logger.info(
+                            "No raw vacancy blocks on page",
+                            page=page + 1,
+                            url=api_url,
+                            parse_mode=parse_mode,
+                            consecutive_empty=consecutive_empty_raw_pages,
+                        )
+                        page += 1
+                        continue
 
                     last_total_pages = int(data.get("pages", 0) or 0)
                     page_results = self._extract_vacancies_from_api_response(data, keyword)
-                    raw_blocks = len(items)
-                    page_had_results = bool(items)
-
-                    if not page_had_results:
-                        logger.info(
-                            "No vacancy items on page",
-                            page=page + 1,
-                            url=api_url,
-                            parse_mode=parse_mode,
-                        )
-                        break
 
                     new_count, _, blacklisted_skipped = self._collect_new_from_page(
                         page_results,
@@ -1315,6 +1345,7 @@ class HHScraper:
 
         if parse_mode == "web":
             cfg = HhUiApplyConfig.from_settings()
+            consecutive_empty_raw_pages = 0
             while len(collected) < batch_size:
                 if page >= _MAX_PAGES:
                     return collected[:batch_size], page, False
@@ -1354,18 +1385,32 @@ class HHScraper:
                     )
                     return collected[:batch_size], page, False
                 soup = BeautifulSoup(rendered.html, "html.parser")
-                page_results = self._extract_vacancies_from_page(soup, keyword)
                 raw_blocks = len(soup.select('[data-qa="vacancy-serp__vacancy"]'))
-                page_had_results = bool(page_results) or raw_blocks > 0
-
-                if not page_had_results:
+                consecutive_empty_raw_pages, should_stop = _advance_empty_raw_page_counter(
+                    consecutive_empty_raw_pages,
+                    raw_blocks,
+                )
+                if should_stop:
                     logger.info(
-                        "No vacancy items on page",
+                        "Stopping search pagination after consecutive empty raw pages",
                         page=page + 1,
                         url=url,
                         parse_mode=parse_mode,
+                        consecutive_empty=consecutive_empty_raw_pages,
                     )
                     return collected[:batch_size], page, False
+                if raw_blocks == 0:
+                    logger.info(
+                        "No raw vacancy blocks on page",
+                        page=page + 1,
+                        url=url,
+                        parse_mode=parse_mode,
+                        consecutive_empty=consecutive_empty_raw_pages,
+                    )
+                    page += 1
+                    continue
+
+                page_results = self._extract_vacancies_from_page(soup, keyword)
 
                 self._collect_new_from_page(
                     page_results,
@@ -1396,12 +1441,13 @@ class HHScraper:
                 await self._notify_search_page_progress(on_search_page_scraped)
                 page += 1
                 if len(collected) >= batch_size:
-                    has_more = page_had_results and page < _MAX_PAGES
+                    has_more = page < _MAX_PAGES
                     return collected[:batch_size], page, has_more
 
             return collected[:batch_size], page, False
 
         async with httpx.AsyncClient() as client:
+            consecutive_empty_raw_pages = 0
             while len(collected) < batch_size:
                 if page >= _MAX_PAGES:
                     logger.warning("Reached max page limit", limit=_MAX_PAGES)
@@ -1428,9 +1474,28 @@ class HHScraper:
                     return collected[:batch_size], page, False
 
                 items = data.get("items", [])
-                if not items:
-                    logger.info("No vacancy items on page", page=page + 1, url=api_url)
+                raw_blocks = len(items)
+                consecutive_empty_raw_pages, should_stop = _advance_empty_raw_page_counter(
+                    consecutive_empty_raw_pages,
+                    raw_blocks,
+                )
+                if should_stop:
+                    logger.info(
+                        "Stopping search pagination after consecutive empty raw pages",
+                        page=page + 1,
+                        url=api_url,
+                        consecutive_empty=consecutive_empty_raw_pages,
+                    )
                     return collected[:batch_size], page, False
+                if raw_blocks == 0:
+                    logger.info(
+                        "No raw vacancy blocks on page",
+                        page=page + 1,
+                        url=api_url,
+                        consecutive_empty=consecutive_empty_raw_pages,
+                    )
+                    page += 1
+                    continue
 
                 last_total_pages = int(data.get("pages", 0) or 0)
 
