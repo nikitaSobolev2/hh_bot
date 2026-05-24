@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 
@@ -602,6 +603,46 @@ async def finalize_autorespond_on_cancel(
         await redis.aclose()
 
 
+async def finish_task_group_autorespond_progress(
+    *,
+    bot: Any,
+    chat_id: int,
+    task_key: str,
+    locale: str,
+    bar_index: int,
+    total: int,
+    shortage_note: str | None = None,
+    applications_skipped: bool = False,
+) -> None:
+    """Complete manual pipeline / task-group bar after autorespond phase ends."""
+    redis = create_progress_redis()
+    try:
+        svc = ProgressService(bot, chat_id, redis, locale)
+        app_state = "skipped" if applications_skipped or total <= 0 else "done"
+        with contextlib.suppress(Exception):
+            await svc.set_nested_step_state(task_key, "applications", app_state)
+            await svc.clear_nested_steps(task_key)
+            await svc.set_step_state(task_key, "applications", app_state)
+            if total > 0:
+                await svc.update_bar(task_key, bar_index, total, total)
+            await svc.finish_task(
+                task_key,
+                shortage_note=shortage_note,
+                complete_bars=True,
+            )
+        await redis.delete(autorespond_done_redis_key(chat_id, task_key))
+        await redis.delete(autorespond_failed_redis_key(chat_id, task_key))
+        await redis.delete(autorespond_employer_test_redis_key(chat_id, task_key))
+        clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+        clear_hh_ui_resume_envelope_sync(chat_id, task_key)
+        clear_autorespond_ui_tail_sync(chat_id, task_key)
+        from src.services.autorespond_pipeline_state import clear_all_pipeline_state
+
+        clear_all_pipeline_state(chat_id, task_key)
+    finally:
+        await redis.aclose()
+
+
 async def ensure_autorespond_progress_task_state_if_missing(
     *,
     bot: Any,
@@ -744,6 +785,14 @@ async def tick_autorespond_bar(
                 finish_progress_task=finish_progress_task,
             )
             if not finish_progress_task:
+                await finish_task_group_autorespond_progress(
+                    bot=bot,
+                    chat_id=chat_id,
+                    task_key=task_key,
+                    locale=locale,
+                    bar_index=bar_index,
+                    total=total,
+                )
                 return True
             finish_note = None
             if failed_n > 0:

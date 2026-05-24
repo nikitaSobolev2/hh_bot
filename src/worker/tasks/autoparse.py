@@ -1095,6 +1095,9 @@ async def _run_autoparse_company_async(
             "new_count": new_count,
             "company_id": company_id,
             "new_vacancy_ids": list(new_autorespond_vacancy_ids),
+            "scraped_hh_vacancy_ids": [
+                str(v["hh_vacancy_id"]) for v in collected_urls if v.get("hh_vacancy_id")
+            ],
         }
 
     except HHCaptchaRequiredError:

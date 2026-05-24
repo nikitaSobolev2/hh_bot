@@ -229,9 +229,24 @@ async def _regenerate_missing_compatibility_scores(
     from src.services.ai.prompts import VacancyCompatInput
     from src.services.autoparse.compatibility import compatibility_score_needs_regeneration
 
-    stale = [v for v in vacancies if compatibility_score_needs_regeneration(v.compatibility_score)]
-    if not stale or not (user_stack or user_exp):
+    stale_ids = [
+        v.id for v in vacancies if compatibility_score_needs_regeneration(v.compatibility_score)
+    ]
+    if not stale_ids or not (user_stack or user_exp):
         return
+
+    originals_by_id = {v.id: v for v in vacancies}
+
+    from sqlalchemy.orm import selectinload
+
+    async with session_factory() as session:
+        stmt = (
+            select(AutoparsedVacancy)
+            .where(AutoparsedVacancy.id.in_(stale_ids))
+            .options(selectinload(AutoparsedVacancy.employer))
+        )
+        result = await session.execute(stmt)
+        stale = list(result.scalars().all())
 
     ai_client = AIClient()
     try:
@@ -262,15 +277,17 @@ async def _regenerate_missing_compatibility_scores(
                     ai_summary=analysis.summary or None,
                     ai_stack=analysis.stack or None,
                 )
-                vacancy.compatibility_score = analysis.compatibility_score
-                vacancy.ai_summary = analysis.summary or None
-                vacancy.ai_stack = analysis.stack or None
+                orig = originals_by_id.get(vacancy.id)
+                if orig is not None:
+                    orig.compatibility_score = analysis.compatibility_score
+                    orig.ai_summary = analysis.summary or None
+                    orig.ai_stack = analysis.stack or None
             await session.commit()
     except Exception as exc:
         logger.warning(
             "autorespond_pre_filter_compat_regeneration_failed",
             user_id=user_id,
-            vacancies=len(stale),
+            vacancies=len(stale_ids),
             error=str(exc),
         )
     finally:
@@ -296,13 +313,62 @@ async def _unreacted_autoparsed_vacancy_ids(
         return [int(row[0]) for row in result.all()]
 
 
-def _merge_manual_pipeline_vacancy_ids(
-    new_vacancy_ids: list[int],
-    old_unreacted_ids: list[int],
+async def _pending_autorespond_autoparsed_vacancy_ids(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    company_id: int,
+    user_id: int,
+    hh_linked_account_id: int,
 ) -> list[int]:
-    if not new_vacancy_ids and not old_unreacted_ids:
+    """Autoparsed PKs not yet successfully applied (feed likes still eligible).
+
+    Unlike :func:`_unreacted_autoparsed_vacancy_ids`, liked-but-not-applied vacancies
+    are included. Only explicit feed dislikes and prior success / employer-question
+    attempts are excluded.
+    """
+    async with session_factory() as session:
+        feed_repo = VacancyFeedSessionRepository(session)
+        attempt_repo = HhApplicationAttemptRepository(session)
+        disliked = await feed_repo.get_disliked_vacancy_ids_for_user_company(
+            user_id,
+            company_id,
+        )
+        stmt = (
+            select(
+                AutoparsedVacancy.id,
+                AutoparsedVacancy.hh_vacancy_id,
+                AutoparsedVacancy.needs_employer_questions,
+            )
+            .where(AutoparsedVacancy.autoparse_company_id == company_id)
+            .order_by(AutoparsedVacancy.id.desc())
+        )
+        rows = list((await session.execute(stmt)).all())
+        if not rows:
+            return []
+
+        hh_ids = [str(row[1]) for row in rows if row[1] is not None]
+        handled = await attempt_repo.hh_vacancy_ids_with_success_or_employer_questions(
+            user_id,
+            hh_linked_account_id,
+            hh_ids,
+        )
+
+    pending: list[int] = []
+    for vacancy_id, hh_vacancy_id, needs_employer_questions in rows:
+        if vacancy_id in disliked:
+            continue
+        if needs_employer_questions:
+            continue
+        if hh_vacancy_id is not None and str(hh_vacancy_id) in handled:
+            continue
+        pending.append(int(vacancy_id))
+    return pending
+
+
+def _merge_manual_pipeline_vacancy_ids(*id_groups: list[int]) -> list[int]:
+    if not id_groups or not any(id_groups):
         return []
-    merged_ids = {int(vacancy_id) for vacancy_id in [*new_vacancy_ids, *old_unreacted_ids]}
+    merged_ids = {int(vacancy_id) for group in id_groups for vacancy_id in group}
     return sorted(merged_ids, reverse=True)
 
 
@@ -310,20 +376,36 @@ async def _manual_pipeline_autorespond_vacancy_ids(
     session_factory: async_sessionmaker[AsyncSession],
     company_id: int,
     user_id: int,
+    hh_linked_account_id: int,
     new_vacancy_ids: list[int],
+    scraped_hh_vacancy_ids: list[str] | None = None,
 ) -> list[int]:
-    old_unreacted_ids = await _unreacted_autoparsed_vacancy_ids(
+    pending_ids = await _pending_autorespond_autoparsed_vacancy_ids(
         session_factory,
-        company_id,
-        user_id,
+        company_id=company_id,
+        user_id=user_id,
+        hh_linked_account_id=hh_linked_account_id,
     )
-    merged_ids = _merge_manual_pipeline_vacancy_ids(new_vacancy_ids, old_unreacted_ids)
+    scraped_ids: list[int] = []
+    if scraped_hh_vacancy_ids:
+        async with session_factory() as session:
+            vacancy_repo = AutoparsedVacancyRepository(session)
+            scraped_ids = await vacancy_repo.list_ids_by_company_and_hh_vacancy_ids(
+                company_id,
+                {str(hh_id) for hh_id in scraped_hh_vacancy_ids if hh_id},
+            )
+    merged_ids = _merge_manual_pipeline_vacancy_ids(
+        new_vacancy_ids,
+        pending_ids,
+        scraped_ids,
+    )
     logger.info(
         "manual_pipeline_candidate_ids",
         company_id=company_id,
         user_id=user_id,
         new_ids=len(new_vacancy_ids),
-        old_unreacted_ids=len(old_unreacted_ids),
+        pending_ids=len(pending_ids),
+        scraped_ids=len(scraped_ids),
         merged_ids=len(merged_ids),
     )
     return merged_ids
@@ -380,7 +462,7 @@ async def _run_autorespond_after_manual_parse_async(
     company_id: int,
     user_id: int,
 ) -> dict:
-    """After manual autoparse completes: enqueue dispatcher for all unreacted vacancies."""
+    """After manual autoparse completes: enqueue dispatcher for pending autorespond vacancies."""
     async with session_factory() as session:
         settings_repo = AppSettingRepository(session)
         if not await settings_repo.get_value("task_autorespond_enabled", default=False):
@@ -401,14 +483,19 @@ async def _run_autorespond_after_manual_parse_async(
         if not hh_acc or not normalize_hh_resume_cache_items(hh_acc.resume_list_cache):
             return {"status": "skipped", "reason": "autorespond_not_configured"}
 
-    ids = await _unreacted_autoparsed_vacancy_ids(session_factory, company_id, user_id)
+    ids = await _pending_autorespond_autoparsed_vacancy_ids(
+        session_factory,
+        company_id=company_id,
+        user_id=user_id,
+        hh_linked_account_id=company.autorespond_hh_linked_account_id,
+    )
     if not ids:
         logger.info(
-            "manual_chain_no_unreacted",
+            "manual_chain_no_pending_autorespond",
             company_id=company_id,
             user_id=user_id,
         )
-        return {"status": "no_unreacted", "vacancy_ids": []}
+        return {"status": "no_pending", "vacancy_ids": []}
 
     dispatch_autorespond.delay(
         company_id,
@@ -680,9 +767,19 @@ async def _run_autorespond_async(
         if progress and task_key:
             with contextlib.suppress(Exception):
                 if is_task_group_pipeline:
-                    await progress.update_footer(
-                        task_key,
-                        [get_text("autorespond-progress-rate-limited", locale)],
+                    from src.services.autorespond_progress import (
+                        finish_task_group_autorespond_progress,
+                    )
+
+                    await finish_task_group_autorespond_progress(
+                        bot=progress_bot,
+                        chat_id=int(user.telegram_id),
+                        task_key=task_key,
+                        locale=locale,
+                        bar_index=progress_bar_index,
+                        total=0,
+                        shortage_note=get_text("autorespond-progress-rate-limited", locale),
+                        applications_skipped=True,
                     )
                 else:
                     await progress.finish_task(
@@ -796,9 +893,18 @@ async def _run_autorespond_async(
         await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
     elif is_task_group_pipeline and progress and task_key:
         if work_units <= 0:
+            from src.services.autorespond_progress import finish_task_group_autorespond_progress
+
             with contextlib.suppress(Exception):
-                await progress.set_nested_step_state(task_key, "applications", "skipped")
-                await progress.clear_nested_steps(task_key)
+                await finish_task_group_autorespond_progress(
+                    bot=progress_bot,
+                    chat_id=int(user.telegram_id),
+                    task_key=task_key,
+                    locale=locale,
+                    bar_index=progress_bar_index,
+                    total=work_units,
+                    applications_skipped=True,
+                )
             return {
                 "status": "ok",
                 "queued": 0,
@@ -1010,6 +1116,7 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
                 return {"status": "skipped", "company_id": company_id}
             locale = user.language_code or "ru"
             telegram_id = user.telegram_id or 0
+            hh_linked_account_id = int(company.autorespond_hh_linked_account_id or 0)
         if telegram_id <= 0:
             return {"status": "error", "reason": "no_telegram"}
 
@@ -1066,7 +1173,9 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
             session_factory,
             company_id,
             user_id,
+            hh_linked_account_id,
             list(ap_res.get("new_vacancy_ids") or []),
+            list(ap_res.get("scraped_hh_vacancy_ids") or []),
         )
 
         return await _run_autorespond_async(

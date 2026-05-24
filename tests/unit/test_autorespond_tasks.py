@@ -37,7 +37,7 @@ def _stub_hh_modules():
 async def test_regenerates_zero_compatibility_before_filtering():
     session = MagicMock()
     session.commit = AsyncMock()
-    vacancy = SimpleNamespace(
+    loaded_vacancy = SimpleNamespace(
         id=1,
         hh_vacancy_id="vac-1",
         title="Senior Backend Developer",
@@ -46,7 +46,11 @@ async def test_regenerates_zero_compatibility_before_filtering():
         compatibility_score=0.0,
         ai_summary=None,
         ai_stack=None,
+        employer=None,
     )
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [loaded_vacancy]
+    session.execute = AsyncMock(return_value=mock_result)
 
     async with _make_session_factory(session)() as _:
         pass
@@ -79,15 +83,15 @@ async def test_regenerates_zero_compatibility_before_filtering():
             await _regenerate_missing_compatibility_scores(
                 _make_session_factory(session),
                 user_id=42,
-                vacancies=[vacancy],
+                vacancies=[loaded_vacancy],
                 user_stack=["Python", "Go"],
                 user_exp="backend experience",
             )
 
+    assert loaded_vacancy.compatibility_score == 78.0
+    assert loaded_vacancy.ai_summary == "Good fit"
+    assert loaded_vacancy.ai_stack == ["Python", "Go"]
     repo.update.assert_awaited_once()
-    assert vacancy.compatibility_score == 78.0
-    assert vacancy.ai_summary == "Good fit"
-    assert vacancy.ai_stack == ["Python", "Go"]
     session.commit.assert_awaited_once()
 
 
@@ -394,6 +398,56 @@ def test_merge_manual_pipeline_vacancy_ids_deduplicates_and_orders_newest_first(
         202,
         201,
     ]
+    assert _merge_manual_pipeline_vacancy_ids([205], [204], [203]) == [205, 204, 203]
+    assert _merge_manual_pipeline_vacancy_ids([], []) == []
+
+
+@pytest.mark.asyncio
+async def test_pending_autorespond_includes_liked_but_excludes_applied_and_disliked():
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    execute_result = MagicMock()
+    execute_result.all.return_value = [
+        (1, "vac-applied", False),
+        (2, "vac-liked", False),
+        (3, "vac-disliked", False),
+        (4, "vac-employer-test", True),
+    ]
+    session.execute = AsyncMock(return_value=execute_result)
+
+    feed_repo = MagicMock()
+    feed_repo.get_disliked_vacancy_ids_for_user_company = AsyncMock(return_value={3})
+
+    attempt_repo = MagicMock()
+    attempt_repo.hh_vacancy_ids_with_success_or_employer_questions = AsyncMock(
+        return_value={"vac-applied"}
+    )
+
+    sys.modules.pop("src.worker.tasks.autorespond", None)
+
+    with _stub_hh_modules():
+        from src.worker.tasks.autorespond import _pending_autorespond_autoparsed_vacancy_ids
+
+        with (
+            patch(
+                "src.worker.tasks.autorespond.VacancyFeedSessionRepository",
+                return_value=feed_repo,
+            ),
+            patch(
+                "src.worker.tasks.autorespond.HhApplicationAttemptRepository",
+                return_value=attempt_repo,
+            ),
+        ):
+            pending = await _pending_autorespond_autoparsed_vacancy_ids(
+                _make_session_factory(session),
+                company_id=7,
+                user_id=42,
+                hh_linked_account_id=55,
+            )
+
+    assert pending == [2]
 
 
 @pytest.mark.asyncio
@@ -595,12 +649,18 @@ async def test_autorespond_pre_skip_checks_same_hh_account_only():
 
 
 @pytest.mark.asyncio
-async def test_manual_pipeline_passes_new_and_old_unreacted_ids_to_autorespond():
+async def test_manual_pipeline_passes_merged_vacancy_ids_to_autorespond():
     session = MagicMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
 
-    company = SimpleNamespace(id=7, user_id=42, is_deleted=False, is_enabled=True)
+    company = SimpleNamespace(
+        id=7,
+        user_id=42,
+        is_deleted=False,
+        is_enabled=True,
+        autorespond_hh_linked_account_id=55,
+    )
     user = SimpleNamespace(id=42, language_code="ru", telegram_id=123456)
 
     company_repo = MagicMock()
@@ -621,11 +681,7 @@ async def test_manual_pipeline_passes_new_and_old_unreacted_ids_to_autorespond()
     task.request.id = "task-123"
     task.create_bot.return_value = bot
 
-    sys.modules.pop("src.worker.tasks.autorespond", None)
-
     with _stub_hh_modules():
-        from src.worker.tasks import autorespond as autorespond_module
-
         with (
             patch(
                 "src.repositories.autoparse.AutoparseCompanyRepository",
@@ -643,21 +699,22 @@ async def test_manual_pipeline_passes_new_and_old_unreacted_ids_to_autorespond()
                         "company_id": company.id,
                         "new_count": 3,
                         "new_vacancy_ids": [205, 204, 203],
+                        "scraped_hh_vacancy_ids": ["hh-200"],
                     }
                 ),
             ),
-            patch.object(
-                autorespond_module,
-                "_unreacted_autoparsed_vacancy_ids",
-                new=AsyncMock(return_value=[205, 204, 202, 201]),
+            patch(
+                "src.worker.tasks.autorespond._manual_pipeline_autorespond_vacancy_ids",
+                new=AsyncMock(return_value=[205, 204, 203, 202, 201, 200]),
             ),
-            patch.object(
-                autorespond_module,
-                "_run_autorespond_async",
+            patch(
+                "src.worker.tasks.autorespond._run_autorespond_async",
                 new=AsyncMock(return_value={"status": "ok"}),
             ) as run_autorespond_mock,
         ):
-            result = await autorespond_module._run_manual_autoparse_autorespond_pipeline_async(
+            from src.worker.tasks.autorespond import _run_manual_autoparse_autorespond_pipeline_async
+
+            result = await _run_manual_autoparse_autorespond_pipeline_async(
                 _make_session_factory(session),
                 task,
                 company.id,
@@ -665,5 +722,179 @@ async def test_manual_pipeline_passes_new_and_old_unreacted_ids_to_autorespond()
             )
 
     assert result == {"status": "ok"}
-    assert run_autorespond_mock.await_args.args[3] == [205, 204, 203, 202, 201]
+    assert run_autorespond_mock.await_args.args[3] == [205, 204, 203, 202, 201, 200]
     assert run_autorespond_mock.await_args.args[4] == "manual_pipeline"
+
+
+@pytest.mark.asyncio
+async def test_manual_pipeline_autorespond_vacancy_ids_merges_new_pending_and_scraped():
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+
+    vacancy_repo = MagicMock()
+    vacancy_repo.list_ids_by_company_and_hh_vacancy_ids = AsyncMock(return_value=[200])
+
+    with _stub_hh_modules():
+        with (
+            patch(
+                "src.worker.tasks.autorespond._pending_autorespond_autoparsed_vacancy_ids",
+                new=AsyncMock(return_value=[205, 204, 202, 201]),
+            ),
+            patch(
+                "src.worker.tasks.autorespond.AutoparsedVacancyRepository",
+                return_value=vacancy_repo,
+            ),
+        ):
+            from src.worker.tasks.autorespond import _manual_pipeline_autorespond_vacancy_ids
+
+            merged = await _manual_pipeline_autorespond_vacancy_ids(
+                _make_session_factory(session),
+                company_id=7,
+                user_id=42,
+                hh_linked_account_id=55,
+                new_vacancy_ids=[205, 204, 203],
+                scraped_hh_vacancy_ids=["hh-200"],
+            )
+
+    assert merged == [205, 204, 203, 202, 201, 200]
+
+
+@pytest.mark.asyncio
+async def test_task_group_pipeline_finishes_progress_when_all_vacancies_pre_skipped():
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.commit = AsyncMock()
+
+    company = SimpleNamespace(
+        id=1,
+        user_id=7,
+        is_deleted=False,
+        autorespond_enabled=True,
+        autorespond_hh_linked_account_id=2,
+        autorespond_resume_id="r1",
+        vacancy_title="Backend",
+        keyword_filter="",
+        keyword_check_enabled=False,
+        autorespond_min_compat=50,
+        autorespond_keyword_mode="title_only",
+        autorespond_max_per_run=-1,
+    )
+    user = SimpleNamespace(id=7, language_code="ru", telegram_id=99)
+    hh_linked = SimpleNamespace(resume_list_cache=[{"id": "resume-1"}])
+    raw_vacancies = [
+        SimpleNamespace(
+            id=1,
+            hh_vacancy_id="vac-1",
+            compatibility_score=70,
+            title="One",
+            description="",
+            needs_employer_questions=False,
+        ),
+    ]
+
+    settings_repo = MagicMock()
+    settings_repo.get_value = AsyncMock(return_value=True)
+    company_repo = MagicMock()
+    company_repo.get_by_id = AsyncMock(return_value=company)
+    user_repo = MagicMock()
+    user_repo.get_by_id = AsyncMock(return_value=user)
+    hh_repo = MagicMock()
+    hh_repo.get_by_id = AsyncMock(return_value=hh_linked)
+    attempt_repo = MagicMock()
+    attempt_repo.hh_vacancy_ids_with_success_or_employer_questions = AsyncMock(
+        return_value={"vac-1"}
+    )
+
+    progress = MagicMock()
+    for method in (
+        "set_nested_steps",
+        "set_nested_step_state",
+        "set_step_state",
+        "update_bar",
+        "update_footer",
+        "clear_nested_steps",
+        "finish_task",
+    ):
+        setattr(progress, method, AsyncMock())
+
+    sys.modules.pop("src.worker.tasks.autorespond", None)
+
+    with _stub_hh_modules():
+        from src.worker.tasks import autorespond as autorespond_module
+
+        finish_mock = AsyncMock()
+        with (
+            patch.object(autorespond_module, "AppSettingRepository", return_value=settings_repo),
+            patch(
+                "src.repositories.autoparse.AutoparseCompanyRepository",
+                return_value=company_repo,
+            ),
+            patch("src.repositories.user.UserRepository", return_value=user_repo),
+            patch(
+                "src.repositories.hh_linked_account.HhLinkedAccountRepository",
+                return_value=hh_repo,
+            ),
+            patch.object(
+                autorespond_module,
+                "HhApplicationAttemptRepository",
+                return_value=attempt_repo,
+            ),
+            patch(
+                "src.bot.modules.autoparse.services.get_user_autoparse_settings",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "src.repositories.work_experience.WorkExperienceRepository.get_active_by_user",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                autorespond_module,
+                "_run_negotiations_sync_with_retry",
+                new=AsyncMock(return_value={"status": "ok"}),
+            ),
+            patch.object(
+                autorespond_module,
+                "_load_candidates",
+                new=AsyncMock(return_value=raw_vacancies),
+            ),
+            patch(
+                "src.bot.modules.autoparse.autorespond_logic.filter_vacancies_for_autorespond",
+                new=MagicMock(return_value=raw_vacancies),
+            ),
+            patch(
+                "src.bot.modules.autoparse.autorespond_logic.apply_max_cap",
+                new=MagicMock(return_value=raw_vacancies),
+            ),
+            patch(
+                "src.services.ai.resume_selection.normalize_hh_resume_cache_items",
+                return_value=[{"id": "resume-1"}],
+            ),
+            patch(
+                "src.services.autorespond_progress.finish_task_group_autorespond_progress",
+                finish_mock,
+            ),
+        ):
+            result = await autorespond_module._run_autorespond_async(
+                _make_session_factory(session),
+                celery_task=None,
+                company_id=company.id,
+                vacancy_ids=[1],
+                trigger="manual_pipeline",
+                task_started_at=None,
+                pipeline_context={
+                    "svc": progress,
+                    "task_key": "pipeline:1:tid",
+                    "bot": MagicMock(),
+                    "bar_index": 2,
+                    "locale": "ru",
+                    "task_group": True,
+                },
+            )
+
+    assert result["status"] == "ok"
+    assert result["queued"] == 0
+    assert result["skipped"] == 1
+    finish_mock.assert_awaited_once()
+    assert finish_mock.await_args.kwargs["applications_skipped"] is True

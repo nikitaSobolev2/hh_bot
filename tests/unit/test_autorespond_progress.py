@@ -378,7 +378,7 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tick_autorespond_bar_does_not_finish_task_group_progress() -> None:
+async def test_tick_autorespond_bar_finishes_task_group_pipeline_when_done() -> None:
     from src.services.autorespond_progress import tick_autorespond_bar
 
     redis = MagicMock()
@@ -391,6 +391,9 @@ async def test_tick_autorespond_bar_does_not_finish_task_group_progress() -> Non
     svc = MagicMock()
     svc.update_bar = AsyncMock()
     svc.update_footer = AsyncMock()
+    svc.set_nested_step_state = AsyncMock()
+    svc.clear_nested_steps = AsyncMock()
+    svc.set_step_state = AsyncMock()
     svc.finish_task = AsyncMock()
 
     with (
@@ -415,11 +418,23 @@ async def test_tick_autorespond_bar_does_not_finish_task_group_progress() -> Non
             "src.services.progress_cancel.is_user_cancelled_sync",
             return_value=False,
         ),
+        patch(
+            "src.services.autorespond_progress.clear_hh_ui_batch_checkpoint_sync",
+        ),
+        patch(
+            "src.services.autorespond_progress.clear_hh_ui_resume_envelope_sync",
+        ),
+        patch(
+            "src.services.autorespond_progress.clear_autorespond_ui_tail_sync",
+        ),
+        patch(
+            "src.services.autorespond_pipeline_state.clear_all_pipeline_state",
+        ),
     ):
         finished = await tick_autorespond_bar(
             bot=MagicMock(),
             chat_id=7,
-            task_key="taskgroup:abc",
+            task_key="pipeline:1:abc",
             total=3,
             locale="en",
             footer_failed_line="failed: 0",
@@ -427,5 +442,5 @@ async def test_tick_autorespond_bar_does_not_finish_task_group_progress() -> Non
         )
 
     assert finished is True
-    svc.finish_task.assert_not_awaited()
-    redis.delete.assert_not_called()
+    svc.finish_task.assert_awaited_once()
+    assert redis.delete.await_count >= 1
