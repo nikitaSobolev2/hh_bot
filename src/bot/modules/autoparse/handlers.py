@@ -1223,6 +1223,82 @@ async def edit_keywords_receive(
     await message.answer(i18n.get("autoparse-edit-keywords-saved"))
 
 
+# ── Rename autorespond (company label) ──────────────────────────────
+
+
+@router.callback_query(AutoparseCallback.filter(F.action == "rename_autorespond"))
+async def rename_autorespond_start(
+    callback: CallbackQuery,
+    callback_data: AutoparseCallback,
+    user: User,
+    session: AsyncSession,
+    state: FSMContext,
+    i18n: I18nContext,
+) -> None:
+    company = await ap_service.get_autoparse_detail(session, callback_data.company_id, user.id)
+    if not company:
+        await callback.answer(i18n.get("autoparse-not-found"), show_alert=True)
+        return
+
+    await state.set_state(AutoparseEditForm.rename_autorespond)
+    await state.update_data(
+        rename_autorespond_company_id=company.id,
+        rename_autorespond_message_id=callback.message.message_id,
+    )
+    current = company.vacancy_title or i18n.get("detail-filter-none")
+    await callback.message.answer(
+        i18n.get("autorespond-rename-prompt", current=current),
+        reply_markup=cancel_keyboard(i18n),
+    )
+    await callback.answer()
+
+
+@router.message(AutoparseEditForm.rename_autorespond, F.text)
+async def rename_autorespond_receive(
+    message: Message,
+    state: FSMContext,
+    user: User,
+    session: AsyncSession,
+    i18n: I18nContext,
+) -> None:
+    data = await state.get_data()
+    company_id = data.get("rename_autorespond_company_id")
+    detail_message_id = data.get("rename_autorespond_message_id")
+    await state.clear()
+
+    if not company_id:
+        await message.answer(i18n.get("autoparse-not-found"))
+        return
+
+    title = message.text.strip()
+    if not title:
+        await message.answer(i18n.get("autorespond-rename-empty"))
+        return
+
+    from src.repositories.autoparse import AutoparseCompanyRepository
+
+    repo = AutoparseCompanyRepository(session)
+    company = await repo.get_by_id_for_user(company_id, user.id)
+    if not company:
+        await message.answer(i18n.get("autoparse-not-found"))
+        return
+
+    await repo.update(company, vacancy_title=title)
+    await session.commit()
+
+    with contextlib.suppress(TelegramBadRequest):
+        await _edit_company_detail_message_by_id(
+            bot=message.bot,
+            chat_id=message.chat.id,
+            message_id=detail_message_id,
+            user=user,
+            session=session,
+            i18n=i18n,
+            company=company,
+        )
+    await message.answer(i18n.get("autorespond-rename-saved"))
+
+
 # ── Edit search URL ─────────────────────────────────────────────────
 
 

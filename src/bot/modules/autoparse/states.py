@@ -13,6 +13,7 @@ class AutoparseForm(StatesGroup):
 
 class AutoparseEditForm(StatesGroup):
     edit_keywords = State()
+    rename_autorespond = State()
     edit_search_url = State()
     edit_parse_mode = State()
 

@@ -80,6 +80,13 @@ class TestAutoparseCallbacks:
         assert parsed.action == "edit_search_url"
         assert parsed.company_id == 7
 
+    def test_rename_autorespond_callback(self):
+        cb = AutoparseCallback(action="rename_autorespond", company_id=7)
+        packed = cb.pack()
+        parsed = AutoparseCallback.unpack(packed)
+        assert parsed.action == "rename_autorespond"
+        assert parsed.company_id == 7
+
 
 class TestFormatCompanyDetail:
     def test_enabled_company(self):

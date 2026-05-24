@@ -443,6 +443,14 @@ def autoparse_detail_keyboard(
                 ).pack(),
             ),
             InlineKeyboardButton(
+                text=i18n.get("autorespond-rename"),
+                callback_data=AutoparseCallback(
+                    action="rename_autorespond", company_id=company.id
+                ).pack(),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 text=i18n.get("autoparse-edit-search-url"),
                 callback_data=AutoparseCallback(
                     action="edit_search_url", company_id=company.id

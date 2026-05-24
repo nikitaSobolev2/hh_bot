@@ -486,9 +486,7 @@ def streaming_autorespond_ready_to_finish(
         return False
     if ready_remaining_count(chat_id, task_key) > 0:
         return False
-    if pregen_pending_count(chat_id, task_key) > 0:
-        return False
-    return True
+    return pregen_pending_count(chat_id, task_key) <= 0
 
 
 async def maybe_finish_streaming_autorespond_progress(

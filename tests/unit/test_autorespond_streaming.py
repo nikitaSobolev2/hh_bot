@@ -76,6 +76,22 @@ async def test_on_autoparsed_rows_enqueues_when_compat_ready() -> None:
             "src.services.autorespond_streaming.get_autorespond_done_count_sync",
             return_value=0,
         ),
+        patch(
+            "src.services.autorespond_streaming.get_system_load_guard",
+            return_value=MagicMock(wait_if_overloaded=AsyncMock()),
+        ),
+        patch(
+            "src.services.autorespond_streaming.clear_autorespond_done_counter",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.services.autorespond_streaming.clear_autorespond_failed_counter",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "src.services.autorespond_streaming.clear_autorespond_employer_test_counter",
+            new_callable=AsyncMock,
+        ),
         patch.object(feed, "_kick_pump_if_needed", new=AsyncMock()) as pump_mock,
     ):
         enqueued = await feed.on_autoparsed_rows([_vac(vid=42)])
