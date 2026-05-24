@@ -256,6 +256,17 @@ def pregen_pending_count(chat_id: int, task_key: str) -> int:
         r.close()
 
 
+def is_pregen_pending_for_vacancy(
+    chat_id: int, task_key: str, vacancy_id: int
+) -> bool:
+    """True when a ``cover_letter.pregenerate_for_apply`` task is still in flight."""
+    r = _sync_redis()
+    try:
+        return bool(r.sismember(pregen_pending_key(chat_id, task_key), str(vacancy_id)))
+    finally:
+        r.close()
+
+
 def store_pregen_letter(
     chat_id: int, task_key: str, vacancy_id: int, letter: str
 ) -> None:
@@ -434,6 +445,19 @@ def clear_pump_lock(chat_id: int, task_key: str) -> None:
     r = _sync_redis()
     try:
         r.delete(pump_lock_key(chat_id, task_key))
+    finally:
+        r.close()
+
+
+def get_pump_lock_owner_sync(chat_id: int, task_key: str) -> str | None:
+    """Celery task id of the active ``apply_pump`` (pump lock value), if any."""
+    r = _sync_redis()
+    try:
+        raw = r.get(pump_lock_key(chat_id, task_key))
+        if raw is None:
+            return None
+        owner = raw if isinstance(raw, str) else raw.decode("utf-8")
+        return owner or None
     finally:
         r.close()
 

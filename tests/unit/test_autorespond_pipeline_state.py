@@ -102,6 +102,9 @@ class _FakeRedis:
     def scard(self, key: str) -> int:
         return len(self.sets.get(key, set()))
 
+    def sismember(self, key: str, member: str) -> bool:
+        return member in self.sets.get(key, set())
+
     def close(self) -> None:
         pass
 
@@ -203,18 +206,36 @@ def test_store_pregen_letter_removes_from_pending_and_caches(fake_redis: _FakeRe
     assert fetch_pregen_letter(7, "t", 99) is None
 
 
+def test_is_pregen_pending_for_vacancy(fake_redis: _FakeRedis) -> None:
+    from src.services.autorespond_pipeline_state import (
+        is_pregen_pending_for_vacancy,
+        mark_pregen_pending,
+        release_pregen_pending,
+    )
+
+    assert is_pregen_pending_for_vacancy(7, "t", 11) is False
+    mark_pregen_pending(7, "t", [11, 12])
+    assert is_pregen_pending_for_vacancy(7, "t", 11) is True
+    assert is_pregen_pending_for_vacancy(7, "t", 99) is False
+    release_pregen_pending(7, "t", [11])
+    assert is_pregen_pending_for_vacancy(7, "t", 11) is False
+
+
 def test_pump_lock_exclusive_per_run(fake_redis: _FakeRedis) -> None:
     from src.services.autorespond_pipeline_state import (
         clear_pump_lock,
+        get_pump_lock_owner_sync,
         release_pump_lock,
         try_acquire_pump_lock,
     )
 
     assert try_acquire_pump_lock(7, "t", "owner-a") is True
+    assert get_pump_lock_owner_sync(7, "t") == "owner-a"
     assert try_acquire_pump_lock(7, "t", "owner-b") is False
     release_pump_lock(7, "t", "owner-a")
     assert try_acquire_pump_lock(7, "t", "owner-b") is True
     clear_pump_lock(7, "t")
+    assert get_pump_lock_owner_sync(7, "t") is None
 
 
 def test_pump_heartbeat_age_seconds_returns_fresh_value(fake_redis: _FakeRedis) -> None:

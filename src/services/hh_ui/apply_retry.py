@@ -27,7 +27,10 @@ def apply_outcome_is_retryable(outcome: ApplyOutcome) -> bool:
 
 def apply_result_should_retry_popup_batch(result: ApplyResult) -> bool:
     """Popup batch: do not retry HH ``negotiations-limit-exceeded`` (account-wide cap)."""
-    if "negotiations-limit-exceeded" in (result.detail or "").lower():
+    detail = (result.detail or "").lower()
+    if "negotiations-limit-exceeded" in detail:
+        return False
+    if "letter-required" in detail:
         return False
     return apply_outcome_is_retryable(result.outcome)
 

@@ -294,6 +294,117 @@ async def test_apply_pump_skips_when_lock_not_acquired(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
+async def test_apply_pump_defers_missing_cover_letter_without_failed_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing letter waits for pregen or reschedules it; no failed counter / bar tick."""
+    self, session_factory, bot = _build_async_pump_async(monkeypatch)
+
+    spec = _spec(101)
+    pops = [[spec], []]
+
+    def _pop(*_args, **_kwargs):
+        return pops.pop(0) if pops else []
+
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pop_ready_batch", _pop)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.ready_remaining_count", lambda *a, **k: 0)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pregen_pending_count", lambda *a, **k: 0)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.touch_pump_heartbeat", MagicMock())
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply._resolve_cover_letter_for_apply",
+        AsyncMock(return_value=""),
+    )
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.is_pregen_pending_for_vacancy",
+        lambda *a, **k: False,
+    )
+
+    schedule_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply._schedule_pregen_for_apply_spec",
+        schedule_mock,
+    )
+    finalize_mock = AsyncMock()
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply._finalize_pump_item_async",
+        finalize_mock,
+    )
+    failed_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.services.autorespond_progress.increment_autorespond_failed_sync",
+        failed_mock,
+    )
+    batch_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.apply_to_vacancies_ui_batch",
+        batch_mock,
+    )
+
+    sleep_calls: list[float] = []
+
+    async def _fast_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.asyncio.sleep", _fast_sleep)
+
+    from src.worker.tasks.hh_ui_apply import _apply_pump_async
+
+    result = await _apply_pump_async(
+        self, session_factory, "autorespond:1:abc", 42, _envelope()
+    )
+
+    assert result["processed"] == 0
+    schedule_mock.assert_called_once()
+    finalize_mock.assert_not_awaited()
+    failed_mock.assert_not_called()
+    batch_mock.assert_not_called()
+    assert sleep_calls == [0.5]
+
+
+@pytest.mark.asyncio
+async def test_apply_pump_waits_when_pregen_pending_for_missing_letter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    self, session_factory, _bot = _build_async_pump_async(monkeypatch)
+
+    pops = [[_spec(101)], []]
+
+    def _pop(*_args, **_kwargs):
+        return pops.pop(0) if pops else []
+
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pop_ready_batch", _pop)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.ready_remaining_count", lambda *a, **k: 0)
+    pending_checks = {"n": 0}
+
+    def _pending_count(*_a, **_k):
+        pending_checks["n"] += 1
+        return 1 if pending_checks["n"] == 1 else 0
+
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pregen_pending_count", _pending_count)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.touch_pump_heartbeat", MagicMock())
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply._resolve_cover_letter_for_apply",
+        AsyncMock(return_value=""),
+    )
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply.is_pregen_pending_for_vacancy",
+        lambda *a, **k: True,
+    )
+
+    schedule_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply._schedule_pregen_for_apply_spec",
+        schedule_mock,
+    )
+
+    from src.worker.tasks.hh_ui_apply import _apply_pump_async
+
+    await _apply_pump_async(self, session_factory, "autorespond:1:abc", 42, _envelope())
+
+    schedule_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_apply_pump_does_not_chain_when_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
     self, session_factory, _bot = _build_async_pump_async(monkeypatch)
 

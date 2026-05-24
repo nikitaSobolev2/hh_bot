@@ -657,3 +657,92 @@ def test_batch_recovers_from_page_crashed_without_aborting_batch(monkeypatch) ->
     assert launches["n"] == 2
     assert gotos["n"] == 2
 
+
+def test_apply_to_vacancies_ui_batch_aborts_during_retry_backoff(monkeypatch) -> None:
+    """Cancel check during retry sleep stops the batch without further Playwright work."""
+    apply_calls = {"n": 0}
+    cancel_checks = {"n": 0}
+
+    class FakePage:
+        def goto(self, *a, **k):
+            return None
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class FakeBrowser:
+        def new_context(self, **k):
+            return FakeContext()
+
+        def close(self):
+            return None
+
+    class FakeChromium:
+        def launch(self, **k):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = FakeChromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_apply(*_a, **_k):
+        apply_calls["n"] += 1
+        return ApplyResult(outcome=ApplyOutcome.ERROR, detail="popup_api:other")
+
+    def fake_cancel_check() -> bool:
+        cancel_checks["n"] += 1
+        return cancel_checks["n"] >= 3
+
+    monkeypatch.setattr("src.services.hh_ui.runner.time.sleep", lambda _s: None)
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner.sync_playwright",
+        lambda: FakePlaywright(),
+    )
+    monkeypatch.setattr("src.services.hh_ui.runner._jitter", lambda c: None)
+    monkeypatch.setattr(
+        "src.services.hh_ui.runner._apply_vacancy_flow_on_page",
+        fake_apply,
+    )
+
+    cfg = HhUiApplyConfig(
+        headless=True,
+        navigation_timeout_ms=1000,
+        action_timeout_ms=1000,
+        min_action_delay_ms=0,
+        max_action_delay_ms=0,
+        screenshot_on_error=False,
+        use_popup_api=False,
+        debug_screenshot_dir=None,
+        attach_error_screenshot_bytes=False,
+    )
+    spec = VacancyApplySpec(
+        autoparsed_vacancy_id=1,
+        hh_vacancy_id="1",
+        vacancy_url="https://hh.ru/vacancy/1",
+        resume_hh_id="r1",
+        cover_letter="hi",
+    )
+    out, reason = apply_to_vacancies_ui_batch(
+        storage_state={},
+        items=[spec],
+        config=cfg,
+        max_retries=5,
+        cancel_check=fake_cancel_check,
+    )
+    assert reason == "cancelled"
+    assert out == []
+    assert apply_calls["n"] == 1
+

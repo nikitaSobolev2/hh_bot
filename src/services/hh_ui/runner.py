@@ -1411,6 +1411,8 @@ def apply_to_vacancies_ui_batch(
                 attempt = 0
                 target_closed_recoveries = 0
                 while attempt < max_retries:
+                    if cancel_check and cancel_check():
+                        return results, "cancelled"
                     try:
                         page.goto(
                             spec.vacancy_url,
@@ -1511,7 +1513,11 @@ def apply_to_vacancies_ui_batch(
                             outcome=last.outcome.value,
                             next_delay_s=delay,
                         )
+                        if cancel_check and cancel_check():
+                            return results, "cancelled"
                         time.sleep(delay)
+                        if cancel_check and cancel_check():
+                            return results, "cancelled"
                     attempt += 1
                 final = last or ApplyResult(outcome=ApplyOutcome.ERROR, detail="empty")
                 if on_item_done:
@@ -1533,7 +1539,11 @@ def apply_to_vacancies_ui_batch(
                         consecutive=consecutive_popup_xsrf,
                         delay_s=delay,
                     )
+                    if cancel_check and cancel_check():
+                        return results, "cancelled"
                     time.sleep(delay)
+                    if cancel_check and cancel_check():
+                        return results, "cancelled"
                 elif not _is_popup_xsrf_error_result(final):
                     consecutive_popup_xsrf = 0
         finally:

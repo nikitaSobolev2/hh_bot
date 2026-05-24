@@ -185,7 +185,8 @@ class TestHandleProgressCancel:
                 "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
             ),
             patch(
-                "src.bot.modules.progress.handlers.clear_pump_lock",
+                "src.bot.modules.progress.handlers.get_pump_lock_owner_sync",
+                return_value=None,
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_all_pipeline_state",
@@ -210,6 +211,89 @@ class TestHandleProgressCancel:
             "Task cancelled.",
             show_alert=True,
         )
+
+    @pytest.mark.asyncio
+    async def test_cancels_autorespond_revokes_apply_pump_lock_owner(self):
+        from src.bot.modules.progress.handlers import handle_progress_cancel
+
+        callback = _make_callback(data="prog:cancel:pipeline_1_abc")
+        user = _make_user(telegram_id=12345)
+
+        state = {
+            "title": "Autorespond",
+            "status": "running",
+            "bars": [],
+            "celery_task_id": "manual-pipeline-1",
+        }
+
+        def mock_get(key: str):
+            if "progress:pin:" in key:
+                return "42"
+            if "progress:task:12345:pipeline:1:abc" in key:
+                return json.dumps(state)
+            return None
+
+        redis = AsyncMock()
+        redis.get = AsyncMock(side_effect=mock_get)
+        redis.delete = AsyncMock()
+        redis.keys = AsyncMock(return_value=[])
+        redis.mget = AsyncMock(return_value=[])
+        redis.aclose = AsyncMock()
+
+        with (
+            patch(
+                "src.bot.modules.progress.handlers.create_progress_redis",
+                return_value=redis,
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.get_hh_ui_batch_active_sync",
+                return_value=None,
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.load_hh_ui_batch_checkpoint_full_sync",
+                return_value=None,
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.pipeline_has_pending_work",
+                return_value=True,
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.set_autorespond_cancelled",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.clear_hh_ui_batch_checkpoint_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.clear_hh_ui_resume_envelope_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.get_pump_lock_owner_sync",
+                return_value="apply-pump-99",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.clear_all_pipeline_state",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.finalize_autorespond_on_cancel",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.set_user_cancelled_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.run_sync_in_thread",
+                new_callable=AsyncMock,
+            ) as mock_revoke,
+        ):
+            await handle_progress_cancel(callback, user, _make_i18n())
+
+        revoked_ids = {call.args[1] for call in mock_revoke.call_args_list}
+        assert "apply-pump-99" in revoked_ids
+        assert "manual-pipeline-1" in revoked_ids
 
     @pytest.mark.asyncio
     async def test_revokes_task_and_cancels_when_valid(self):
@@ -329,7 +413,8 @@ class TestHandleProgressCancel:
                 "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
             ),
             patch(
-                "src.bot.modules.progress.handlers.clear_pump_lock",
+                "src.bot.modules.progress.handlers.get_pump_lock_owner_sync",
+                return_value=None,
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_all_pipeline_state",

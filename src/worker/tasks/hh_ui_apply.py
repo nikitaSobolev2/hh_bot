@@ -37,6 +37,8 @@ from src.repositories.hh_application_attempt import HhApplicationAttemptReposito
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
 from src.services.autorespond_pipeline_state import (
     fetch_pregen_letter,
+    is_pregen_pending_for_vacancy,
+    mark_pregen_pending,
     pop_ready_batch,
     pregen_pending_count,
     ready_remaining_count,
@@ -133,6 +135,9 @@ async def _persist_ui_apply_attempt_and_feed_effects(
         excerpt = f"{excerpt}\n[screenshot omitted {len(result.screenshot_bytes)}b]"
 
     async with session_factory() as session:
+        vac_repo = AutoparsedVacancyRepository(session)
+        if await vac_repo.get_by_id(autoparsed_vacancy_id) is None:
+            return status, err_code
         attempt_repo = HhApplicationAttemptRepository(session)
         await attempt_repo.create(
             user_id=user_id,
@@ -145,7 +150,6 @@ async def _persist_ui_apply_attempt_and_feed_effects(
             error_code=err_code,
             response_excerpt=excerpt or None,
         )
-        vac_repo = AutoparsedVacancyRepository(session)
         if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
             v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
             if v_up:
@@ -260,6 +264,67 @@ async def _resolve_cover_letter_for_apply(
     return ""
 
 
+def _schedule_pregen_for_apply_spec(
+    *,
+    chat_id: int,
+    task_key: str,
+    user_id: int,
+    apply_spec: dict[str, Any],
+    resume_envelope: dict[str, Any],
+) -> None:
+    """Re-enqueue cover letter generation; apply follows after ``enqueue_autorespond_apply_unit``."""
+    if not resume_envelope.get("cover_task_enabled", True):
+        return
+    vid = int(apply_spec["autoparsed_vacancy_id"])
+    mark_pregen_pending(int(chat_id), task_key, [vid])
+    from src.worker.tasks.cover_letter import pregenerate_for_apply_task
+
+    pregenerate_for_apply_task.delay(
+        task_key=task_key,
+        chat_id=int(chat_id),
+        user_id=int(user_id),
+        autoparsed_vacancy_id=vid,
+        resume_id=str(apply_spec["resume_id"]),
+        cover_letter_style=str(resume_envelope.get("cover_letter_style") or "professional"),
+        apply_spec=apply_spec,
+    )
+
+
+async def _defer_apply_unit_missing_cover_letter(
+    *,
+    chat_id: int,
+    task_key: str,
+    user_id: int,
+    apply_spec: dict[str, Any],
+    resume_envelope: dict[str, Any],
+) -> None:
+    """Letter not ready yet: wait for in-flight pregen or schedule a new one (no bar tick)."""
+    vid = int(apply_spec["autoparsed_vacancy_id"])
+    if is_pregen_pending_for_vacancy(int(chat_id), task_key, vid):
+        logger.info(
+            "apply_pump_missing_cover_letter_waiting_pregen",
+            chat_id=chat_id,
+            task_key=task_key,
+            vacancy_id=vid,
+        )
+        await asyncio.sleep(0.5)
+        return
+    logger.warning(
+        "apply_pump_missing_cover_letter_reschedule_pregen",
+        chat_id=chat_id,
+        task_key=task_key,
+        vacancy_id=vid,
+    )
+    _schedule_pregen_for_apply_spec(
+        chat_id=int(chat_id),
+        task_key=task_key,
+        user_id=user_id,
+        apply_spec=apply_spec,
+        resume_envelope=resume_envelope,
+    )
+    await asyncio.sleep(0.5)
+
+
 async def _finalize_pump_item_async(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -278,27 +343,38 @@ async def _finalize_pump_item_async(
     from src.services.autorespond_progress import (
         increment_autorespond_employer_test_sync,
         increment_autorespond_failed_sync,
+        is_autorespond_cancelled_sync,
         tick_autorespond_bar,
     )
+    from src.services.progress_cancel import is_user_cancelled_sync
+
+    task_key: str | None = None
+    if autorespond_progress and autorespond_progress.get("task_key"):
+        task_key = str(autorespond_progress["task_key"])
+    if task_key and (
+        is_autorespond_cancelled_sync(int(chat_id), task_key)
+        or is_user_cancelled_sync(int(chat_id), task_key)
+    ):
+        return
 
     vid = int(spec["autoparsed_vacancy_id"])
     hh_id = str(spec["hh_vacancy_id"])
     resume_id = str(spec["resume_id"])
 
-    await _persist_ui_apply_attempt_and_feed_effects(
-        session_factory=session_factory,
-        user_id=user_id,
-        hh_linked_account_id=hh_linked_account_id,
-        autoparsed_vacancy_id=vid,
-        hh_vacancy_id=hh_id,
-        resume_id=resume_id,
-        feed_session_id=0,
-        result=result,
-        silent_feed=silent_feed,
-    )
+    if not (result.detail or "").startswith("batch_abort:"):
+        await _persist_ui_apply_attempt_and_feed_effects(
+            session_factory=session_factory,
+            user_id=user_id,
+            hh_linked_account_id=hh_linked_account_id,
+            autoparsed_vacancy_id=vid,
+            hh_vacancy_id=hh_id,
+            resume_id=resume_id,
+            feed_session_id=0,
+            result=result,
+            silent_feed=silent_feed,
+        )
 
-    if autorespond_progress and autorespond_progress.get("task_key"):
-        task_key = str(autorespond_progress["task_key"])
+    if autorespond_progress and task_key:
         try:
             if _ui_outcome_increments_autorespond_failed(result.outcome):
                 increment_autorespond_failed_sync(int(chat_id), task_key, 1)
@@ -497,34 +573,13 @@ async def _apply_pump_async(
                     int(spec["autoparsed_vacancy_id"]),
                 )
                 if not letter:
-                    logger.error(
-                        "apply_pump_missing_cover_letter",
-                        chat_id=chat_id,
+                    await _defer_apply_unit_missing_cover_letter(
+                        chat_id=int(chat_id),
                         task_key=task_key,
-                        vacancy_id=spec["autoparsed_vacancy_id"],
-                    )
-                    from src.services.autorespond_progress import (
-                        increment_autorespond_failed_sync,
-                    )
-
-                    increment_autorespond_failed_sync(int(chat_id), task_key, 1)
-                    await _finalize_pump_item_async(
-                        session_factory=session_factory,
-                        chat_id=chat_id,
                         user_id=user_id,
-                        locale=locale,
-                        hh_linked_account_id=hh_linked_account_id,
-                        spec=spec,
-                        result=ApplyResult(
-                            outcome=ApplyOutcome.ERROR,
-                            detail="missing_cover_letter",
-                        ),
-                        autorespond_progress=autorespond_progress,
-                        bot=bot,
-                        silent_feed=silent_feed,
-                        send_error_screenshot_to_user=send_error_screenshot_to_user,
+                        apply_spec=spec,
+                        resume_envelope=resume_envelope,
                     )
-                    processed += 1
                     continue
                 specs.append(
                     VacancyApplySpec(
@@ -575,7 +630,9 @@ async def _apply_pump_async(
                 fut.result(timeout=300)
 
             def _cancel_check_sync() -> bool:
-                return is_autorespond_cancelled_sync(int(chat_id), task_key)
+                return is_autorespond_cancelled_sync(int(chat_id), task_key) or is_user_cancelled_sync(
+                    int(chat_id), task_key
+                )
 
             def _run_batch(_specs=specs):
                 return apply_to_vacancies_ui_batch(

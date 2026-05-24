@@ -18,7 +18,7 @@ from src.db.engine import async_session_factory
 from src.models.user import User
 from src.services.autorespond_pipeline_state import (
     clear_all_pipeline_state,
-    clear_pump_lock,
+    get_pump_lock_owner_sync,
     load_pipeline_envelope,
     pipeline_has_pending_work,
     pregen_pending_count,
@@ -65,20 +65,27 @@ async def _stop_autorespond_pipeline(
     locale: str,
     active_hh_ui_task_id: str | None,
 ) -> None:
-    """Set cancel flags, tear down Redis pipeline state, revoke hh_ui child, finalize bar."""
+    """Set cancel flags, tear down Redis pipeline state, revoke workers, finalize bar."""
     await set_autorespond_cancelled(chat_id, task_key)
     set_user_cancelled_sync(chat_id, task_key)
+
+    active_pump_task_id = get_pump_lock_owner_sync(chat_id, task_key)
+    worker_task_ids: set[str] = set()
+    for candidate in (active_pump_task_id, active_hh_ui_task_id):
+        if candidate:
+            worker_task_ids.add(candidate)
+
     clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
     clear_hh_ui_resume_envelope_sync(chat_id, task_key)
     clear_autorespond_ui_tail_sync(chat_id, task_key)
-    clear_pump_lock(chat_id, task_key)
     clear_all_pipeline_state(chat_id, task_key)
-    if active_hh_ui_task_id:
+    for worker_task_id in worker_task_ids:
         await run_sync_in_thread(
             celery_app.control.revoke,
-            active_hh_ui_task_id,
+            worker_task_id,
             terminate=True,
         )
+    if active_hh_ui_task_id:
         clear_hh_ui_batch_active_sync(chat_id, task_key)
     await finalize_autorespond_on_cancel(
         bot=bot,

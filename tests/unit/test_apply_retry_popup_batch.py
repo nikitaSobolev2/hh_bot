@@ -15,3 +15,8 @@ def test_negotiations_limit_not_retried() -> None:
 def test_generic_error_still_retried() -> None:
     r = ApplyResult(outcome=ApplyOutcome.ERROR, detail="popup_api:other")
     assert apply_result_should_retry_popup_batch(r) is True
+
+
+def test_letter_required_not_retried() -> None:
+    r = ApplyResult(outcome=ApplyOutcome.ERROR, detail="popup_api:letter-required")
+    assert apply_result_should_retry_popup_batch(r) is False
