@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from aiogram.types import BufferedInputFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import settings
@@ -113,6 +114,17 @@ def _ui_outcome_increments_autorespond_failed(outcome: ApplyOutcome) -> bool:
     )
 
 
+async def _autoparsed_vacancy_exists(
+    session_factory: async_sessionmaker[AsyncSession],
+    autoparsed_vacancy_id: int,
+) -> bool:
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+
+    async with session_factory() as session:
+        repo = AutoparsedVacancyRepository(session)
+        return await repo.get_by_id(autoparsed_vacancy_id) is not None
+
+
 async def _persist_ui_apply_attempt_and_feed_effects(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -137,28 +149,42 @@ async def _persist_ui_apply_attempt_and_feed_effects(
     async with session_factory() as session:
         vac_repo = AutoparsedVacancyRepository(session)
         if await vac_repo.get_by_id(autoparsed_vacancy_id) is None:
+            logger.info(
+                "ui_apply_attempt_skipped_missing_vacancy",
+                autoparsed_vacancy_id=autoparsed_vacancy_id,
+                hh_vacancy_id=hh_vacancy_id,
+            )
             return status, err_code
         attempt_repo = HhApplicationAttemptRepository(session)
-        await attempt_repo.create(
-            user_id=user_id,
-            hh_linked_account_id=hh_linked_account_id,
-            autoparsed_vacancy_id=autoparsed_vacancy_id,
-            hh_vacancy_id=hh_vacancy_id,
-            resume_id=resume_id,
-            status=status,
-            api_negotiation_id=None,
-            error_code=err_code,
-            response_excerpt=excerpt or None,
-        )
-        if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
-            v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
-            if v_up:
-                await vac_repo.update(v_up, needs_employer_questions=True)
-        elif result.outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
-            v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
-            if v_up and v_up.needs_employer_questions:
-                await vac_repo.update(v_up, needs_employer_questions=False)
-        await session.commit()
+        try:
+            await attempt_repo.create(
+                user_id=user_id,
+                hh_linked_account_id=hh_linked_account_id,
+                autoparsed_vacancy_id=autoparsed_vacancy_id,
+                hh_vacancy_id=hh_vacancy_id,
+                resume_id=resume_id,
+                status=status,
+                api_negotiation_id=None,
+                error_code=err_code,
+                response_excerpt=excerpt or None,
+            )
+            if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+                v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
+                if v_up:
+                    await vac_repo.update(v_up, needs_employer_questions=True)
+            elif result.outcome in (ApplyOutcome.SUCCESS, ApplyOutcome.ALREADY_RESPONDED):
+                v_up = await vac_repo.get_by_id(autoparsed_vacancy_id)
+                if v_up and v_up.needs_employer_questions:
+                    await vac_repo.update(v_up, needs_employer_questions=False)
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.warning(
+                "ui_apply_attempt_skipped_fk_violation",
+                autoparsed_vacancy_id=autoparsed_vacancy_id,
+                hh_vacancy_id=hh_vacancy_id,
+            )
+            return status, err_code
 
     if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
         async with session_factory() as s_dis:
@@ -361,7 +387,9 @@ async def _finalize_pump_item_async(
     hh_id = str(spec["hh_vacancy_id"])
     resume_id = str(spec["resume_id"])
 
-    if not (result.detail or "").startswith("batch_abort:"):
+    vacancy_exists = await _autoparsed_vacancy_exists(session_factory, vid)
+
+    if vacancy_exists and not (result.detail or "").startswith("batch_abort:"):
         await _persist_ui_apply_attempt_and_feed_effects(
             session_factory=session_factory,
             user_id=user_id,
@@ -373,10 +401,20 @@ async def _finalize_pump_item_async(
             result=result,
             silent_feed=silent_feed,
         )
+    elif not vacancy_exists:
+        logger.info(
+            "apply_pump_finalize_skipped_missing_vacancy",
+            vacancy_id=vid,
+            hh_vacancy_id=hh_id,
+            detail=(result.detail or "")[:200],
+        )
 
     if autorespond_progress and task_key:
         try:
-            if _ui_outcome_increments_autorespond_failed(result.outcome):
+            if (
+                vacancy_exists
+                and _ui_outcome_increments_autorespond_failed(result.outcome)
+            ):
                 increment_autorespond_failed_sync(int(chat_id), task_key, 1)
             if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
                 increment_autorespond_employer_test_sync(int(chat_id), task_key, 1)
