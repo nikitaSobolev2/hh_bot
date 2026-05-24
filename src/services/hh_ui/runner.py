@@ -1526,6 +1526,14 @@ def apply_to_vacancies_ui_batch(
                 while attempt < max_retries:
                     if cancel_check and cancel_check():
                         return results, "cancelled"
+                    logger.info(
+                        "hh_ui_batch_item_start",
+                        log_user_id=log_user_id,
+                        vacancy_id=spec.autoparsed_vacancy_id,
+                        item_index=item_index + 1,
+                        batch_size=len(items),
+                        vacancy_url_safe=_safe_url_host_path(spec.vacancy_url),
+                    )
                     try:
                         page.goto(
                             spec.vacancy_url,

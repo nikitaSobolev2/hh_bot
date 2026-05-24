@@ -63,6 +63,47 @@ from src.worker.utils import run_async
 
 logger = get_logger(__name__)
 
+_APPLY_PUMP_IDLE_LOG_INTERVAL_S = 30.0
+
+
+def _streaming_parse_producer_dead(autorespond_progress: dict[str, Any] | None) -> bool:
+    """True when manual pipeline Celery task is gone (worker restart / crash)."""
+    if not autorespond_progress or not autorespond_progress.get("streaming_autorespond"):
+        return False
+    from src.core.celery_async import normalize_celery_task_id
+    from src.services.celery_active import celery_task_id_known_to_workers
+
+    task_id = normalize_celery_task_id(autorespond_progress.get("celery_task_id"))
+    if not task_id:
+        return True
+    known = celery_task_id_known_to_workers(task_id)
+    return known is False
+
+
+def _ensure_streaming_parse_complete_if_producer_dead(
+    chat_id: int,
+    task_key: str,
+    autorespond_progress: dict[str, Any] | None,
+) -> bool:
+    """Mark streaming parse done when parent task died; return True if marked now."""
+    from src.services.autorespond_pipeline_state import (
+        is_streaming_parse_complete,
+        mark_streaming_parse_complete,
+    )
+
+    if is_streaming_parse_complete(chat_id, task_key):
+        return False
+    if not _streaming_parse_producer_dead(autorespond_progress):
+        return False
+    mark_streaming_parse_complete(chat_id, task_key)
+    logger.warning(
+        "apply_pump_streaming_parse_marked_complete_producer_dead",
+        chat_id=chat_id,
+        task_key=task_key,
+        celery_task_id=autorespond_progress.get("celery_task_id") if autorespond_progress else None,
+    )
+    return True
+
 
 def _vacancy_url_safe_for_log(url: str) -> str | None:
     if not url.startswith("https://"):
@@ -526,6 +567,22 @@ async def _apply_pump_async(
     cipher = HhTokenCipher(settings.hh_token_encryption_key)
     processed = 0
     abort_reason: str | None = None
+    last_idle_log_at = 0.0
+
+    def _maybe_log_pump_idle(*, reason: str) -> None:
+        nonlocal last_idle_log_at
+        now = time.monotonic()
+        if now - last_idle_log_at < _APPLY_PUMP_IDLE_LOG_INTERVAL_S:
+            return
+        last_idle_log_at = now
+        logger.info(
+            "apply_pump_idle_waiting",
+            chat_id=chat_id,
+            task_key=task_key,
+            reason=reason,
+            ready=ready_remaining_count(int(chat_id), task_key),
+            pregen_pending=pregen_pending_count(int(chat_id), task_key),
+        )
 
     if autorespond_progress:
         with contextlib.suppress(Exception):
@@ -596,10 +653,11 @@ async def _apply_pump_async(
                 if pregen_pending_count(int(chat_id), task_key) > 0 and ready_remaining_count(
                     int(chat_id), task_key
                 ) > 0:
-                    # Ready set is non-empty but ZPOPMIN race: sleep briefly and retry.
+                    _maybe_log_pump_idle(reason="ready_zset_race")
                     await asyncio.sleep(pregen_wait)
                     continue
                 if pregen_pending_count(int(chat_id), task_key) > 0:
+                    _maybe_log_pump_idle(reason="cover_letter_pregen")
                     await asyncio.sleep(pregen_wait)
                     continue
                 streaming = bool(
@@ -611,6 +669,13 @@ async def _apply_pump_async(
                     )
 
                     if not is_streaming_parse_complete(int(chat_id), task_key):
+                        if _ensure_streaming_parse_complete_if_producer_dead(
+                            int(chat_id),
+                            task_key,
+                            autorespond_progress,
+                        ):
+                            break
+                        _maybe_log_pump_idle(reason="streaming_autoparse")
                         await asyncio.sleep(1.0)
                         continue
                 break
@@ -647,6 +712,14 @@ async def _apply_pump_async(
                 )
             if not specs:
                 continue
+
+            logger.info(
+                "apply_pump_batch_start",
+                chat_id=chat_id,
+                task_key=task_key,
+                batch_size=len(specs),
+                vacancy_ids=[s.autoparsed_vacancy_id for s in specs],
+            )
 
             loop = asyncio.get_running_loop()
             done_vids: set[int] = set()

@@ -431,3 +431,43 @@ async def test_apply_pump_does_not_chain_when_cancelled(monkeypatch: pytest.Monk
     result = await _apply_pump_async(self, session_factory, "autorespond:1:abc", 42, _envelope())
     assert result["abort"] == "cancelled"
     delay_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_pump_stops_streaming_wait_when_pipeline_task_dead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After worker restart the manual pipeline task is gone; pump must not spin forever."""
+    self, session_factory, _bot = _build_async_pump_async(monkeypatch)
+    mark_complete = MagicMock()
+
+    envelope = _envelope()
+    envelope["autorespond_progress"]["streaming_autorespond"] = True
+    envelope["autorespond_progress"]["celery_task_id"] = "dead-parent-task"
+
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pop_ready_batch", lambda *a, **k: [])
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.ready_remaining_count", lambda *a, **k: 0)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.pregen_pending_count", lambda *a, **k: 0)
+    monkeypatch.setattr("src.worker.tasks.hh_ui_apply.touch_pump_heartbeat", MagicMock())
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.is_streaming_parse_complete",
+        lambda *a, **k: False,
+    )
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.mark_streaming_parse_complete",
+        mark_complete,
+    )
+    monkeypatch.setattr(
+        "src.services.celery_active.celery_task_id_known_to_workers",
+        lambda _tid: False,
+    )
+    monkeypatch.setattr(
+        "src.services.autorespond_progress.maybe_finish_streaming_autorespond_progress",
+        AsyncMock(return_value=False),
+    )
+
+    from src.worker.tasks.hh_ui_apply import _apply_pump_async
+
+    result = await _apply_pump_async(self, session_factory, "autorespond:1:abc", 42, envelope)
+    assert result == {"status": "ok", "processed": 0, "abort": None}
+    mark_complete.assert_called_once_with(42, "autorespond:1:abc")

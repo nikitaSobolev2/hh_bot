@@ -1285,6 +1285,26 @@ async def _recover_stalled_pipelines_async() -> dict:
             continue
         if get_pump_lock_owner_sync(chat_id, task_key):
             continue
+        resume_envelope = envelope.get("resume_envelope")
+        if isinstance(resume_envelope, dict):
+            ar = resume_envelope.get("autorespond_progress")
+            if isinstance(ar, dict) and ar.get("streaming_autorespond"):
+                from src.services.autorespond_pipeline_state import (
+                    is_streaming_parse_complete,
+                    mark_streaming_parse_complete,
+                )
+                from src.worker.tasks.hh_ui_apply import _streaming_parse_producer_dead
+
+                if (
+                    not is_streaming_parse_complete(chat_id, task_key)
+                    and _streaming_parse_producer_dead(ar)
+                ):
+                    mark_streaming_parse_complete(chat_id, task_key)
+                    logger.warning(
+                        "autorespond_recover_streaming_parse_marked_complete_producer_dead",
+                        chat_id=chat_id,
+                        task_key=task_key,
+                    )
         age = pump_heartbeat_age_seconds(chat_id, task_key)
         if age is not None and age <= grace:
             continue
