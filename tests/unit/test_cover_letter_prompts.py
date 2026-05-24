@@ -59,6 +59,21 @@ class TestBuildCoverLetterSystemPrompt:
         prompt = build_cover_letter_system_prompt("professional")
         assert "БЕЗОПАСНОСТЬ" in prompt
 
+    def test_requires_first_person_voice(self) -> None:
+        prompt = build_cover_letter_system_prompt("professional")
+        assert "от первого лица" in prompt.lower()
+        assert "рассматриваю" in prompt.lower()
+        assert "Рассматривает позицию" in prompt or "рассматривает позицию" in prompt.lower()
+        assert "Имеет опыт" in prompt or "имеет опыт" in prompt.lower()
+
+    def test_example_uses_first_person_motivation(self) -> None:
+        prompt = build_cover_letter_system_prompt("professional")
+        ideal_start = prompt.index("[ИДЕАЛЬНЫЙ ПРИМЕР]")
+        ideal_end = prompt.index("[ЗАПРЕЩЕНО]", ideal_start)
+        ideal = prompt[ideal_start:ideal_end]
+        assert "Рассматриваю позицию" in ideal
+        assert "Рассматривает позицию" not in ideal
+
 
 class TestBuildCoverLetterUserContent:
     def test_includes_user_name(self) -> None:
@@ -125,6 +140,8 @@ class TestBuildCoverLetterUserContent:
         assert "один абзац" in content.lower()
         assert "процент" in content.lower() or "цифр" in content.lower()
         assert "дословно" in content.lower()
+        assert "от первого лица" in content.lower()
+        assert "рассматриваю" in content.lower()
 
     def test_includes_about_me_when_provided(self) -> None:
         content = build_cover_letter_user_content(
