@@ -77,7 +77,7 @@ async def test_dispatch_filters_capped_pre_skipped_and_seeds_ready_zset(
 
     # Local-import paths use the source modules; patch repos there too.
     monkeypatch.setattr(
-        "src.repositories.app_settings.AppSettingRepository", lambda *_a, **_k: settings_repo
+        "src.worker.tasks.autorespond.AppSettingRepository", lambda *_a, **_k: settings_repo
     )
     monkeypatch.setattr(
         "src.repositories.autoparse.AutoparseCompanyRepository", lambda *_a, **_k: company_repo
@@ -92,7 +92,7 @@ async def test_dispatch_filters_capped_pre_skipped_and_seeds_ready_zset(
         lambda *_a, **_k: we_repo,
     )
     monkeypatch.setattr(
-        "src.repositories.hh_application_attempt.HhApplicationAttemptRepository",
+        "src.worker.tasks.autorespond.HhApplicationAttemptRepository",
         lambda *_a, **_k: attempt_repo,
     )
     monkeypatch.setattr(
@@ -256,7 +256,7 @@ async def test_dispatch_returns_rate_limited_when_no_daily_slots(
     we_repo.get_active_by_user = AsyncMock(return_value=[])
 
     monkeypatch.setattr(
-        "src.repositories.app_settings.AppSettingRepository", lambda *_a, **_k: settings_repo
+        "src.worker.tasks.autorespond.AppSettingRepository", lambda *_a, **_k: settings_repo
     )
     monkeypatch.setattr(
         "src.repositories.autoparse.AutoparseCompanyRepository", lambda *_a, **_k: company_repo

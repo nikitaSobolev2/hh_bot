@@ -349,16 +349,24 @@ async def test_apply_pump_defers_missing_cover_letter_without_failed_tick(
 
     from src.worker.tasks.hh_ui_apply import _apply_pump_async
 
-    result = await _apply_pump_async(
-        self, session_factory, "autorespond:1:abc", 42, _envelope()
-    )
+    with patch("src.worker.tasks.hh_ui_apply.settings") as mock_settings:
+        mock_settings.hh_token_encryption_key = "secret"
+        mock_settings.hh_ui_apply_batch_size = 4
+        mock_settings.autorespond_apply_pump_soft_time_limit = 60
+        mock_settings.autorespond_apply_pump_chain_grace_seconds = 5
+        mock_settings.autorespond_apply_pump_pregen_wait_per_item_seconds = 0.5
+        mock_settings.hh_ui_debug_screenshot_dir = "/tmp"
+
+        result = await _apply_pump_async(
+            self, session_factory, "autorespond:1:abc", 42, _envelope()
+        )
 
     assert result["processed"] == 0
     schedule_mock.assert_called_once()
     finalize_mock.assert_not_awaited()
     failed_mock.assert_not_called()
     batch_mock.assert_not_called()
-    assert sleep_calls == [0.5]
+    assert sleep_calls == [0.5, 0.5]
 
 
 @pytest.mark.asyncio

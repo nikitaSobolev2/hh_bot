@@ -1,3 +1,17 @@
+base question-answer
+1/ telegram - https://t.me/sobolevNikitaWD
+2/ Ожидания по зп - рассматриваю от 250к рублей | если требуется указать в долларах - рассматриваю от 3000$
+3/ Готов ли работать по тк рф? - да
+4/ Какие варианты трудоустройства устраивают - по тк рф, гпх с физ лицом
+5/ устраивает ли работа на проект - да
+6/ опыт по языкам: питон больше 5 лет, php больше 5 лет, js\ts больше 5 лет, node.js больше 5 лет, go больше 3 лет, react больше 5 лет
+7/ вопросы по другим инструментам\фреймворкам\практикам - брать их опыта работы
+8/ есть ли опыт с linux - постоянно работаю с серверами на ubuntu в полном цикле
+
+писать очень кратко - быстро
+
+
+
 vacancy single page apply button link element - data-qa="vacancy-response-link-top"
 
 vacancy single page apply button link test link example - https://izhevsk.hh.ru/applicant/vacancy_response?vacancyId=132310345&startedWithQuestion=false&hhtmFrom=vacancy

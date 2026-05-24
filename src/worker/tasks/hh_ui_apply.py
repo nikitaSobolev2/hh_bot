@@ -339,7 +339,7 @@ def _schedule_pregen_for_apply_spec(
     apply_spec: dict[str, Any],
     resume_envelope: dict[str, Any],
 ) -> None:
-    """Re-enqueue cover letter generation; apply follows after ``enqueue_autorespond_apply_unit``."""
+    """Schedule cover letter pregen; apply unit is enqueued after the letter is cached."""
     if not resume_envelope.get("cover_task_enabled", True):
         return
     vid = int(apply_spec["autoparsed_vacancy_id"])
@@ -711,6 +711,11 @@ async def _apply_pump_async(
                     )
                 )
             if not specs:
+                pregen_wait = max(
+                    0.5,
+                    float(settings.autorespond_apply_pump_pregen_wait_per_item_seconds),
+                )
+                await asyncio.sleep(pregen_wait)
                 continue
 
             logger.info(
@@ -757,9 +762,9 @@ async def _apply_pump_async(
                 fut.result(timeout=300)
 
             def _cancel_check_sync() -> bool:
-                return is_autorespond_cancelled_sync(int(chat_id), task_key) or is_user_cancelled_sync(
+                return is_autorespond_cancelled_sync(
                     int(chat_id), task_key
-                )
+                ) or is_user_cancelled_sync(int(chat_id), task_key)
 
             def _run_batch(_specs=specs):
                 return apply_to_vacancies_ui_batch(
