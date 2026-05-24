@@ -339,6 +339,15 @@ def enqueue_autorespond_apply_unit(
 
 def kick_apply_pump_for_pipeline(chat_id: int, task_key: str) -> None:
     """Re-enqueue ``apply_pump`` using the saved pipeline envelope."""
+    if is_apply_pump_active(chat_id, task_key):
+        logger.debug(
+            "apply_pump_kick_skipped_active_pump",
+            chat_id=chat_id,
+            task_key=task_key,
+            lock_owner=get_pump_lock_owner_sync(chat_id, task_key),
+            heartbeat_age=pump_heartbeat_age_seconds(chat_id, task_key),
+        )
+        return
     envelope = load_pipeline_envelope(chat_id, task_key)
     if not envelope:
         return
@@ -350,7 +359,6 @@ def kick_apply_pump_for_pipeline(chat_id: int, task_key: str) -> None:
             task_key=task_key,
         )
         return
-    clear_pump_lock(chat_id, task_key)
     from src.worker.tasks.hh_ui_apply import apply_pump_task
 
     apply_pump_task.delay(
@@ -460,6 +468,20 @@ def get_pump_lock_owner_sync(chat_id: int, task_key: str) -> str | None:
         return owner or None
     finally:
         r.close()
+
+
+def is_apply_pump_active(chat_id: int, task_key: str) -> bool:
+    """True when a pump task likely still owns this run (lock and/or fresh heartbeat)."""
+    if get_pump_lock_owner_sync(chat_id, task_key):
+        return True
+    age = pump_heartbeat_age_seconds(chat_id, task_key)
+    if age is None:
+        return False
+    stale_after = max(
+        30.0,
+        float(settings.autorespond_apply_pump_heartbeat_interval_seconds) * 6.0,
+    )
+    return age <= stale_after
 
 
 # ---------------------------------------------------------------------------

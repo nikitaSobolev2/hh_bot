@@ -26,7 +26,6 @@ from src.repositories.hh_application_attempt import HhApplicationAttemptReposito
 from src.services.autoparse.compatibility import compatibility_score_needs_regeneration
 from src.services.autorespond_backlog import score_pending_vacancies
 from src.services.autorespond_pipeline_state import (
-    clear_pump_lock,
     mark_pregen_pending,
     mark_streaming_parse_complete,
     save_pipeline_envelope,
@@ -262,15 +261,10 @@ class StreamingAutorespondFeed:
     async def _kick_pump_if_needed(self) -> None:
         if self._pump_started or not settings.hh_ui_apply_enabled:
             return
-        from src.worker.tasks.hh_ui_apply import apply_pump_task
+        from src.services.autorespond_pipeline_state import kick_apply_pump_for_pipeline
 
-        resume_envelope = await self._ensure_resume_envelope()
-        clear_pump_lock(self.ctx.chat_id, self.ctx.task_key)
-        apply_pump_task.delay(
-            task_key=self.ctx.task_key,
-            chat_id=self.ctx.chat_id,
-            resume_envelope=resume_envelope,
-        )
+        await self._ensure_resume_envelope()
+        kick_apply_pump_for_pipeline(self.ctx.chat_id, self.ctx.task_key)
         self._pump_started = True
         logger.info(
             "streaming_autorespond_pump_started",

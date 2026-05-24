@@ -41,6 +41,7 @@ from src.repositories.hh_application_attempt import HhApplicationAttemptReposito
 from src.repositories.vacancy_feed import VacancyFeedSessionRepository
 from src.services.autorespond_pipeline_state import (
     clear_all_pipeline_state,
+    get_pump_lock_owner_sync,
     iter_active_pipeline_envelopes,
     load_pipeline_envelope,
     mark_pregen_pending,
@@ -1281,6 +1282,8 @@ async def _recover_stalled_pipelines_async() -> dict:
             cleared += 1
             continue
         if ready_remaining_count(chat_id, task_key) <= 0:
+            continue
+        if get_pump_lock_owner_sync(chat_id, task_key):
             continue
         age = pump_heartbeat_age_seconds(chat_id, task_key)
         if age is not None and age <= grace:

@@ -589,16 +589,30 @@ async def _apply_pump_async(
 
             batch_specs = pop_ready_batch(int(chat_id), task_key, batch_size)
             if not batch_specs:
+                pregen_wait = max(
+                    0.5,
+                    float(settings.autorespond_apply_pump_pregen_wait_per_item_seconds),
+                )
                 if pregen_pending_count(int(chat_id), task_key) > 0 and ready_remaining_count(
                     int(chat_id), task_key
                 ) > 0:
                     # Ready set is non-empty but ZPOPMIN race: sleep briefly and retry.
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(pregen_wait)
                     continue
                 if pregen_pending_count(int(chat_id), task_key) > 0:
-                    # Dispatcher seeded specs but pregen tasks not done; wait a tick.
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(pregen_wait)
                     continue
+                streaming = bool(
+                    autorespond_progress and autorespond_progress.get("streaming_autorespond")
+                )
+                if streaming:
+                    from src.services.autorespond_pipeline_state import (
+                        is_streaming_parse_complete,
+                    )
+
+                    if not is_streaming_parse_complete(int(chat_id), task_key):
+                        await asyncio.sleep(1.0)
+                        continue
                 break
 
             # Resolve cover letters (apply units enter the queue only after pregen saved one).
@@ -643,7 +657,9 @@ async def _apply_pump_async(
                 _done_vids: set[int] = done_vids,
                 _loop=loop,
             ) -> None:
-                # Playwright runs in a thread; bounce finalization back to the main loop.
+                # Playwright runs in a thread; keep pump lock/heartbeat fresh during long batches.
+                touch_pump_heartbeat(int(chat_id), task_key)
+                renew_pump_lock(int(chat_id), task_key, pump_owner)
                 _done_vids.add(spec.autoparsed_vacancy_id)
                 fut = asyncio.run_coroutine_threadsafe(
                     _finalize_pump_item_async(

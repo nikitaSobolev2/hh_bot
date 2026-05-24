@@ -36,6 +36,10 @@ async def test_recover_stalled_does_nothing_when_pump_heartbeat_fresh() -> None:
             return_value=10.0,
         ),
         patch(
+            "src.worker.tasks.autorespond.get_pump_lock_owner_sync",
+            return_value=None,
+        ),
+        patch(
             "src.services.autorespond_progress.is_autorespond_cancelled_sync",
             return_value=False,
         ),
@@ -95,6 +99,10 @@ async def test_recover_stalled_reenqueues_pump_when_heartbeat_stale() -> None:
             return_value=600.0,
         ),
         patch(
+            "src.worker.tasks.autorespond.get_pump_lock_owner_sync",
+            return_value=None,
+        ),
+        patch(
             "src.services.autorespond_progress.is_autorespond_cancelled_sync",
             return_value=False,
         ),
@@ -116,6 +124,55 @@ async def test_recover_stalled_reenqueues_pump_when_heartbeat_stale() -> None:
 
     assert res["healed"] == 1
     delay_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_recover_stalled_skips_when_pump_lock_held() -> None:
+    delay_mock = MagicMock()
+
+    with (
+        patch(
+            "src.worker.tasks.autorespond.iter_active_pipeline_envelopes",
+            return_value=[(42, "autorespond:1:abc")],
+        ),
+        patch(
+            "src.worker.tasks.autorespond.load_pipeline_envelope",
+            return_value={"resume_envelope": {"user_id": 7, "chat_id": 42}},
+        ),
+        patch(
+            "src.worker.tasks.autorespond.ready_remaining_count",
+            return_value=3,
+        ),
+        patch(
+            "src.worker.tasks.autorespond.get_pump_lock_owner_sync",
+            return_value="active-pump-task",
+        ),
+        patch(
+            "src.worker.tasks.autorespond.pump_heartbeat_age_seconds",
+            return_value=600.0,
+        ),
+        patch(
+            "src.services.autorespond_progress.is_autorespond_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.services.autorespond_pipeline_state.pregen_pending_count",
+            return_value=0,
+        ),
+        patch(
+            "src.worker.tasks.hh_ui_apply.apply_pump_task",
+            MagicMock(delay=delay_mock),
+        ),
+        patch("src.worker.tasks.autorespond.settings") as mock_settings,
+    ):
+        mock_settings.autorespond_recover_stalled_pump_grace_seconds = 90
+
+        from src.worker.tasks.autorespond import _recover_stalled_pipelines_async
+
+        res = await _recover_stalled_pipelines_async()
+
+    assert res["healed"] == 0
+    delay_mock.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -249,6 +250,35 @@ def test_pump_heartbeat_age_seconds_returns_fresh_value(fake_redis: _FakeRedis) 
     age = pump_heartbeat_age_seconds(7, "t")
     assert age is not None
     assert 0 <= age < 2
+
+
+def test_is_apply_pump_active_when_lock_held(fake_redis: _FakeRedis) -> None:
+    from src.services.autorespond_pipeline_state import (
+        is_apply_pump_active,
+        try_acquire_pump_lock,
+    )
+
+    assert is_apply_pump_active(7, "t") is False
+    assert try_acquire_pump_lock(7, "t", "owner-a") is True
+    assert is_apply_pump_active(7, "t") is True
+
+
+def test_kick_apply_pump_skips_when_pump_active(fake_redis: _FakeRedis) -> None:
+    from src.services.autorespond_pipeline_state import (
+        kick_apply_pump_for_pipeline,
+        save_pipeline_envelope,
+        try_acquire_pump_lock,
+    )
+
+    save_pipeline_envelope(
+        7,
+        "t",
+        {"resume_envelope": {"user_id": 1, "hh_linked_account_id": 2, "chat_id": 7}},
+    )
+    assert try_acquire_pump_lock(7, "t", "owner-a") is True
+    with patch("src.worker.tasks.hh_ui_apply.apply_pump_task") as pump_task:
+        kick_apply_pump_for_pipeline(7, "t")
+        pump_task.delay.assert_not_called()
 
 
 def test_clear_all_pipeline_state_wipes_every_key(fake_redis: _FakeRedis) -> None:
