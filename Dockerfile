@@ -27,7 +27,7 @@ RUN chmod +x /app/docker/entrypoint-login-assist.sh
 RUN groupadd --gid 1000 appuser \
     && useradd --uid 1000 --gid appuser --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app
-USER appuser
+# Entrypoint fixes bind-mount log dir perms, then drops to appuser for Celery.
 
 # Default image: bot and Celery workers (``celery`` + optional ``hh_ui`` queues; see docker-compose.yml).
 FROM base AS app
