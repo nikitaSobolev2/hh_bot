@@ -1214,6 +1214,7 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
             progress_bot=bot,
             bar_index=2,
             trigger="manual_pipeline",
+            worker_task=task,
         )
         streaming_feed = StreamingAutorespondFeed(stream_ctx)
         await streaming_feed.bootstrap_pending_from_db()

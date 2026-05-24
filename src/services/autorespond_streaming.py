@@ -3,7 +3,7 @@
 Used by the manual autoparse+autorespond pipeline:
 
 1. Negotiations sync (orchestrator)
-2. Bootstrap: enqueue DB rows that already have compatibility scores
+2. Bootstrap: score unscored pending DB rows (detail parse + AI compat), enqueue ready rows
 3. Autoparse: detail parse + AI compat per vacancy; each ready row is enqueued immediately
 4. Apply pump consumes the ready ZSET only after cover letters are generated
 """
@@ -24,6 +24,7 @@ from src.models.autoparse import AutoparsedVacancy
 from src.repositories.autoparse import AutoparsedVacancyRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.services.autoparse.compatibility import compatibility_score_needs_regeneration
+from src.services.autorespond_backlog import score_pending_vacancies
 from src.services.autorespond_pipeline_state import (
     clear_pump_lock,
     mark_pregen_pending,
@@ -57,6 +58,7 @@ class StreamingAutorespondContext:
     progress_bot: Any
     bar_index: int = 2
     trigger: str = "manual_pipeline"
+    worker_task: Any | None = None
 
 
 @dataclass
@@ -73,6 +75,12 @@ class StreamingAutorespondFeed:
     _resume_envelope: dict[str, Any] | None = field(default=None, repr=False)
     _pump_started: bool = field(default=False, repr=False)
     _work_units: int = field(default=0, repr=False)
+    _user_stack: list[str] | None = field(default=None, repr=False)
+    _user_exp: str | None = field(default=None, repr=False)
+    _parse_mode: str | None = field(default=None, repr=False)
+    _detail_parse_mode: str | None = field(default=None, repr=False)
+    _web_storage: dict | None = field(default=None, repr=False)
+    _parse_context_loaded: bool = field(default=False, repr=False)
 
     async def _load_company_context(self) -> bool:
         if self._company is not None:
@@ -119,6 +127,69 @@ class StreamingAutorespondFeed:
         if company.keyword_check_enabled is False:
             return ""
         return (company.keyword_filter or "").strip()
+
+    async def _load_parse_and_scoring_context(self) -> bool:
+        if self._parse_context_loaded:
+            return bool(self._user_stack or self._user_exp)
+        from src.bot.modules.autoparse import services as ap_service
+        from src.repositories.work_experience import WorkExperienceRepository
+        from src.services.hh.parse_browser_session import resolve_web_storage
+        from src.worker.tasks.autoparse import _build_user_profile
+
+        if self._company is None:
+            return False
+
+        parse_mode = self._company.parse_mode or "api"
+        if not settings.hh_api_vacancy_parsing_enabled:
+            parse_mode = "web"
+        detail_parse_mode = "api" if settings.hh_api_vacancy_parsing_enabled else "web"
+        web_storage = None
+
+        async with self.ctx.session_factory() as session:
+            ap_settings = await ap_service.get_user_autoparse_settings(session, self.ctx.user_id)
+            we_repo = WorkExperienceRepository(session)
+            work_experiences = await we_repo.get_active_by_user(self.ctx.user_id)
+            if self._company.parse_hh_linked_account_id:
+                web_storage = await resolve_web_storage(
+                    session,
+                    user_id=self.ctx.user_id,
+                    account_id=self._company.parse_hh_linked_account_id,
+                )
+
+        self._user_stack, self._user_exp = _build_user_profile(ap_settings, work_experiences)
+        self._parse_mode = parse_mode
+        self._detail_parse_mode = detail_parse_mode
+        self._web_storage = web_storage
+        self._parse_context_loaded = True
+        if not (self._user_stack or self._user_exp):
+            logger.warning(
+                "streaming_autorespond_backlog_no_user_profile",
+                company_id=self.ctx.company_id,
+                user_id=self.ctx.user_id,
+            )
+            return False
+        return True
+
+    async def _score_unscored_pending(
+        self,
+        vacancies: list[AutoparsedVacancy],
+    ) -> list[AutoparsedVacancy]:
+        if not vacancies:
+            return []
+        if not await self._load_parse_and_scoring_context():
+            return []
+        return await score_pending_vacancies(
+            self.ctx.session_factory,
+            company_id=self.ctx.company_id,
+            user_id=self.ctx.user_id,
+            vacancies=vacancies,
+            user_stack=list(self._user_stack or []),
+            user_exp=self._user_exp or "",
+            parse_mode=self._parse_mode or "api",
+            detail_parse_mode=self._detail_parse_mode or "api",
+            web_storage=self._web_storage,
+            worker_task=self.ctx.worker_task,
+        )
 
     async def _already_handled(self, hh_vacancy_ids: list[str]) -> set[str]:
         if not hh_vacancy_ids:
@@ -313,7 +384,7 @@ class StreamingAutorespondFeed:
         return True
 
     async def bootstrap_pending_from_db(self) -> int:
-        """Enqueue existing company vacancies that already have AI compatibility scores."""
+        """Score unscored pending rows, then enqueue DB backlog that passes autorespond filters."""
         if not await self._load_company_context():
             return 0
         from src.worker.tasks.autorespond import _pending_autorespond_autoparsed_vacancy_ids
@@ -325,6 +396,14 @@ class StreamingAutorespondFeed:
             hh_linked_account_id=self.ctx.hh_linked_account_id,
         )
         if not pending_ids:
+            logger.info(
+                "streaming_autorespond_bootstrap",
+                company_id=self.ctx.company_id,
+                pending=0,
+                enqueued=0,
+                scored=0,
+                pre_skipped=len(self._pre_skipped_ids),
+            )
             return 0
 
         async with self.ctx.session_factory() as session:
@@ -333,15 +412,40 @@ class StreamingAutorespondFeed:
 
         hh_ids = [str(v.hh_vacancy_id) for v in vacancies if v.hh_vacancy_id]
         handled = await self._already_handled(hh_ids)
-        enqueued = 0
+
+        ready_to_enqueue: list[AutoparsedVacancy] = []
+        needs_scoring: list[AutoparsedVacancy] = []
         for vacancy in vacancies:
+            hh_id = str(vacancy.hh_vacancy_id or "")
+            if hh_id in handled:
+                self._pre_skipped_ids.append(int(vacancy.id))
+                continue
+            if self._passes_ready_filters(vacancy):
+                ready_to_enqueue.append(vacancy)
+            elif compatibility_score_needs_regeneration(vacancy.compatibility_score):
+                needs_scoring.append(vacancy)
+
+        enqueued = 0
+        for vacancy in ready_to_enqueue:
             if await self._enqueue_vacancy(vacancy, already_handled=handled):
                 enqueued += 1
+
+        scored_count = 0
+        if needs_scoring:
+            scored = await self._score_unscored_pending(needs_scoring)
+            scored_count = len(scored)
+            for vacancy in scored:
+                if await self._enqueue_vacancy(vacancy, already_handled=handled):
+                    enqueued += 1
+
         await self._start_applications_progress_if_needed()
         logger.info(
             "streaming_autorespond_bootstrap",
             company_id=self.ctx.company_id,
             pending=len(pending_ids),
+            ready=len(ready_to_enqueue),
+            needs_scoring=len(needs_scoring),
+            scored=scored_count,
             enqueued=enqueued,
             pre_skipped=len(self._pre_skipped_ids),
         )
