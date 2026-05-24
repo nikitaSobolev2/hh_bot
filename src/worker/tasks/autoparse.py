@@ -323,6 +323,7 @@ async def _run_autoparse_company_async(
     *,
     pipeline_progress: tuple[object, str, object] | None = None,
     suppress_progress: bool = False,
+    streaming_autorespond: object | None = None,
 ) -> dict:
     from src.repositories.app_settings import AppSettingRepository
     from src.repositories.autoparse import AutoparseCompanyRepository, AutoparsedVacancyRepository
@@ -905,6 +906,8 @@ async def _run_autoparse_company_async(
                     new_autorespond_vacancy_ids.extend(
                         int(r.id) for r in inserted if getattr(r, "id", None) is not None
                     )
+                    if streaming_autorespond is not None and inserted:
+                        await streaming_autorespond.on_autoparsed_rows(inserted)
             finally:
                 for hh_vacancy_id in locked_hh_ids:
                     await task.release_user_vacancy_processing_lock(

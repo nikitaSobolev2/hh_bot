@@ -649,7 +649,7 @@ async def test_autorespond_pre_skip_checks_same_hh_account_only():
 
 
 @pytest.mark.asyncio
-async def test_manual_pipeline_passes_merged_vacancy_ids_to_autorespond():
+async def test_manual_pipeline_runs_negotiations_before_autoparse_and_streaming():
     session = MagicMock()
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
@@ -673,6 +673,8 @@ async def test_manual_pipeline_passes_merged_vacancy_ids_to_autorespond():
     progress_service.start_task = AsyncMock()
     progress_service.set_step_state = AsyncMock()
     progress_service.set_active_step_index = AsyncMock()
+    progress_service.set_nested_steps = AsyncMock()
+    progress_service.set_nested_step_state = AsyncMock()
 
     bot = MagicMock()
     bot.session.close = AsyncMock()
@@ -681,49 +683,59 @@ async def test_manual_pipeline_passes_merged_vacancy_ids_to_autorespond():
     task.request.id = "task-123"
     task.create_bot.return_value = bot
 
-    with _stub_hh_modules():
-        with (
-            patch(
-                "src.repositories.autoparse.AutoparseCompanyRepository",
-                return_value=company_repo,
-            ),
-            patch("src.repositories.user.UserRepository", return_value=user_repo),
-            patch("src.services.progress_service.ProgressService", return_value=progress_service),
-            patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
-            patch("src.core.i18n.get_text", side_effect=lambda key, locale: key),
-            patch(
-                "src.worker.tasks.autoparse._run_autoparse_company_async",
-                new=AsyncMock(
-                    return_value={
-                        "status": "completed",
-                        "company_id": company.id,
-                        "new_count": 3,
-                        "new_vacancy_ids": [205, 204, 203],
-                        "scraped_hh_vacancy_ids": ["hh-200"],
-                    }
-                ),
-            ),
-            patch(
-                "src.worker.tasks.autorespond._manual_pipeline_autorespond_vacancy_ids",
-                new=AsyncMock(return_value=[205, 204, 203, 202, 201, 200]),
-            ),
-            patch(
-                "src.worker.tasks.autorespond._run_autorespond_async",
-                new=AsyncMock(return_value={"status": "ok"}),
-            ) as run_autorespond_mock,
-        ):
-            from src.worker.tasks.autorespond import _run_manual_autoparse_autorespond_pipeline_async
+    call_order: list[str] = []
 
-            result = await _run_manual_autoparse_autorespond_pipeline_async(
-                _make_session_factory(session),
-                task,
-                company.id,
-                user.id,
-            )
+    async def _sync(*_a, **_k):
+        call_order.append("negotiations")
+        return {"status": "ok"}
 
-    assert result == {"status": "ok"}
-    assert run_autorespond_mock.await_args.args[3] == [205, 204, 203, 202, 201, 200]
-    assert run_autorespond_mock.await_args.args[4] == "manual_pipeline"
+    async def _autoparse(*_a, **_k):
+        call_order.append("autoparse")
+        return {"status": "completed", "new_vacancy_ids": [], "scraped_hh_vacancy_ids": []}
+
+    feed = MagicMock()
+    feed.bootstrap_pending_from_db = AsyncMock(return_value=0)
+    feed.finalize = AsyncMock(
+        return_value={"status": "ok", "queued": 0, "skipped": 0, "streaming": True}
+    )
+
+    with (
+        _stub_hh_modules(), patch(
+            "src.repositories.autoparse.AutoparseCompanyRepository",
+            return_value=company_repo,
+        ),
+        patch("src.repositories.user.UserRepository", return_value=user_repo),
+        patch("src.services.progress_service.ProgressService", return_value=progress_service),
+        patch("src.services.progress_service.create_progress_redis", return_value=MagicMock()),
+        patch("src.core.i18n.get_text", side_effect=lambda key, locale: key),
+        patch(
+            "src.worker.tasks.autorespond._run_negotiations_sync_with_retry",
+            new=AsyncMock(side_effect=_sync),
+        ),
+        patch(
+            "src.worker.tasks.autoparse._run_autoparse_company_async",
+            new=AsyncMock(side_effect=_autoparse),
+        ),
+            patch(
+                "src.services.autorespond_streaming.StreamingAutorespondFeed",
+                return_value=feed,
+            ),
+    ):
+        from src.worker.tasks.autorespond import _run_manual_autoparse_autorespond_pipeline_async
+
+        result = await _run_manual_autoparse_autorespond_pipeline_async(
+            _make_session_factory(session),
+            task,
+            company.id,
+            user.id,
+        )
+
+    assert result["status"] == "ok"
+    assert call_order == ["negotiations", "autoparse"]
+    feed.bootstrap_pending_from_db.assert_awaited_once()
+    feed.finalize.assert_awaited_once()
+    progress_service.set_step_state.assert_any_await("pipeline:7:task-123", "negotiations", "done")
+    progress_service.set_step_state.assert_any_await("pipeline:7:task-123", "autoparse", "running")
 
 
 @pytest.mark.asyncio
@@ -735,27 +747,26 @@ async def test_manual_pipeline_autorespond_vacancy_ids_merges_new_pending_and_sc
     vacancy_repo = MagicMock()
     vacancy_repo.list_ids_by_company_and_hh_vacancy_ids = AsyncMock(return_value=[200])
 
-    with _stub_hh_modules():
-        with (
-            patch(
-                "src.worker.tasks.autorespond._pending_autorespond_autoparsed_vacancy_ids",
-                new=AsyncMock(return_value=[205, 204, 202, 201]),
-            ),
-            patch(
-                "src.worker.tasks.autorespond.AutoparsedVacancyRepository",
-                return_value=vacancy_repo,
-            ),
-        ):
-            from src.worker.tasks.autorespond import _manual_pipeline_autorespond_vacancy_ids
+    with (
+        _stub_hh_modules(), patch(
+            "src.worker.tasks.autorespond._pending_autorespond_autoparsed_vacancy_ids",
+            new=AsyncMock(return_value=[205, 204, 202, 201]),
+        ),
+        patch(
+            "src.worker.tasks.autorespond.AutoparsedVacancyRepository",
+            return_value=vacancy_repo,
+        ),
+    ):
+        from src.worker.tasks.autorespond import _manual_pipeline_autorespond_vacancy_ids
 
-            merged = await _manual_pipeline_autorespond_vacancy_ids(
-                _make_session_factory(session),
-                company_id=7,
-                user_id=42,
-                hh_linked_account_id=55,
-                new_vacancy_ids=[205, 204, 203],
-                scraped_hh_vacancy_ids=["hh-200"],
-            )
+        merged = await _manual_pipeline_autorespond_vacancy_ids(
+            _make_session_factory(session),
+            company_id=7,
+            user_id=42,
+            hh_linked_account_id=55,
+            new_vacancy_ids=[205, 204, 203],
+            scraped_hh_vacancy_ids=["hh-200"],
+        )
 
     assert merged == [205, 204, 203, 202, 201, 200]
 

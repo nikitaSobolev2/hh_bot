@@ -1135,13 +1135,13 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
             initial_totals=[0, 0, 0],
             steps=[
                 {
-                    "id": "autoparse",
-                    "label": get_text("progress-step-autoparse-pipeline", locale),
+                    "id": "negotiations",
+                    "label": get_text("progress-step-negotiations-sync", locale),
                     "state": "running",
                 },
                 {
-                    "id": "negotiations",
-                    "label": get_text("progress-step-negotiations-sync", locale),
+                    "id": "autoparse",
+                    "label": get_text("progress-step-autoparse-pipeline", locale),
                     "state": "pending",
                 },
                 {
@@ -1153,12 +1153,73 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
             active_step_index=0,
         )
 
+        sync_res = await _run_negotiations_sync_with_retry(
+            session_factory,
+            task,
+            user_id=user_id,
+            hh_acc_id=hh_linked_account_id,
+            company_id=company_id,
+            telegram_id=telegram_id,
+            locale=locale,
+            trigger="manual_pipeline",
+        )
+        if sync_res.get("status") == "error":
+            with contextlib.suppress(Exception):
+                await svc.cancel_task(pk)
+            return {
+                "status": "negotiations_sync_failed",
+                "reason": sync_res.get("reason"),
+            }
+
+        await svc.set_step_state(pk, "negotiations", "done")
+        await svc.set_step_state(pk, "autoparse", "running")
+        await svc.set_active_step_index(pk, 1)
+        await svc.set_nested_steps(
+            pk,
+            [
+                {
+                    "id": "autoparse",
+                    "label": get_text("progress-step-autoparse-pipeline", locale),
+                    "state": "running",
+                },
+                {
+                    "id": "applications",
+                    "label": get_text("progress-step-autorespond-applications", locale),
+                    "state": "pending",
+                },
+            ],
+            active_index=0,
+        )
+
+        from src.services.autorespond_streaming import (
+            StreamingAutorespondContext,
+            StreamingAutorespondFeed,
+        )
+
+        stream_ctx = StreamingAutorespondContext(
+            session_factory=session_factory,
+            company_id=company_id,
+            user_id=user_id,
+            chat_id=telegram_id,
+            task_key=pk,
+            locale=locale,
+            celery_task_id=celery_id,
+            hh_linked_account_id=hh_linked_account_id,
+            progress=svc,
+            progress_bot=bot,
+            bar_index=2,
+            trigger="manual_pipeline",
+        )
+        streaming_feed = StreamingAutorespondFeed(stream_ctx)
+        await streaming_feed.bootstrap_pending_from_db()
+
         ap_res = await _run_autoparse_company_async(
             session_factory,
             task,
             company_id,
             None,
             pipeline_progress=(svc, pk, bot),
+            streaming_autorespond=streaming_feed,
         )
         if ap_res.get("status") != "completed":
             with contextlib.suppress(Exception):
@@ -1166,34 +1227,11 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
             return ap_res
 
         await svc.set_step_state(pk, "autoparse", "done")
-        await svc.set_step_state(pk, "negotiations", "running")
-        await svc.set_active_step_index(pk, 1)
+        await svc.set_nested_step_state(pk, "autoparse", "done")
 
-        manual_vacancy_ids = await _manual_pipeline_autorespond_vacancy_ids(
-            session_factory,
-            company_id,
-            user_id,
-            hh_linked_account_id,
-            list(ap_res.get("new_vacancy_ids") or []),
-            list(ap_res.get("scraped_hh_vacancy_ids") or []),
-        )
-
-        return await _run_autorespond_async(
-            session_factory,
-            task,
-            company_id,
-            manual_vacancy_ids,
-            "manual_pipeline",
-            None,
-            pipeline_context={
-                "svc": svc,
-                "task_key": pk,
-                "bot": bot,
-                "bar_index": 2,
-                "locale": locale,
-                "task_group": True,
-            },
-        )
+        result = await streaming_feed.finalize()
+        result["negotiations_sync"] = sync_res
+        return result
     finally:
         with contextlib.suppress(Exception):
             await bot.session.close()
