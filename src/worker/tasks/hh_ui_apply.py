@@ -1,9 +1,24 @@
-"""Celery task: apply to an hh.ru vacancy via Playwright (UI)."""
+"""Celery tasks: HH.ru UI apply (Playwright) + autorespond apply pump.
+
+Two roles
+---------
+* :func:`apply_to_vacancy_ui_task` — single-vacancy apply triggered by the user's
+  feed (one click, immediate apply). One Chromium session per task.
+
+* :func:`apply_pump_task` — long-lived consumer for the autorespond pipeline.
+  Pops batches from the Redis ready ZSET, reads pre-generated cover letters,
+  runs a Playwright batch, ticks the progress bar per item, chains itself when
+  the soft time limit approaches. No tail-chain / parent-heartbeat coordination.
+
+Old ``apply_to_vacancies_batch_ui_task`` is retained as a deprecation shim that
+re-routes in-flight broker messages to the new pump.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -16,10 +31,17 @@ from src.config import settings
 from src.core.constants import AppSettingKey
 from src.core.i18n import I18nContext, get_text
 from src.core.logging import get_logger
+from src.core.system_load import get_system_load_guard
 from src.repositories.app_settings import AppSettingRepository
-from src.repositories.autoparse import AutoparsedVacancyRepository
 from src.repositories.hh_application_attempt import HhApplicationAttemptRepository
 from src.repositories.hh_linked_account import HhLinkedAccountRepository
+from src.services.autorespond_pipeline_state import (
+    fetch_pregen_letter,
+    pop_ready_batch,
+    pregen_pending_count,
+    ready_remaining_count,
+    touch_pump_heartbeat,
+)
 from src.services.hh.crypto import HhTokenCipher
 from src.services.hh_ui.config import HhUiApplyConfig
 from src.services.hh_ui.outcomes import ApplyOutcome, ApplyResult
@@ -58,53 +80,12 @@ def _coerce_debug_screenshots_flag(raw: object) -> bool:
     return bool(raw)
 
 
-async def _generate_batch_cover_letter_bounded(
-    session_factory: async_sessionmaker[AsyncSession],
-    user_id: int,
-    vacancy_id: int,
-    cover_letter_style: str,
-    *,
-    cover_ai,
-) -> tuple[str, bool]:
-    """Return (letter, skipped_due_to_ai). On timeout/error apply without a cover letter."""
-    from src.worker.tasks.cover_letter import generate_cover_letter_plaintext_for_autoparsed_vacancy
-
-    try:
-        letter = await asyncio.wait_for(
-            generate_cover_letter_plaintext_for_autoparsed_vacancy(
-                session_factory,
-                user_id,
-                vacancy_id,
-                cover_letter_style,
-                ai_client=cover_ai,
-            ),
-            timeout=settings.hh_ui_batch_cover_letter_timeout_seconds,
-        )
-        return letter or "", False
-    except TimeoutError:
-        logger.warning(
-            "hh_ui_batch_cover_letter_timeout",
-            user_id=user_id,
-            vacancy_id=vacancy_id,
-            timeout_s=settings.hh_ui_batch_cover_letter_timeout_seconds,
-        )
-        return "", True
-    except Exception as exc:
-        logger.warning(
-            "hh_ui_batch_cover_letter_failed",
-            user_id=user_id,
-            vacancy_id=vacancy_id,
-            error=str(exc)[:300],
-        )
-        return "", True
-
-
 def _map_outcome_to_status(outcome: ApplyOutcome) -> tuple[str, str | None]:
     """Return (status, error_code) for hh_application_attempts.
 
-    Terminal without retry (runner): SUCCESS, ALREADY_RESPONDED, EMPLOYER_QUESTIONS,
-    VACANCY_UNAVAILABLE. Retryable: ERROR, RATE_LIMITED, NO_APPLY_BUTTON, SESSION_EXPIRED.
-    CAPTCHA is terminal (no automated retry).
+    Terminal without retry: SUCCESS, ALREADY_RESPONDED, EMPLOYER_QUESTIONS,
+    VACANCY_UNAVAILABLE. Retryable: ERROR, RATE_LIMITED, NO_APPLY_BUTTON,
+    SESSION_EXPIRED. CAPTCHA terminal (no automated retry).
     """
     if outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
         return "needs_employer_questions", "ui:employer_questions"
@@ -196,9 +177,6 @@ async def _persist_ui_apply_attempt_and_feed_effects(
     return status, err_code
 
 
-_FINALIZE_BATCH_ITEM_THREADSAFE_TIMEOUT_S = 300
-
-
 async def _notify_negotiations_limit_exceeded(
     bot: Any,
     chat_id: int,
@@ -213,20 +191,16 @@ async def _notify_negotiations_limit_exceeded(
         return
     task_key = str(autorespond_progress["task_key"])
     finish_progress_task = bool(autorespond_progress.get("finish_progress_task", True))
+    from src.services.autorespond_pipeline_state import clear_all_pipeline_state
     from src.services.autorespond_progress import (
         clear_autorespond_done_counter,
         clear_autorespond_failed_counter,
-        clear_autorespond_ui_tail_sync,
-        clear_hh_ui_batch_checkpoint_sync,
-        clear_hh_ui_resume_envelope_sync,
         set_autorespond_cancelled,
     )
     from src.services.progress_service import ProgressService, create_progress_redis
 
     await set_autorespond_cancelled(chat_id, task_key)
-    clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
-    clear_hh_ui_resume_envelope_sync(chat_id, task_key)
-    clear_autorespond_ui_tail_sync(chat_id, task_key)
+    clear_all_pipeline_state(chat_id, task_key)
     if not finish_progress_task:
         redis = create_progress_redis()
         try:
@@ -252,95 +226,106 @@ async def _notify_negotiations_limit_exceeded(
         await redis.aclose()
 
 
-async def _finalize_batch_item_async(
-    *,
-    self,
-    session_factory: async_sessionmaker[AsyncSession],
-    user_id: int,
+# ---------------------------------------------------------------------------
+# Apply pump (autorespond pipeline consumer)
+# ---------------------------------------------------------------------------
+
+
+def _autorespond_progress_from_envelope(resume_envelope: dict[str, Any]) -> dict[str, Any] | None:
+    ap = resume_envelope.get("autorespond_progress")
+    return ap if isinstance(ap, dict) else None
+
+
+async def _wait_for_pregen_letter(
     chat_id: int,
+    task_key: str,
+    autoparsed_vacancy_id: int,
+    *,
+    wait_seconds: float,
+) -> str:
+    """Poll the pregen cache until letter arrives or ``wait_seconds`` elapses.
+
+    Returns ``""`` when no cover-letter task was scheduled (or task failed) — the
+    apply still proceeds without a letter (HH allows blank).
+    """
+    if wait_seconds <= 0:
+        existing = fetch_pregen_letter(chat_id, task_key, autoparsed_vacancy_id)
+        return existing or ""
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        letter = fetch_pregen_letter(chat_id, task_key, autoparsed_vacancy_id)
+        if letter is not None:
+            return letter
+        if time.monotonic() >= deadline:
+            return ""
+        await asyncio.sleep(0.25)
+
+
+async def _finalize_pump_item_async(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    chat_id: int,
+    user_id: int,
     locale: str,
     hh_linked_account_id: int,
-    feed_session_id: int,
-    it: dict,
+    spec: dict[str, Any],
     result: ApplyResult,
-    items: list[dict],
-    finalized_vids: set[int],
+    autorespond_progress: dict[str, Any] | None,
     bot: Any,
     silent_feed: bool,
     send_error_screenshot_to_user: bool,
-    autorespond_progress: dict | None,
-    resume_blob: dict | None = None,
-    skip_progress_tick: bool = False,
-    skip_persist: bool = False,
 ) -> None:
-    """Persist one batch row, tick autorespond bar, optional screenshot, Redis checkpoint."""
+    """Persist attempt + tick progress bar for one pump item."""
     from src.services.autorespond_progress import (
         increment_autorespond_employer_test_sync,
         increment_autorespond_failed_sync,
-        save_hh_ui_batch_checkpoint_sync,
         tick_autorespond_bar,
     )
 
-    vid = int(it["autoparsed_vacancy_id"])
-    resume_id = str(it["resume_id"])
-    hh_id = str(it["hh_vacancy_id"])
-    finalized_vids.add(vid)
+    vid = int(spec["autoparsed_vacancy_id"])
+    hh_id = str(spec["hh_vacancy_id"])
+    resume_id = str(spec["resume_id"])
 
-    if not skip_persist:
-        await _persist_ui_apply_attempt_and_feed_effects(
-            session_factory=session_factory,
-            user_id=user_id,
-            hh_linked_account_id=hh_linked_account_id,
-            autoparsed_vacancy_id=vid,
-            hh_vacancy_id=hh_id,
-            resume_id=resume_id,
-            feed_session_id=feed_session_id,
-            result=result,
-            silent_feed=silent_feed,
-        )
-    logger.info(
-        "hh_ui_apply_batch_item_done",
-        task_id=getattr(self.request, "id", None),
+    await _persist_ui_apply_attempt_and_feed_effects(
+        session_factory=session_factory,
         user_id=user_id,
-        vacancy_id=vid,
-        outcome=result.outcome.value,
-        skip_persist=skip_persist,
+        hh_linked_account_id=hh_linked_account_id,
+        autoparsed_vacancy_id=vid,
+        hh_vacancy_id=hh_id,
+        resume_id=resume_id,
+        feed_session_id=0,
+        result=result,
+        silent_feed=silent_feed,
     )
 
-    task_key = (
-        str(autorespond_progress["task_key"])
-        if autorespond_progress and autorespond_progress.get("task_key")
-        else None
-    )
-    if task_key:
-        with contextlib.suppress(Exception):
-            if not skip_progress_tick:
-                if _ui_outcome_increments_autorespond_failed(result.outcome):
-                    increment_autorespond_failed_sync(int(chat_id), task_key, 1)
-                if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
-                    increment_autorespond_employer_test_sync(int(chat_id), task_key, 1)
-                await tick_autorespond_bar(
-                    bot=bot,
-                    chat_id=chat_id,
-                    task_key=task_key,
-                    total=int(autorespond_progress["total"]),
-                    locale=str(autorespond_progress.get("locale") or locale),
-                    footer_failed_line=None,
-                    title=autorespond_progress.get("title"),
-                    celery_task_id=autorespond_progress.get("celery_task_id"),
-                    bar_index=int(autorespond_progress.get("bar_index", 0)),
-                    finish_progress_task=bool(
-                        autorespond_progress.get("finish_progress_task", True)
-                    ),
-                )
-        remaining = [
-            x
-            for x in items
-            if int(x["autoparsed_vacancy_id"]) not in finalized_vids
-        ]
-        save_hh_ui_batch_checkpoint_sync(
-            chat_id, task_key, remaining, resume=resume_blob
-        )
+    if autorespond_progress and autorespond_progress.get("task_key"):
+        task_key = str(autorespond_progress["task_key"])
+        try:
+            if _ui_outcome_increments_autorespond_failed(result.outcome):
+                increment_autorespond_failed_sync(int(chat_id), task_key, 1)
+            if result.outcome == ApplyOutcome.EMPLOYER_QUESTIONS:
+                increment_autorespond_employer_test_sync(int(chat_id), task_key, 1)
+            await tick_autorespond_bar(
+                bot=bot,
+                chat_id=int(chat_id),
+                task_key=task_key,
+                total=int(autorespond_progress["total"]),
+                locale=str(autorespond_progress.get("locale") or locale),
+                footer_failed_line=None,
+                title=autorespond_progress.get("title"),
+                celery_task_id=autorespond_progress.get("celery_task_id"),
+                bar_index=int(autorespond_progress.get("bar_index", 0)),
+                finish_progress_task=bool(
+                    autorespond_progress.get("finish_progress_task", True)
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "apply_pump_tick_failed",
+                vacancy_id=vid,
+                task_key=task_key,
+                error=str(exc)[:300],
+            )
 
     if (
         silent_feed
@@ -356,133 +341,81 @@ async def _finalize_batch_item_async(
         )
         with contextlib.suppress(Exception):
             await bot.send_photo(
-                chat_id,
+                int(chat_id),
                 BufferedInputFile(result.screenshot_bytes, err_name),
             )
 
 
-async def _apply_batch_ui_async(
+def _pump_shift_should_continue(
+    *,
+    shift_started: float,
+    soft_time_limit: float,
+    grace_seconds: float,
+) -> bool:
+    elapsed = time.monotonic() - shift_started
+    return elapsed + grace_seconds < soft_time_limit
+
+
+async def _apply_pump_async(
     self,
     session_factory: async_sessionmaker[AsyncSession],
-    user_id: int,
+    task_key: str,
     chat_id: int,
-    message_id: int,
-    locale: str,
-    hh_linked_account_id: int,
-    feed_session_id: int,
-    items: list[dict],
-    cover_letter_style: str,
-    cover_task_enabled: bool,
-    silent_feed: bool = True,
-    autorespond_progress: dict | None = None,
+    resume_envelope: dict[str, Any],
 ) -> dict:
-    """Apply to several vacancies in one Playwright session (autorespond batch)."""
+    """Long-lived consumer of the autorespond ready ZSET; chains self before soft-timeout."""
     from src.services.autorespond_progress import (
-        hh_ui_batch_resume_payload,
+        ensure_autorespond_progress_task_state_if_missing,
         is_autorespond_cancelled_sync,
-        save_hh_ui_batch_checkpoint_sync,
     )
-
-    if (
-        autorespond_progress
-        and autorespond_progress.get("task_key")
-        and is_autorespond_cancelled_sync(int(chat_id), str(autorespond_progress["task_key"]))
-    ):
-        return {"status": "cancelled", "reason": "autorespond_cancelled", "count": len(items)}
 
     bot = self.create_bot()
-    cover_ai = None
-    send_error_screenshot_to_user = False
-    task_key = (
-        str(autorespond_progress["task_key"])
-        if autorespond_progress and autorespond_progress.get("task_key")
-        else None
-    )
-    item_by_vid: dict[int, dict] = {int(x["autoparsed_vacancy_id"]): x for x in items}
-    finalized_vids: set[int] = set()
-    resume_blob = (
-        hh_ui_batch_resume_payload(
-            user_id=user_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            locale=locale,
-            hh_linked_account_id=hh_linked_account_id,
-            feed_session_id=feed_session_id,
-            cover_letter_style=cover_letter_style,
-            cover_task_enabled=cover_task_enabled,
-            silent_feed=silent_feed,
-            autorespond_progress=autorespond_progress,
-        )
-        if task_key
-        else None
-    )
-    try:
-        from src.services.ai.client import AIClient, close_ai_client
+    autorespond_progress = _autorespond_progress_from_envelope(resume_envelope)
+    locale = str(resume_envelope.get("locale") or "ru")
+    user_id = int(resume_envelope.get("user_id") or 0)
+    hh_linked_account_id = int(resume_envelope.get("hh_linked_account_id") or 0)
+    silent_feed = bool(resume_envelope.get("silent_feed", True))
 
-        cipher = HhTokenCipher(settings.hh_token_encryption_key)
-        if task_key:
-            save_hh_ui_batch_checkpoint_sync(
-                chat_id, task_key, list(items), resume=resume_blob
+    if user_id <= 0 or hh_linked_account_id <= 0:
+        with contextlib.suppress(Exception):
+            await bot.session.close()
+        return {"status": "error", "reason": "bad_envelope"}
+
+    shift_started = time.monotonic()
+    soft_limit = float(settings.autorespond_apply_pump_soft_time_limit)
+    grace = float(settings.autorespond_apply_pump_chain_grace_seconds)
+    batch_size = int(settings.hh_ui_apply_batch_size)
+    pregen_wait = float(settings.autorespond_apply_pump_pregen_wait_per_item_seconds)
+    guard = get_system_load_guard()
+
+    cipher = HhTokenCipher(settings.hh_token_encryption_key)
+    processed = 0
+    abort_reason: str | None = None
+
+    if autorespond_progress:
+        with contextlib.suppress(Exception):
+            await ensure_autorespond_progress_task_state_if_missing(
+                bot=bot,
+                chat_id=int(chat_id),
+                autorespond_progress=autorespond_progress,
+                locale=locale,
             )
 
+    try:
+        # Load account + decrypted browser session once per shift (saves Postgres + Fernet work).
         async with session_factory() as session:
-            acc_repo = HhLinkedAccountRepository(session)
-            acc = await acc_repo.get_by_id(hh_linked_account_id)
+            acc = await HhLinkedAccountRepository(session).get_by_id(hh_linked_account_id)
             if not acc or not acc.browser_storage_enc:
                 logger.warning(
-                    "hh_ui batch: missing browser session",
+                    "apply_pump_missing_browser_session",
+                    chat_id=chat_id,
+                    task_key=task_key,
                     account_id=hh_linked_account_id,
                 )
-                for it in items:
-                    await _finalize_batch_item_async(
-                        self=self,
-                        session_factory=session_factory,
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        locale=locale,
-                        hh_linked_account_id=hh_linked_account_id,
-                        feed_session_id=feed_session_id,
-                        it=it,
-                        result=ApplyResult(
-                            outcome=ApplyOutcome.ERROR,
-                            detail="no_browser_session",
-                        ),
-                        items=items,
-                        finalized_vids=finalized_vids,
-                        bot=bot,
-                        silent_feed=silent_feed,
-                        send_error_screenshot_to_user=send_error_screenshot_to_user,
-                        autorespond_progress=autorespond_progress,
-                        resume_blob=resume_blob,
-                    )
                 return {"status": "error", "reason": "no_browser_session"}
-
             storage = decrypt_browser_storage(acc.browser_storage_enc, cipher)
             if not storage:
-                for it in items:
-                    await _finalize_batch_item_async(
-                        self=self,
-                        session_factory=session_factory,
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        locale=locale,
-                        hh_linked_account_id=hh_linked_account_id,
-                        feed_session_id=feed_session_id,
-                        it=it,
-                        result=ApplyResult(
-                            outcome=ApplyOutcome.ERROR,
-                            detail="decrypt_failed",
-                        ),
-                        items=items,
-                        finalized_vids=finalized_vids,
-                        bot=bot,
-                        silent_feed=silent_feed,
-                        send_error_screenshot_to_user=send_error_screenshot_to_user,
-                        autorespond_progress=autorespond_progress,
-                        resume_blob=resume_blob,
-                    )
                 return {"status": "error", "reason": "decrypt_failed"}
-
             settings_repo = AppSettingRepository(session)
             debug_raw = await settings_repo.get_value(
                 AppSettingKey.HH_UI_DEBUG_PLAYWRIGHT_SCREENSHOTS,
@@ -505,230 +438,195 @@ async def _apply_batch_ui_async(
             if attach_error_bytes:
                 config = replace(config, attach_error_screenshot_bytes=True)
 
-        from src.services.hh.vacancy_public import hh_vacancy_public_preflight
+        touch_pump_heartbeat(int(chat_id), task_key)
 
-        if task_key and autorespond_progress:
-            from src.services.autorespond_progress import (
-                ensure_autorespond_progress_task_state_if_missing,
-            )
+        while _pump_shift_should_continue(
+            shift_started=shift_started,
+            soft_time_limit=soft_limit,
+            grace_seconds=grace,
+        ):
+            if is_autorespond_cancelled_sync(int(chat_id), task_key):
+                abort_reason = "cancelled"
+                break
+            await guard.wait_if_overloaded("apply_pump_between_batches")
+            touch_pump_heartbeat(int(chat_id), task_key)
 
-            await ensure_autorespond_progress_task_state_if_missing(
-                bot=bot,
-                chat_id=int(chat_id),
-                autorespond_progress=autorespond_progress,
-                locale=locale,
-            )
+            batch_specs = pop_ready_batch(int(chat_id), task_key, batch_size)
+            if not batch_specs:
+                if pregen_pending_count(int(chat_id), task_key) > 0 and ready_remaining_count(
+                    int(chat_id), task_key
+                ) > 0:
+                    # Ready set is non-empty but ZPOPMIN race: sleep briefly and retry.
+                    await asyncio.sleep(0.5)
+                    continue
+                if pregen_pending_count(int(chat_id), task_key) > 0:
+                    # Dispatcher seeded specs but pregen tasks not done; wait a tick.
+                    await asyncio.sleep(0.5)
+                    continue
+                break
 
-        specs: list[VacancyApplySpec] = []
+            # Resolve cover letters from cache (each item waits up to ``pregen_wait``).
+            specs: list[VacancyApplySpec] = []
+            for spec in batch_specs:
+                letter = await _wait_for_pregen_letter(
+                    int(chat_id),
+                    task_key,
+                    int(spec["autoparsed_vacancy_id"]),
+                    wait_seconds=pregen_wait,
+                )
+                specs.append(
+                    VacancyApplySpec(
+                        autoparsed_vacancy_id=int(spec["autoparsed_vacancy_id"]),
+                        hh_vacancy_id=str(spec["hh_vacancy_id"]),
+                        vacancy_url=normalize_hh_vacancy_url(
+                            str(spec.get("vacancy_url") or ""),
+                            str(spec["hh_vacancy_id"]),
+                        ),
+                        resume_hh_id=str(spec["resume_id"]),
+                        cover_letter=letter or "",
+                    )
+                )
 
-        for it in items:
-            vid = int(it["autoparsed_vacancy_id"])
-            hh_id = str(it["hh_vacancy_id"])
-            url = normalize_hh_vacancy_url(str(it.get("vacancy_url") or ""), hh_id)
-            preflight = await hh_vacancy_public_preflight(hh_id)
-            if preflight.unavailable:
-                await _finalize_batch_item_async(
-                    self=self,
-                    session_factory=session_factory,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    locale=locale,
-                    hh_linked_account_id=hh_linked_account_id,
-                    feed_session_id=feed_session_id,
-                    it=it,
-                    result=ApplyResult(
-                        outcome=ApplyOutcome.VACANCY_UNAVAILABLE,
-                        detail="preflight_api",
+            loop = asyncio.get_running_loop()
+            done_vids: set[int] = set()
+
+            def _on_item_done(
+                spec: VacancyApplySpec,
+                result: ApplyResult,
+                _done_vids: set[int] = done_vids,
+                _loop=loop,
+            ) -> None:
+                # Playwright runs in a thread; bounce finalization back to the main loop.
+                _done_vids.add(spec.autoparsed_vacancy_id)
+                fut = asyncio.run_coroutine_threadsafe(
+                    _finalize_pump_item_async(
+                        session_factory=session_factory,
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        locale=locale,
+                        hh_linked_account_id=hh_linked_account_id,
+                        spec={
+                            "autoparsed_vacancy_id": spec.autoparsed_vacancy_id,
+                            "hh_vacancy_id": spec.hh_vacancy_id,
+                            "resume_id": spec.resume_hh_id,
+                        },
+                        result=result,
+                        autorespond_progress=autorespond_progress,
+                        bot=bot,
+                        silent_feed=silent_feed,
+                        send_error_screenshot_to_user=send_error_screenshot_to_user,
                     ),
-                    items=items,
-                    finalized_vids=finalized_vids,
-                    bot=bot,
-                    silent_feed=silent_feed,
-                    send_error_screenshot_to_user=send_error_screenshot_to_user,
-                    autorespond_progress=autorespond_progress,
-                    resume_blob=resume_blob,
+                    _loop,
                 )
-                continue
-            if preflight.requires_employer_test:
-                await _finalize_batch_item_async(
-                    self=self,
-                    session_factory=session_factory,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    locale=locale,
-                    hh_linked_account_id=hh_linked_account_id,
-                    feed_session_id=feed_session_id,
-                    it=it,
-                    result=ApplyResult(
-                        outcome=ApplyOutcome.EMPLOYER_QUESTIONS,
-                        detail="preflight_api:test_required",
-                    ),
-                    items=items,
-                    finalized_vids=finalized_vids,
-                    bot=bot,
-                    silent_feed=silent_feed,
-                    send_error_screenshot_to_user=send_error_screenshot_to_user,
-                    autorespond_progress=autorespond_progress,
-                    resume_blob=resume_blob,
-                )
-                continue
-            letter = ""
-            if cover_task_enabled:
-                if cover_ai is None:
-                    cover_ai = AIClient()
-                letter, _skipped_cover = await _generate_batch_cover_letter_bounded(
-                    session_factory,
-                    user_id,
-                    vid,
-                    cover_letter_style,
-                    cover_ai=cover_ai,
-                )
-            specs.append(
-                VacancyApplySpec(
-                    autoparsed_vacancy_id=vid,
-                    hh_vacancy_id=hh_id,
-                    vacancy_url=url,
-                    resume_hh_id=str(it["resume_id"]),
-                    cover_letter=letter,
-                )
-            )
-
-        loop = asyncio.get_running_loop()
-
-        def _on_playwright_item_done(spec: VacancyApplySpec, result: ApplyResult) -> None:
-            it_row = item_by_vid[spec.autoparsed_vacancy_id]
-            fut = asyncio.run_coroutine_threadsafe(
-                _finalize_batch_item_async(
-                    self=self,
-                    session_factory=session_factory,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    locale=locale,
-                    hh_linked_account_id=hh_linked_account_id,
-                    feed_session_id=feed_session_id,
-                    it=it_row,
-                    result=result,
-                    items=items,
-                    finalized_vids=finalized_vids,
-                    bot=bot,
-                    silent_feed=silent_feed,
-                    send_error_screenshot_to_user=send_error_screenshot_to_user,
-                    autorespond_progress=autorespond_progress,
-                    resume_blob=resume_blob,
-                ),
-                loop,
-            )
-            fut.result(timeout=_FINALIZE_BATCH_ITEM_THREADSAFE_TIMEOUT_S)
-
-        abort_reason: str | None = None
-        if specs:
+                fut.result(timeout=300)
 
             def _cancel_check_sync() -> bool:
-                if not autorespond_progress or not autorespond_progress.get("task_key"):
-                    return False
-                from src.services.autorespond_progress import is_autorespond_cancelled_sync
+                return is_autorespond_cancelled_sync(int(chat_id), task_key)
 
-                return is_autorespond_cancelled_sync(
-                    int(chat_id), str(autorespond_progress["task_key"])
-                )
-
-            def _run_batch():
+            def _run_batch(_specs=specs):
                 return apply_to_vacancies_ui_batch(
                     storage_state=storage,
-                    items=specs,
+                    items=_specs,
                     config=config,
                     log_user_id=user_id,
                     max_retries=settings.hh_ui_apply_max_retries,
                     retry_initial_seconds=settings.hh_ui_apply_retry_initial_seconds,
                     retry_delay_cap_seconds=settings.hh_ui_apply_retry_delay_cap_seconds,
-                    on_item_done=_on_playwright_item_done,
+                    on_item_done=_on_item_done,
                     cancel_check=_cancel_check_sync,
                 )
 
             try:
-                _, abort_reason = await asyncio.to_thread(_run_batch)
+                _, batch_abort = await asyncio.to_thread(_run_batch)
             except Exception as exc:
-                logger.exception("hh_ui batch apply failed", error=str(exc))
+                logger.exception("apply_pump_batch_failed", error=str(exc))
+                # Finalize every spec in this batch that didn't get an on_item_done callback.
                 err = ApplyResult(outcome=ApplyOutcome.ERROR, detail=str(exc)[:500])
                 for s in specs:
-                    if s.autoparsed_vacancy_id not in finalized_vids:
-                        await _finalize_batch_item_async(
-                            self=self,
-                            session_factory=session_factory,
-                            user_id=user_id,
-                            chat_id=chat_id,
-                            locale=locale,
-                            hh_linked_account_id=hh_linked_account_id,
-                            feed_session_id=feed_session_id,
-                            it=item_by_vid[s.autoparsed_vacancy_id],
-                            result=err,
-                            items=items,
-                            finalized_vids=finalized_vids,
-                            bot=bot,
-                            silent_feed=silent_feed,
-                            send_error_screenshot_to_user=send_error_screenshot_to_user,
-                            autorespond_progress=autorespond_progress,
-                            resume_blob=resume_blob,
-                        )
-
-            # ``apply_to_vacancies_ui_batch`` can return early with abort_reason set:
-            # - negotiations_limit: stops after the vacancy that hit HH's response limit;
-            #   later specs in this batch never get ``on_item_done``.
-            # - cancelled: ``cancel_check`` returns True before remaining specs run.
-            # In those cases we must still finalize every row in ``items`` so autorespond
-            # progress ticks once per work unit (otherwise done < total forever).
-            for it in items:
-                vid = int(it["autoparsed_vacancy_id"])
-                if vid not in finalized_vids:
-                    if abort_reason == "negotiations_limit":
-                        detail = "batch_abort:negotiations_limit"
-                    elif abort_reason == "cancelled":
-                        detail = "batch_abort:cancelled"
-                    else:
-                        detail = "batch_missing_result"
-                    await _finalize_batch_item_async(
-                        self=self,
+                    if s.autoparsed_vacancy_id in done_vids:
+                        continue
+                    await _finalize_pump_item_async(
                         session_factory=session_factory,
-                        user_id=user_id,
                         chat_id=chat_id,
+                        user_id=user_id,
                         locale=locale,
                         hh_linked_account_id=hh_linked_account_id,
-                        feed_session_id=feed_session_id,
-                        it=it,
-                        result=ApplyResult(
-                            outcome=ApplyOutcome.ERROR,
-                            detail=detail,
-                        ),
-                        items=items,
-                        finalized_vids=finalized_vids,
+                        spec={
+                            "autoparsed_vacancy_id": s.autoparsed_vacancy_id,
+                            "hh_vacancy_id": s.hh_vacancy_id,
+                            "resume_id": s.resume_hh_id,
+                        },
+                        result=err,
+                        autorespond_progress=autorespond_progress,
                         bot=bot,
                         silent_feed=silent_feed,
                         send_error_screenshot_to_user=send_error_screenshot_to_user,
-                        autorespond_progress=autorespond_progress,
-                        resume_blob=resume_blob,
                     )
+                processed += len(specs)
+                continue
 
-            if abort_reason == "negotiations_limit":
+            # Apply_to_vacancies_ui_batch may abort early (negotiations_limit / cancelled).
+            for s in specs:
+                if s.autoparsed_vacancy_id in done_vids:
+                    continue
+                if batch_abort == "negotiations_limit":
+                    detail = "batch_abort:negotiations_limit"
+                elif batch_abort == "cancelled":
+                    detail = "batch_abort:cancelled"
+                else:
+                    detail = "batch_missing_result"
+                await _finalize_pump_item_async(
+                    session_factory=session_factory,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    locale=locale,
+                    hh_linked_account_id=hh_linked_account_id,
+                    spec={
+                        "autoparsed_vacancy_id": s.autoparsed_vacancy_id,
+                        "hh_vacancy_id": s.hh_vacancy_id,
+                        "resume_id": s.resume_hh_id,
+                    },
+                    result=ApplyResult(outcome=ApplyOutcome.ERROR, detail=detail),
+                    autorespond_progress=autorespond_progress,
+                    bot=bot,
+                    silent_feed=silent_feed,
+                    send_error_screenshot_to_user=send_error_screenshot_to_user,
+                )
+
+            processed += len(specs)
+
+            if batch_abort == "negotiations_limit":
                 await _notify_negotiations_limit_exceeded(
                     bot, int(chat_id), locale, autorespond_progress
                 )
-            elif abort_reason == "cancelled":
-                from src.services.autorespond_progress import clear_hh_ui_batch_checkpoint_sync
+                abort_reason = "negotiations_limit"
+                break
+            if batch_abort == "cancelled":
+                abort_reason = "cancelled"
+                break
 
-                tk = autorespond_progress.get("task_key") if autorespond_progress else None
-                if tk:
-                    clear_hh_ui_batch_checkpoint_sync(int(chat_id), str(tk))
+        # End of shift: decide whether to chain.
+        if abort_reason is None and ready_remaining_count(int(chat_id), task_key) > 0:
+            logger.info(
+                "apply_pump_chaining_self",
+                chat_id=chat_id,
+                task_key=task_key,
+                processed=processed,
+                elapsed=round(time.monotonic() - shift_started, 1),
+                remaining=ready_remaining_count(int(chat_id), task_key),
+            )
+            apply_pump_task.delay(
+                task_key=task_key,
+                chat_id=int(chat_id),
+                resume_envelope=resume_envelope,
+            )
 
-        processed = len(items)
-        if abort_reason == "negotiations_limit":
-            return {"status": "ok", "processed": processed, "abort": "negotiations_limit"}
-        if abort_reason == "cancelled":
-            return {"status": "cancelled", "processed": processed, "abort": "cancelled"}
-        return {"status": "ok", "processed": processed}
+        return {
+            "status": "ok",
+            "processed": processed,
+            "abort": abort_reason,
+        }
     finally:
-        if cover_ai is not None:
-            with contextlib.suppress(Exception):
-                await close_ai_client(cover_ai)
         with contextlib.suppress(Exception):
             await bot.session.close()
 
@@ -736,10 +634,52 @@ async def _apply_batch_ui_async(
 @celery_app.task(
     bind=True,
     base=HHBotTask,
+    name="autorespond.apply_pump",
+    queue="hh_ui",
+    soft_time_limit=settings.autorespond_apply_pump_soft_time_limit,
+    time_limit=settings.autorespond_apply_pump_time_limit,
+    acks_late=True,
+)
+def apply_pump_task(
+    self,
+    task_key: str,
+    chat_id: int,
+    resume_envelope: dict[str, Any],
+) -> dict:
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    try:
+        return run_async(
+            lambda sf: _apply_pump_async(self, sf, task_key, int(chat_id), resume_envelope)
+        )
+    except SoftTimeLimitExceeded:
+        # Chain ourselves so the bar still converges; recover_stalled is the fallback.
+        logger.warning(
+            "apply_pump_soft_time_limit_chain",
+            chat_id=chat_id,
+            task_key=task_key,
+        )
+        if ready_remaining_count(int(chat_id), task_key) > 0:
+            apply_pump_task.delay(
+                task_key=task_key,
+                chat_id=int(chat_id),
+                resume_envelope=resume_envelope,
+            )
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Deprecation shim for in-flight ``apply_to_vacancies_batch_ui_task`` messages
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
     name="hh_ui.apply_to_vacancies_batch",
     queue="hh_ui",
-    soft_time_limit=settings.hh_ui_apply_batch_task_soft_time_limit,
-    time_limit=settings.hh_ui_apply_batch_task_time_limit,
+    soft_time_limit=120,
+    time_limit=150,
 )
 def apply_to_vacancies_batch_ui_task(
     self,
@@ -755,297 +695,80 @@ def apply_to_vacancies_batch_ui_task(
     silent_feed: bool = True,
     autorespond_progress: dict | None = None,
 ) -> dict:
-    from celery.exceptions import SoftTimeLimitExceeded
+    """Deprecated: routes any in-flight broker messages to ``apply_pump_task`` instead.
 
-    from src.services.autorespond_progress import (
-        clear_hh_ui_batch_active_sync,
-        load_hh_ui_batch_checkpoint_full_sync,
-        set_hh_ui_batch_active_sync,
-    )
-
-    tk = autorespond_progress.get("task_key") if autorespond_progress else None
-    cid = str(getattr(self.request, "id", None) or "")
-    if tk and cid:
-        set_hh_ui_batch_active_sync(int(chat_id), str(tk), cid)
-    try:
-        result = run_async(
-            lambda sf: _apply_batch_ui_async(
-                self,
-                sf,
-                user_id,
-                chat_id,
-                message_id,
-                locale,
-                hh_linked_account_id,
-                feed_session_id,
-                items,
-                cover_letter_style,
-                cover_task_enabled,
-                silent_feed=silent_feed,
-                autorespond_progress=autorespond_progress,
-            )
-        )
-        outcome = _maybe_enqueue_next_ui_batch_from_tail(
-            user_id=user_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            locale=locale,
-            hh_linked_account_id=hh_linked_account_id,
-            feed_session_id=feed_session_id,
-            cover_letter_style=cover_letter_style,
-            cover_task_enabled=cover_task_enabled,
-            silent_feed=silent_feed,
-            autorespond_progress=autorespond_progress,
-            batch_result=result,
-        )
-        if (
-            outcome == "deferred"
-            and autorespond_progress
-            and autorespond_progress.get("task_key")
-        ):
-            _schedule_autorespond_ui_tail_watchdog(
-                chat_id=int(chat_id),
-                task_key=str(autorespond_progress["task_key"]),
-            )
-        return result
-    except SoftTimeLimitExceeded:
-        if tk:
-            full = load_hh_ui_batch_checkpoint_full_sync(int(chat_id), str(tk))
-            if full:
-                remaining, resume = full
-                if remaining:
-                    logger.warning(
-                        "hh_ui_apply_batch_soft_timeout_resume",
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        task_key=tk,
-                        remaining_count=len(remaining),
-                    )
-                    if resume:
-                        apply_to_vacancies_batch_ui_task.delay(
-                            **{**resume, "items": remaining}
-                        )
-                    else:
-                        apply_to_vacancies_batch_ui_task.delay(
-                            user_id=user_id,
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            locale=locale,
-                            hh_linked_account_id=hh_linked_account_id,
-                            feed_session_id=feed_session_id,
-                            items=remaining,
-                            cover_letter_style=cover_letter_style,
-                            cover_task_enabled=cover_task_enabled,
-                            silent_feed=silent_feed,
-                            autorespond_progress=autorespond_progress,
-                        )
-            tail_outcome = _maybe_enqueue_next_ui_batch_from_tail(
-                user_id=user_id,
-                chat_id=chat_id,
-                message_id=message_id,
-                locale=locale,
-                hh_linked_account_id=hh_linked_account_id,
-                feed_session_id=feed_session_id,
-                cover_letter_style=cover_letter_style,
-                cover_task_enabled=cover_task_enabled,
-                silent_feed=silent_feed,
-                autorespond_progress=autorespond_progress,
-                batch_result={"status": "ok", "processed": len(items)},
-            )
-            if tail_outcome == "deferred" and autorespond_progress:
-                _schedule_autorespond_ui_tail_watchdog(
-                    chat_id=int(chat_id),
-                    task_key=str(tk),
-                )
-        else:
-            logger.warning(
-                "hh_ui_apply_batch_soft_timeout",
-                user_id=user_id,
-                chat_id=chat_id,
-                has_task_key=False,
-            )
-        raise
-    finally:
-        if tk:
-            clear_hh_ui_batch_active_sync(int(chat_id), str(tk))
-
-
-_AUTORESPOND_TAIL_WATCHDOG_MAX_ATTEMPTS = 50
-
-
-def _schedule_autorespond_ui_tail_watchdog(
-    *,
-    chat_id: int,
-    task_key: str,
-    watchdog_attempt: int = 0,
-) -> None:
-    """Re-check tail after parent heartbeat TTL if parent looked alive at batch end."""
-    delay_s = int(settings.autorespond_parent_loop_heartbeat_stale_seconds) + 15
-    celery_app.send_task(
-        "autorespond.recover_ui_tail_if_stale",
-        args=[int(chat_id), str(task_key)],
-        kwargs={"watchdog_attempt": watchdog_attempt},
-        countdown=delay_s,
-        queue="hh_ui",
-    )
-
-
-def _maybe_enqueue_next_ui_batch_from_tail(
-    *,
-    user_id: int,
-    chat_id: int,
-    message_id: int,
-    locale: str,
-    hh_linked_account_id: int,
-    feed_session_id: int,
-    cover_letter_style: str,
-    cover_task_enabled: bool,
-    silent_feed: bool,
-    autorespond_progress: dict | None,
-    batch_result: dict,
-) -> str:
-    """Chain the next UI batch from Redis tail when the parent stopped dispatching.
-
-    Returns ``chained``, ``deferred``, ``empty``, or ``skipped``.
+    The old parent loop fan-out is gone. Items are re-seeded into the ready ZSET so
+    the pump can finalize the run; the bar still ticks per item.
     """
+    from src.services.autorespond_pipeline_state import (
+        save_pipeline_envelope,
+        seed_ready_to_apply,
+    )
+
+    logger.warning(
+        "apply_to_vacancies_batch_ui_task_deprecated",
+        chat_id=chat_id,
+        items=len(items),
+        task_key=(autorespond_progress or {}).get("task_key"),
+    )
     if not autorespond_progress or not autorespond_progress.get("task_key"):
-        return "skipped"
-    if not isinstance(batch_result, dict) or batch_result.get("status") != "ok":
-        return "skipped"
-    if batch_result.get("abort"):
-        return "skipped"
+        return {"status": "skipped", "reason": "no_task_key"}
     task_key = str(autorespond_progress["task_key"])
-    from src.core.celery_async import normalize_celery_task_id
-    from src.services.autorespond_progress import (
-        clear_autorespond_parent_loop_active_sync,
-        hh_ui_batch_resume_payload,
-        pop_autorespond_ui_tail_batch_sync,
-        should_defer_ui_tail_chain_to_parent_sync,
-    )
-
-    parent_celery_id = normalize_celery_task_id(autorespond_progress.get("celery_task_id"))
-    defer, defer_reason = should_defer_ui_tail_chain_to_parent_sync(
-        int(chat_id),
-        task_key,
-        parent_celery_id,
-        heartbeat_stale_seconds=float(settings.autorespond_parent_loop_heartbeat_stale_seconds),
-    )
-    if defer:
-        logger.info(
-            "hh_ui_apply_batch_tail_chain_skip_parent_dispatching",
-            chat_id=chat_id,
-            task_key=task_key,
-            parent_celery_id=parent_celery_id,
-            reason=defer_reason,
+    specs = [
+        {
+            "autoparsed_vacancy_id": int(it["autoparsed_vacancy_id"]),
+            "hh_vacancy_id": str(it["hh_vacancy_id"]),
+            "resume_id": str(it["resume_id"]),
+            "vacancy_url": normalize_hh_vacancy_url(
+                str(it.get("vacancy_url") or ""), str(it["hh_vacancy_id"])
+            ),
+        }
+        for it in items
+        if isinstance(it, dict)
+    ]
+    if specs:
+        seed_ready_to_apply(int(chat_id), task_key, specs)
+        save_pipeline_envelope(
+            int(chat_id),
+            task_key,
+            {
+                "resume_envelope": {
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "locale": locale,
+                    "hh_linked_account_id": hh_linked_account_id,
+                    "feed_session_id": feed_session_id,
+                    "cover_letter_style": cover_letter_style,
+                    "cover_task_enabled": cover_task_enabled,
+                    "silent_feed": silent_feed,
+                    "autorespond_progress": autorespond_progress,
+                },
+                "total_work_units": int(autorespond_progress.get("total") or 0),
+            },
         )
-        return "deferred"
-    if defer_reason != "parent_loop_inactive":
-        logger.warning(
-            "hh_ui_apply_batch_tail_chain_recover_orphaned_tail",
-            chat_id=chat_id,
+        apply_pump_task.delay(
             task_key=task_key,
-            parent_celery_id=parent_celery_id,
-            reason=defer_reason,
-        )
-        clear_autorespond_parent_loop_active_sync(int(chat_id), task_key)
-    batch = pop_autorespond_ui_tail_batch_sync(
-        int(chat_id), task_key, settings.hh_ui_apply_batch_size
-    )
-    if not batch:
-        logger.info(
-            "hh_ui_apply_batch_tail_chain_no_pending_rows",
-            chat_id=chat_id,
-            task_key=task_key,
-        )
-        return "empty"
-    resume = hh_ui_batch_resume_payload(
-        user_id=user_id,
-        chat_id=chat_id,
-        message_id=message_id,
-        locale=locale,
-        hh_linked_account_id=hh_linked_account_id,
-        feed_session_id=feed_session_id,
-        cover_letter_style=cover_letter_style,
-        cover_task_enabled=cover_task_enabled,
-        silent_feed=silent_feed,
-        autorespond_progress=autorespond_progress,
-    )
-    logger.info(
-        "hh_ui_apply_batch_tail_chain",
-        user_id=user_id,
-        chat_id=chat_id,
-        task_key=task_key,
-        next_batch=len(batch),
-    )
-    apply_to_vacancies_batch_ui_task.delay(**{**resume, "items": batch})
-    from src.services.autorespond_progress import save_hh_ui_resume_envelope_sync
-
-    save_hh_ui_resume_envelope_sync(int(chat_id), task_key, resume)
-    return "chained"
-
-
-@celery_app.task(
-    bind=True,
-    base=HHBotTask,
-    name="autorespond.recover_ui_tail_if_stale",
-    queue="hh_ui",
-    soft_time_limit=120,
-    time_limit=150,
-)
-def recover_autorespond_ui_tail_if_stale_task(
-    self,
-    chat_id: int,
-    task_key: str,
-    watchdog_attempt: int = 0,
-) -> dict:
-    """Watchdog: chain UI tail when parent heartbeat went stale without dispatching."""
-    from src.services.autorespond_progress import (
-        load_autorespond_ui_tail_sync,
-        load_hh_ui_resume_envelope_sync,
-    )
-
-    tail = load_autorespond_ui_tail_sync(int(chat_id), str(task_key))
-    if not tail:
-        return {"status": "ok", "reason": "no_tail"}
-    resume = load_hh_ui_resume_envelope_sync(int(chat_id), str(task_key))
-    if not resume:
-        logger.warning(
-            "autorespond_tail_watchdog_no_resume_envelope",
-            chat_id=chat_id,
-            task_key=task_key,
-        )
-        return {"status": "error", "reason": "no_resume_envelope"}
-    ar_prog = resume.get("autorespond_progress")
-    locale = "ru"
-    if isinstance(ar_prog, dict) and ar_prog.get("locale"):
-        locale = str(ar_prog["locale"])
-    outcome = _maybe_enqueue_next_ui_batch_from_tail(
-        user_id=int(resume["user_id"]),
-        chat_id=int(resume["chat_id"]),
-        message_id=int(resume.get("message_id") or 0),
-        locale=locale,
-        hh_linked_account_id=int(resume["hh_linked_account_id"]),
-        feed_session_id=int(resume.get("feed_session_id") or 0),
-        cover_letter_style=str(resume.get("cover_letter_style") or ""),
-        cover_task_enabled=bool(resume.get("cover_task_enabled")),
-        silent_feed=bool(resume.get("silent_feed", True)),
-        autorespond_progress=ar_prog if isinstance(ar_prog, dict) else None,
-        batch_result={"status": "ok", "processed": 0},
-    )
-    if outcome == "deferred" and watchdog_attempt + 1 < _AUTORESPOND_TAIL_WATCHDOG_MAX_ATTEMPTS:
-        _schedule_autorespond_ui_tail_watchdog(
             chat_id=int(chat_id),
-            task_key=str(task_key),
-            watchdog_attempt=watchdog_attempt + 1,
+            resume_envelope={
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "locale": locale,
+                "hh_linked_account_id": hh_linked_account_id,
+                "feed_session_id": feed_session_id,
+                "cover_letter_style": cover_letter_style,
+                "cover_task_enabled": cover_task_enabled,
+                "silent_feed": silent_feed,
+                "autorespond_progress": autorespond_progress,
+            },
         )
-    elif outcome == "deferred":
-        logger.warning(
-            "autorespond_tail_watchdog_gave_up",
-            chat_id=chat_id,
-            task_key=task_key,
-            watchdog_attempt=watchdog_attempt,
-        )
-    return {"status": "ok", "outcome": outcome, "watchdog_attempt": watchdog_attempt}
+    return {"status": "rerouted", "items": len(specs)}
+
+
+# ---------------------------------------------------------------------------
+# Single-vacancy UI apply (feed-driven; unchanged contract)
+# ---------------------------------------------------------------------------
 
 
 async def _apply_ui_async(
@@ -1246,11 +969,9 @@ async def _apply_ui_async(
             status=status,
         )
 
-        if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE:
-            async with session_factory() as s_reload:
-                fr = VacancyFeedSessionRepository(s_reload)
-                feed_session = await fr.get_by_id(feed_session_id)
-        elif status != "success" and status != "needs_employer_questions":
+        if result.outcome == ApplyOutcome.VACANCY_UNAVAILABLE or (
+            status != "success" and status != "needs_employer_questions"
+        ):
             async with session_factory() as s_reload:
                 fr = VacancyFeedSessionRepository(s_reload)
                 feed_session = await fr.get_by_id(feed_session_id)
@@ -1430,11 +1151,7 @@ async def _apply_ui_async(
     bind=True,
     base=HHBotTask,
     name="hh_ui.apply_to_vacancy",
-    # Dedicated Celery queue so only ``hh_ui`` workers run Playwright (see docker-compose
-    # ``celery_worker_hh_ui``). Avoids N general workers each spawning Chromium and OOMing small VMs.
     queue="hh_ui",
-    # Hard limit: worker child gets SIGKILL after ``time_limit`` (see Celery docs). Tune via
-    # ``HH_UI_APPLY_TASK_TIME_LIMIT`` / ``HH_UI_APPLY_TASK_SOFT_TIME_LIMIT`` when hh.ru or Playwright runs slow.
     soft_time_limit=settings.hh_ui_apply_task_soft_time_limit,
     time_limit=settings.hh_ui_apply_task_time_limit,
 )
@@ -1477,7 +1194,7 @@ def apply_to_vacancy_ui_task(
 
 @celery_app.task(name="hh_ui.periodic_resume_checkpoints")
 def periodic_resume_hh_ui_checkpoints() -> int:
-    """Safety net: re-enqueue HH UI batches from Redis checkpoints (same as bot cold start)."""
+    """Safety net: re-enqueue HH UI batches from Redis checkpoints (legacy)."""
     import asyncio
 
     from src.services.task_restart import resume_hh_ui_batches_from_checkpoints

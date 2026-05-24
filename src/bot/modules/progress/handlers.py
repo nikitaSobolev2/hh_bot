@@ -16,6 +16,13 @@ from src.core.celery_async import (
 from src.core.i18n import I18nContext
 from src.db.engine import async_session_factory
 from src.models.user import User
+from src.services.autorespond_pipeline_state import (
+    clear_all_pipeline_state,
+    load_pipeline_envelope,
+    pipeline_has_pending_work,
+    pregen_pending_count,
+    ready_remaining_count,
+)
 from src.services.autorespond_progress import (
     build_hh_ui_resume_envelope_fallback_async,
     clear_autorespond_done_counter,
@@ -289,9 +296,9 @@ async def _try_refresh_autorespond(
     svc: ProgressService,
     celery_task_id: str | None,
 ) -> None:
-    from src.worker.tasks.hh_ui_apply import apply_to_vacancies_batch_ui_task
     from src.repositories.autoparse import AutoparseCompanyRepository
     from src.worker.tasks.autorespond import run_autorespond_company
+    from src.worker.tasks.hh_ui_apply import apply_pump_task, apply_to_vacancies_batch_ui_task
 
     if is_autorespond_cancelled_sync(chat_id, task_key):
         await callback.answer(
@@ -306,6 +313,38 @@ async def _try_refresh_autorespond(
         )
         return
 
+    # New pipeline: re-enqueue apply_pump when ready ZSET / pregen still has work.
+    envelope_data = load_pipeline_envelope(chat_id, task_key)
+    if envelope_data:
+        resume_envelope = envelope_data.get("resume_envelope")
+        pending = ready_remaining_count(chat_id, task_key) + pregen_pending_count(
+            chat_id, task_key
+        )
+        if isinstance(resume_envelope, dict) and pending > 0:
+            active_id = get_hh_ui_batch_active_sync(chat_id, task_key)
+            if active_id and celery_task_id_is_active(active_id):
+                await run_sync_in_thread(
+                    celery_app.control.revoke,
+                    active_id,
+                    terminate=True,
+                )
+                clear_hh_ui_batch_active_sync(chat_id, task_key)
+            res = await run_celery_task(
+                apply_pump_task,
+                task_key=task_key,
+                chat_id=chat_id,
+                resume_envelope=resume_envelope,
+            )
+            new_id = getattr(res, "id", None)
+            if new_id:
+                await svc.update_celery_task_id(task_key, str(new_id))
+            await callback.answer(
+                i18n.get("progress-refresh-restarted"),
+                show_alert=True,
+            )
+            return
+
+    # Legacy in-flight runs (pre-dispatcher): checkpoint + tail + batch shim.
     full = load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
     tail_items = load_autorespond_ui_tail_sync(chat_id, task_key) or []
 
@@ -564,7 +603,7 @@ async def handle_progress_cancel(
         has_autorespond_children = bool(
             active_hh_ui_task_id
             or load_hh_ui_batch_checkpoint_full_sync(chat_id, task_key)
-            or load_autorespond_ui_tail_sync(chat_id, task_key)
+            or pipeline_has_pending_work(chat_id, task_key)
         )
 
         if not celery_task_id:
@@ -576,6 +615,7 @@ async def handle_progress_cancel(
                 clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
                 clear_hh_ui_resume_envelope_sync(chat_id, task_key)
                 clear_autorespond_ui_tail_sync(chat_id, task_key)
+                clear_all_pipeline_state(chat_id, task_key)
                 if active_hh_ui_task_id:
                     await run_sync_in_thread(
                         celery_app.control.revoke,
@@ -606,6 +646,7 @@ async def handle_progress_cancel(
             clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
             clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)
+            clear_all_pipeline_state(chat_id, task_key)
 
         if child_celery_task_id:
             await run_sync_in_thread(

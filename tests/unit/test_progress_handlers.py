@@ -1,8 +1,8 @@
 """Unit tests for progress bar cancel handler."""
 
+import json
 import sys
 from contextlib import asynccontextmanager
-import json
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -121,8 +121,8 @@ class TestHandleProgressCancel:
                 return_value=None,
             ),
             patch(
-                "src.bot.modules.progress.handlers.load_autorespond_ui_tail_sync",
-                return_value=[],
+                "src.bot.modules.progress.handlers.pipeline_has_pending_work",
+                return_value=False,
             ),
             patch(
                 "src.bot.modules.progress.handlers.set_user_cancelled_sync",
@@ -172,8 +172,8 @@ class TestHandleProgressCancel:
                 return_value=None,
             ),
             patch(
-                "src.bot.modules.progress.handlers.load_autorespond_ui_tail_sync",
-                return_value=[],
+                "src.bot.modules.progress.handlers.pipeline_has_pending_work",
+                return_value=False,
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_hh_ui_batch_checkpoint_sync",
@@ -183,6 +183,9 @@ class TestHandleProgressCancel:
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.clear_all_pipeline_state",
             ),
             patch(
                 "src.bot.modules.progress.handlers.set_autorespond_cancelled",
@@ -254,8 +257,8 @@ class TestHandleProgressCancel:
                 return_value=None,
             ),
             patch(
-                "src.bot.modules.progress.handlers.load_autorespond_ui_tail_sync",
-                return_value=[],
+                "src.bot.modules.progress.handlers.pipeline_has_pending_work",
+                return_value=False,
             ),
             patch(
                 "src.bot.modules.progress.handlers.set_user_cancelled_sync",
@@ -313,8 +316,8 @@ class TestHandleProgressCancel:
                 return_value=None,
             ),
             patch(
-                "src.bot.modules.progress.handlers.load_autorespond_ui_tail_sync",
-                return_value=[],
+                "src.bot.modules.progress.handlers.pipeline_has_pending_work",
+                return_value=False,
             ),
             patch(
                 "src.bot.modules.progress.handlers.set_autorespond_cancelled",
@@ -340,6 +343,9 @@ class TestHandleProgressCancel:
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_autorespond_ui_tail_sync",
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.clear_all_pipeline_state",
             ),
             patch(
                 "src.bot.modules.progress.handlers.clear_hh_ui_batch_active_sync",
@@ -484,6 +490,7 @@ class TestProgressRefresh:
         autorespond_stub = ModuleType("src.worker.tasks.autorespond")
         autorespond_stub.run_autorespond_company = SimpleNamespace()
         hh_ui_stub = ModuleType("src.worker.tasks.hh_ui_apply")
+        hh_ui_stub.apply_pump_task = SimpleNamespace()
         hh_ui_stub.apply_to_vacancies_batch_ui_task = SimpleNamespace()
 
         @asynccontextmanager
@@ -505,12 +512,20 @@ class TestProgressRefresh:
                 return_value=False,
             ),
             patch(
+                "src.bot.modules.progress.handlers.load_pipeline_envelope",
+                return_value=None,
+            ),
+            patch(
                 "src.bot.modules.progress.handlers.load_hh_ui_batch_checkpoint_full_sync",
                 return_value=None,
             ),
             patch(
                 "src.bot.modules.progress.handlers.load_autorespond_ui_tail_sync",
                 return_value=[],
+            ),
+            patch(
+                "src.bot.modules.progress.handlers.pipeline_has_pending_work",
+                return_value=False,
             ),
             patch(
                 "src.bot.modules.progress.handlers.load_hh_ui_resume_envelope_sync",

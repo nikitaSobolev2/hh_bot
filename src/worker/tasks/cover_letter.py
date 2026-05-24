@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import html
 import re
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
+from src.config import settings
 from src.core.constants import AppSettingKey
 from src.core.logging import get_logger
 from src.worker.app import celery_app
@@ -110,7 +112,10 @@ async def generate_cover_letter_plaintext_for_autoparsed_vacancy(
     *,
     ai_client: AIClient | None = None,
 ) -> str:
-    """Non-streaming cover letter for an AutoparsedVacancy (shared by feed chain and autorespond API)."""
+    """Non-streaming cover letter for an AutoparsedVacancy.
+
+    Shared by the feed chain and the autorespond API path.
+    """
     from src.bot.modules.autoparse import services as ap_service
     from src.repositories.autoparse import AutoparsedVacancyRepository
     from src.repositories.user import UserRepository
@@ -178,6 +183,147 @@ async def generate_cover_letter_plaintext_for_autoparsed_vacancy(
     finally:
         if created_client:
             await close_ai_client(client)
+
+
+async def _pregenerate_for_apply_async(
+    session_factory,
+    task_key: str,
+    chat_id: int,
+    user_id: int,
+    autoparsed_vacancy_id: int,
+    resume_id: str,
+    cover_letter_style: str,
+) -> dict:
+    """Generate a cover letter for the apply pump; store in Redis cache.
+
+    Always marks the vacancy as ready (with empty letter on error / timeout) so the
+    pump never waits forever for a doomed pre-gen.
+    """
+    from src.core.system_load import get_system_load_guard
+    from src.services.ai.client import AIClient, close_ai_client
+    from src.services.autorespond_pipeline_state import (
+        pregen_letter_exists,
+        store_pregen_letter,
+    )
+
+    if pregen_letter_exists(chat_id, task_key, autoparsed_vacancy_id):
+        return {
+            "status": "cached",
+            "vacancy_id": autoparsed_vacancy_id,
+            "task_key": task_key,
+        }
+
+    from src.services.autorespond_progress import is_autorespond_cancelled_sync
+
+    if is_autorespond_cancelled_sync(chat_id, task_key):
+        store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, "")
+        return {
+            "status": "cancelled",
+            "vacancy_id": autoparsed_vacancy_id,
+            "task_key": task_key,
+        }
+
+    guard = get_system_load_guard()
+    await guard.wait_if_overloaded("cover_letter_pregenerate")
+
+    ai_client = AIClient()
+    letter = ""
+    status = "ok"
+    try:
+        letter = await asyncio.wait_for(
+            generate_cover_letter_plaintext_for_autoparsed_vacancy(
+                session_factory,
+                user_id,
+                autoparsed_vacancy_id,
+                cover_letter_style,
+                ai_client=ai_client,
+            ),
+            timeout=float(settings.cover_letter_pregen_soft_time_limit),
+        )
+    except TimeoutError:
+        status = "timeout"
+        logger.warning(
+            "cover_letter_pregenerate_timeout",
+            user_id=user_id,
+            vacancy_id=autoparsed_vacancy_id,
+            timeout_s=settings.cover_letter_pregen_soft_time_limit,
+        )
+    except Exception as exc:
+        status = "error"
+        logger.warning(
+            "cover_letter_pregenerate_failed",
+            user_id=user_id,
+            vacancy_id=autoparsed_vacancy_id,
+            error=str(exc)[:300],
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await close_ai_client(ai_client)
+
+    store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, letter or "")
+    logger.info(
+        "cover_letter_pregenerate_done",
+        user_id=user_id,
+        chat_id=chat_id,
+        task_key=task_key,
+        vacancy_id=autoparsed_vacancy_id,
+        status=status,
+        letter_chars=len(letter or ""),
+    )
+    return {
+        "status": status,
+        "vacancy_id": autoparsed_vacancy_id,
+        "task_key": task_key,
+        "letter_chars": len(letter or ""),
+    }
+
+
+@celery_app.task(
+    bind=True,
+    base=HHBotTask,
+    name="cover_letter.pregenerate_for_apply",
+    queue="cover_letter",
+    max_retries=0,
+    soft_time_limit=settings.cover_letter_pregen_soft_time_limit,
+    time_limit=settings.cover_letter_pregen_time_limit,
+)
+def pregenerate_for_apply_task(
+    self,
+    task_key: str,
+    chat_id: int,
+    user_id: int,
+    autoparsed_vacancy_id: int,
+    resume_id: str,
+    cover_letter_style: str,
+) -> dict:
+    """Pre-generate one cover letter for the apply pump; bounded + idempotent."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    from src.services.autorespond_pipeline_state import store_pregen_letter
+
+    try:
+        return run_async(
+            lambda sf: _pregenerate_for_apply_async(
+                sf,
+                task_key,
+                chat_id,
+                user_id,
+                autoparsed_vacancy_id,
+                resume_id,
+                cover_letter_style,
+            )
+        )
+    except SoftTimeLimitExceeded:
+        # Soft-timeout: write empty letter so the pump never blocks waiting on us.
+        store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, "")
+        logger.warning(
+            "cover_letter_pregenerate_soft_timeout",
+            user_id=user_id,
+            chat_id=chat_id,
+            task_key=task_key,
+            vacancy_id=autoparsed_vacancy_id,
+        )
+        raise
 
 
 @celery_app.task(

@@ -1,6 +1,7 @@
 """Unit tests for the parsing retry FSM flow and event loop fix."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -828,7 +829,24 @@ class TestRunAsyncClosedLoopSuppression:
             await asyncio.sleep(0)
             return "done"
 
-        result = run_async(capture_handler)
+        mock_engine = MagicMock()
+        mock_engine.dispose = AsyncMock()
+
+        @asynccontextmanager
+        async def fake_session_factory():
+            yield MagicMock()
+
+        with (
+            patch(
+                "src.worker.utils._create_task_session_factory",
+                return_value=(mock_engine, fake_session_factory),
+            ),
+            patch(
+                "src.worker.utils.load_managed_settings_to_runtime",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = run_async(capture_handler)
 
         assert result == "done"
         assert captured.get("handler") is _suppress_closed_loop_errors

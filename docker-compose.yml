@@ -79,9 +79,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # General tasks only — Playwright runs on ``celery_worker_hh_ui`` (queue ``hh_ui``) so small VMs
-    # do not run multiple Chromium instances at once.
-    command: celery -A src.worker.app worker --loglevel=info --concurrency=2 -Q celery
+    # General + cover-letter pregeneration. Playwright runs on ``celery_worker_hh_ui``
+    # (queue ``hh_ui``) so small VMs do not run multiple Chromium instances at once.
+    # ``cover_letter`` queue handles ``cover_letter.pregenerate_for_apply`` tasks that
+    # feed the autorespond apply pump (parallel cover-letter generation while pump applies).
+    command: celery -A src.worker.app worker --loglevel=info --concurrency=2 -Q celery,cover_letter
     # ``deploy:`` is ignored by ``docker compose up`` (Swarm / ``docker stack deploy`` only).
     # Extra general-queue capacity: ``docker compose up -d --scale celery_worker=2`` (or raise ``--concurrency``).
     logging:

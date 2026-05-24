@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from types import ModuleType
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -102,7 +101,7 @@ def test_save_checkpoint_empty_with_resume_persists_json(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(
         "src.services.autorespond_progress._sync_redis",
-        fr.make_client,
+        lambda: fr.make_client(),
     )
     from src.services.autorespond_progress import (
         hh_ui_batch_checkpoint_key,
@@ -124,7 +123,7 @@ def test_load_checkpoint_empty_items_returns_resume(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(
         "src.services.autorespond_progress._sync_redis",
-        fr.make_client,
+        lambda: fr.make_client(),
     )
     from src.services.autorespond_progress import load_hh_ui_batch_checkpoint_full_sync
 
@@ -133,6 +132,76 @@ def test_load_checkpoint_empty_items_returns_resume(monkeypatch: pytest.MonkeyPa
     items, resume = full
     assert items == []
     assert resume == {"user_id": 42}
+
+
+@pytest.mark.asyncio
+async def test_refresh_autorespond_reenqueues_apply_pump_when_pipeline_pending() -> None:
+    callback = MagicMock()
+    callback.answer = AsyncMock()
+    i18n = MagicMock()
+    i18n.get = MagicMock(return_value="ok")
+    svc = MagicMock()
+    svc.update_celery_task_id = AsyncMock()
+    user = MagicMock()
+    user.id = 1
+
+    resume = {
+        "user_id": 1,
+        "chat_id": 2,
+        "message_id": 0,
+        "locale": "ru",
+        "hh_linked_account_id": 3,
+        "feed_session_id": 0,
+        "cover_letter_style": "x",
+        "cover_task_enabled": True,
+        "silent_feed": True,
+        "autorespond_progress": {"task_key": "autorespond:8:tid"},
+    }
+
+    hh_ui_stub = ModuleType("src.worker.tasks.hh_ui_apply")
+    hh_ui_stub.apply_pump_task = SimpleNamespace()
+    hh_ui_stub.apply_to_vacancies_batch_ui_task = SimpleNamespace()
+
+    with (
+        patch.dict(sys.modules, {"src.worker.tasks.hh_ui_apply": hh_ui_stub}),
+        patch(
+            "src.bot.modules.progress.handlers.is_autorespond_cancelled_sync",
+            return_value=False,
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.load_pipeline_envelope",
+            return_value={"resume_envelope": resume, "total_work_units": 1},
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.ready_remaining_count",
+            return_value=2,
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.pregen_pending_count",
+            return_value=0,
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.get_hh_ui_batch_active_sync",
+            return_value=None,
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.run_celery_task",
+            new_callable=AsyncMock,
+        ) as mock_run,
+    ):
+        from src.bot.modules.progress.handlers import _try_refresh_autorespond
+
+        mock_run.return_value = MagicMock(id="new-celery-id")
+        await _try_refresh_autorespond(
+            callback, i18n, "autorespond:8:tid", user, 2, svc, None
+        )
+
+    mock_run.assert_awaited_once()
+    args, kwargs = mock_run.call_args
+    assert args[0] is hh_ui_stub.apply_pump_task
+    assert kwargs["task_key"] == "autorespond:8:tid"
+    assert kwargs["chat_id"] == 2
+    assert kwargs["resume_envelope"] == resume
 
 
 @pytest.mark.asyncio
@@ -150,6 +219,7 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
     resume = {"user_id": 1, "chat_id": 2, "message_id": 0, "locale": "ru", "hh_linked_account_id": 3, "feed_session_id": 0, "cover_letter_style": "x", "cover_task_enabled": True, "silent_feed": True, "autorespond_progress": {}}
 
     hh_ui_stub = ModuleType("src.worker.tasks.hh_ui_apply")
+    hh_ui_stub.apply_pump_task = SimpleNamespace()
     hh_ui_stub.apply_to_vacancies_batch_ui_task = SimpleNamespace()
 
     with (
@@ -157,6 +227,10 @@ async def test_refresh_autorespond_merges_tail_when_child_items_empty() -> None:
         patch(
             "src.bot.modules.progress.handlers.is_autorespond_cancelled_sync",
             return_value=False,
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.load_pipeline_envelope",
+            return_value=None,
         ),
         patch(
             "src.bot.modules.progress.handlers.load_hh_ui_batch_checkpoint_full_sync",
@@ -214,6 +288,7 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
     }
 
     hh_ui_stub = ModuleType("src.worker.tasks.hh_ui_apply")
+    hh_ui_stub.apply_pump_task = SimpleNamespace()
     hh_ui_stub.apply_to_vacancies_batch_ui_task = SimpleNamespace()
 
     with (
@@ -221,6 +296,10 @@ async def test_refresh_autorespond_revokes_active_celery_task() -> None:
         patch(
             "src.bot.modules.progress.handlers.is_autorespond_cancelled_sync",
             return_value=False,
+        ),
+        patch(
+            "src.bot.modules.progress.handlers.load_pipeline_envelope",
+            return_value=None,
         ),
         patch(
             "src.bot.modules.progress.handlers.load_hh_ui_batch_checkpoint_full_sync",

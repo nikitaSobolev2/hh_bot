@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
-from redis.exceptions import RedisError, WatchError
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.celery_async import normalize_celery_task_id
@@ -171,18 +170,45 @@ async def build_hh_ui_resume_envelope_fallback_async(
 
 
 def autorespond_ui_tail_key(chat_id: int, task_key: str) -> str:
-    """Parent ``run_autorespond`` pending UI rows not yet dispatched (between child batches)."""
+    """Legacy parent tail key (pre-dispatcher pipeline). Kept for old Redis cleanup only."""
     return f"progress:autorespond_ui_tail:{chat_id}:{task_key}"
 
 
-def autorespond_parent_loop_key(chat_id: int, task_key: str) -> str:
-    """Set while ``run_autorespond`` is still iterating (dispatches multiple ``hh_ui`` batches)."""
-    return f"progress:autorespond_parent_loop:{chat_id}:{task_key}"
+def save_autorespond_ui_tail_sync(chat_id: int, task_key: str, pending_items: list[dict]) -> None:
+    """Deprecated no-op: parent tail queue removed in favor of ready ZSET."""
+    if pending_items:
+        logger.debug(
+            "autorespond_ui_tail_deprecated_write_ignored",
+            chat_id=chat_id,
+            task_key=task_key,
+            items=len(pending_items),
+        )
 
 
-def autorespond_parent_loop_heartbeat_key(chat_id: int, task_key: str) -> str:
-    """Unix timestamp (seconds) refreshed while parent autorespond loop makes progress."""
-    return f"progress:autorespond_parent_loop_hb:{chat_id}:{task_key}"
+def load_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> list[dict] | None:
+    """Load legacy parent tail rows for in-flight runs started before the dispatcher refactor."""
+    r = _sync_redis()
+    key = autorespond_ui_tail_key(chat_id, task_key)
+    try:
+        raw = r.get(key)
+        if not raw:
+            return None
+        data = json.loads(raw)
+        items = data.get("items")
+        if not isinstance(items, list):
+            return None
+        out = [x for x in items if isinstance(x, dict)]
+        return out if out else None
+    finally:
+        r.close()
+
+
+def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
+    r = _sync_redis()
+    try:
+        r.delete(autorespond_ui_tail_key(chat_id, task_key))
+    finally:
+        r.close()
 
 
 def hh_ui_batch_resume_payload(
@@ -313,198 +339,6 @@ def load_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> list[dict] 
     if not full:
         return None
     return full[0]
-
-
-def save_autorespond_ui_tail_sync(chat_id: int, task_key: str, pending_items: list[dict]) -> None:
-    """Parent queue: UI item dicts not yet dispatched to ``apply_to_vacancies_batch_ui_task``."""
-    r = _sync_redis()
-    key = autorespond_ui_tail_key(chat_id, task_key)
-    try:
-        if not pending_items:
-            r.delete(key)
-        else:
-            r.set(key, json.dumps({"items": pending_items}), ex=_DONE_TTL_S)
-    finally:
-        r.close()
-
-
-def load_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> list[dict] | None:
-    """Load parent pending UI rows for refresh between child batches."""
-    r = _sync_redis()
-    key = autorespond_ui_tail_key(chat_id, task_key)
-    try:
-        raw = r.get(key)
-        if not raw:
-            return None
-        data = json.loads(raw)
-        items = data.get("items")
-        if not isinstance(items, list):
-            return None
-        out = [x for x in items if isinstance(x, dict)]
-        return out if out else None
-    finally:
-        r.close()
-
-
-def clear_autorespond_ui_tail_sync(chat_id: int, task_key: str) -> None:
-    r = _sync_redis()
-    try:
-        r.delete(autorespond_ui_tail_key(chat_id, task_key))
-    finally:
-        r.close()
-
-
-def touch_autorespond_parent_loop_heartbeat_sync(chat_id: int, task_key: str) -> None:
-    r = _sync_redis()
-    try:
-        r.set(
-            autorespond_parent_loop_heartbeat_key(chat_id, task_key),
-            str(int(time.time())),
-            ex=_DONE_TTL_S,
-        )
-    finally:
-        r.close()
-
-
-def clear_autorespond_parent_loop_heartbeat_sync(chat_id: int, task_key: str) -> None:
-    r = _sync_redis()
-    try:
-        r.delete(autorespond_parent_loop_heartbeat_key(chat_id, task_key))
-    finally:
-        r.close()
-
-
-def autorespond_parent_loop_heartbeat_age_seconds_sync(
-    chat_id: int,
-    task_key: str,
-) -> float | None:
-    """Seconds since last parent-loop heartbeat; ``None`` when missing."""
-    r = _sync_redis()
-    try:
-        raw = r.get(autorespond_parent_loop_heartbeat_key(chat_id, task_key))
-        if not raw:
-            return None
-        try:
-            ts = float(raw)
-        except (TypeError, ValueError):
-            return None
-        return max(0.0, time.time() - ts)
-    finally:
-        r.close()
-
-
-def is_autorespond_parent_loop_heartbeat_stale_sync(
-    chat_id: int,
-    task_key: str,
-    max_age_seconds: float,
-) -> bool:
-    age = autorespond_parent_loop_heartbeat_age_seconds_sync(chat_id, task_key)
-    if age is None:
-        return True
-    return age > max_age_seconds
-
-
-def set_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
-    r = _sync_redis()
-    try:
-        r.set(autorespond_parent_loop_key(chat_id, task_key), "1", ex=_DONE_TTL_S)
-    finally:
-        r.close()
-    touch_autorespond_parent_loop_heartbeat_sync(chat_id, task_key)
-
-
-def clear_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> None:
-    r = _sync_redis()
-    try:
-        r.delete(autorespond_parent_loop_key(chat_id, task_key))
-    finally:
-        r.close()
-    clear_autorespond_parent_loop_heartbeat_sync(chat_id, task_key)
-
-
-def should_defer_ui_tail_chain_to_parent_sync(
-    chat_id: int,
-    task_key: str,
-    parent_celery_id: str | None,
-    *,
-    heartbeat_stale_seconds: float,
-) -> tuple[bool, str]:
-    """Whether ``hh_ui`` should wait for parent ``flush_ui_batch`` instead of tail-chaining.
-
-    Returns ``(defer, reason)``. Defer only when parent loop flag is set, heartbeat is
-    fresh, and the parent Celery task id is still listed on workers.
-    """
-    from src.services.celery_active import celery_task_id_is_active
-
-    if not is_autorespond_parent_loop_active_sync(chat_id, task_key):
-        return False, "parent_loop_inactive"
-    heartbeat_stale = is_autorespond_parent_loop_heartbeat_stale_sync(
-        chat_id, task_key, heartbeat_stale_seconds
-    )
-    parent_on_workers = bool(parent_celery_id and celery_task_id_is_active(parent_celery_id))
-    if not heartbeat_stale and parent_on_workers:
-        return True, "parent_dispatching"
-    if heartbeat_stale and parent_on_workers:
-        return False, "heartbeat_stale_parent_wedged"
-    if not parent_on_workers:
-        return False, "parent_task_not_on_workers"
-    return False, "heartbeat_stale"
-
-
-def is_autorespond_parent_loop_active_sync(chat_id: int, task_key: str) -> bool:
-    r = _sync_redis()
-    try:
-        return bool(r.get(autorespond_parent_loop_key(chat_id, task_key)))
-    finally:
-        r.close()
-
-
-def pop_autorespond_ui_tail_batch_sync(
-    chat_id: int,
-    task_key: str,
-    batch_size: int,
-) -> list[dict]:
-    """Atomically remove up to ``batch_size`` items from the parent tail; return popped rows."""
-    r = _sync_redis()
-    key = autorespond_ui_tail_key(chat_id, task_key)
-    try:
-        for _ in range(30):
-            try:
-                r.watch(key)
-                raw = r.get(key)
-                if not raw:
-                    r.unwatch()
-                    return []
-                data = json.loads(raw)
-                items = data.get("items")
-                if not isinstance(items, list):
-                    r.unwatch()
-                    return []
-                clean = [x for x in items if isinstance(x, dict)]
-                if not clean:
-                    r.unwatch()
-                    return []
-                take = min(batch_size, len(clean))
-                batch = clean[:take]
-                rest = clean[take:]
-                p = r.pipeline()
-                p.multi()
-                if not rest:
-                    p.delete(key)
-                else:
-                    p.set(key, json.dumps({"items": rest}), ex=_DONE_TTL_S)
-                p.execute()
-                return batch
-            except WatchError:
-                continue
-        logger.warning(
-            "pop_autorespond_ui_tail_batch_sync_gave_up",
-            chat_id=chat_id,
-            task_key=task_key,
-        )
-        return []
-    finally:
-        r.close()
 
 
 def clear_hh_ui_batch_checkpoint_sync(chat_id: int, task_key: str) -> None:
@@ -863,6 +697,9 @@ async def tick_autorespond_bar(
             clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
             clear_hh_ui_resume_envelope_sync(chat_id, task_key)
             clear_autorespond_ui_tail_sync(chat_id, task_key)
+            from src.services.autorespond_pipeline_state import clear_all_pipeline_state
+
+            clear_all_pipeline_state(chat_id, task_key)
             return True
         return False
     finally:

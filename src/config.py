@@ -104,8 +104,8 @@ class Settings(BaseSettings):
     hh_ui_apply_task_time_limit: int = Field(default=600, ge=120, le=7200)
     # Batched UI apply: one Chromium session per chunk (see ``hh_ui.apply_to_vacancies_batch``).
     hh_ui_apply_batch_size: int = Field(default=4, ge=1, le=50)
-    # Parent ``run_autorespond`` loop: tail chain defers while heartbeat is fresh and parent
-    # Celery task is on workers. Stale heartbeat → hh_ui batch chains from Redis tail.
+    # Deprecated: parent-loop tail chain removed (dispatcher + apply_pump pipeline).
+    # Kept for backward-compatible env/config; unused by new autorespond pipeline.
     autorespond_parent_loop_heartbeat_stale_seconds: int = Field(default=120, ge=30, le=600)
     # Autorespond preflight uses httpx only (no Playwright) — avoids blocking the parent worker.
     autorespond_preflight_timeout_seconds: float = Field(default=25.0, ge=5.0, le=120.0)
@@ -141,6 +141,34 @@ class Settings(BaseSettings):
     # When False, vacancy list + detail scraping use web/Playwright paths only (no public API JSON).
     hh_api_vacancy_parsing_enabled: bool = True
     hh_ui_debug_screenshot_dir: str = str(_DEFAULT_PLAYWRIGHT_DEBUG_DIR)
+
+    # System load throttler (psutil) — autorespond/cover-letter/pump callers back off when host
+    # CPU/RAM/disk cross these thresholds. Hysteresis = 5 percentage points below pause threshold.
+    system_load_cpu_pause_percent: int = Field(default=92, ge=50, le=100)
+    system_load_ram_pause_percent: int = Field(default=90, ge=50, le=100)
+    system_load_disk_pause_percent: int = Field(default=97, ge=50, le=100)
+    system_load_backoff_max_seconds: int = Field(default=30, ge=1, le=600)
+
+    # Cover-letter pre-generation (queue=cover_letter): one task per vacancy ahead of Playwright.
+    cover_letter_pregen_soft_time_limit: int = Field(default=90, ge=10, le=600)
+    cover_letter_pregen_time_limit: int = Field(default=120, ge=20, le=900)
+    cover_letter_pregen_ttl_seconds: int = Field(default=24 * 3600, ge=300, le=7 * 24 * 3600)
+
+    # Apply pump (queue=hh_ui): long-lived consumer; chains itself before soft-timeout.
+    autorespond_apply_pump_soft_time_limit: int = Field(default=600, ge=60, le=14400)
+    autorespond_apply_pump_time_limit: int = Field(default=700, ge=120, le=18000)
+    # Reserve time at end of pump shift to chain successor before SoftTimeLimit fires.
+    autorespond_apply_pump_chain_grace_seconds: int = Field(default=60, ge=10, le=600)
+    # Pump waits this long (per item) for a cover letter to arrive in Redis before applying without.
+    autorespond_apply_pump_pregen_wait_per_item_seconds: float = Field(
+        default=5.0, ge=0.0, le=60.0
+    )
+    # Pump writes heartbeat at this cadence; recover_stalled treats older heartbeats as dead.
+    autorespond_apply_pump_heartbeat_interval_seconds: float = Field(
+        default=5.0, ge=1.0, le=60.0
+    )
+    # recover_stalled: re-enqueue apply_pump if no heartbeat for this long while ready_to_apply > 0.
+    autorespond_recover_stalled_pump_grace_seconds: int = Field(default=90, ge=30, le=600)
 
     # HH server-side login assist (Playwright; optional noVNC — docs/HH_LOGIN_ASSIST.md)
     hh_login_assist_enabled: bool = False
@@ -233,6 +261,27 @@ class Settings(BaseSettings):
             raise ValueError(
                 "hh_public_api_circuit_recovery_max_seconds must be >= "
                 "hh_public_api_circuit_recovery_seconds"
+            )
+        if self.cover_letter_pregen_time_limit <= self.cover_letter_pregen_soft_time_limit:
+            raise ValueError(
+                "cover_letter_pregen_time_limit must be greater than "
+                "cover_letter_pregen_soft_time_limit"
+            )
+        if (
+            self.autorespond_apply_pump_time_limit
+            <= self.autorespond_apply_pump_soft_time_limit
+        ):
+            raise ValueError(
+                "autorespond_apply_pump_time_limit must be greater than "
+                "autorespond_apply_pump_soft_time_limit"
+            )
+        if (
+            self.autorespond_apply_pump_chain_grace_seconds
+            >= self.autorespond_apply_pump_soft_time_limit
+        ):
+            raise ValueError(
+                "autorespond_apply_pump_chain_grace_seconds must be less than "
+                "autorespond_apply_pump_soft_time_limit"
             )
         return self
 

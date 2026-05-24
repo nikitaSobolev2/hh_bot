@@ -91,9 +91,11 @@ celery_app.conf.update(
             "task": "autoparse.dispatch_all",
             "schedule": crontab(minute=0, hour="*/6"),
         },
-        "hh-ui-resume-checkpoints": {
-            "task": "hh_ui.periodic_resume_checkpoints",
-            "schedule": crontab(minute="*/5"),
+        # Recovery sweep: re-enqueues ``apply_pump`` for autorespond runs whose pump
+        # heartbeat went stale (worker SIGKILL, OOM). Clears state when bar converged.
+        "autorespond-recover-stalled": {
+            "task": "autorespond.recover_stalled",
+            "schedule": crontab(minute="*"),
         },
     },
 )
