@@ -173,6 +173,10 @@ async def test_apply_pump_processes_batch_and_ticks_bar(monkeypatch: pytest.Monk
         return "cached letter"
 
     monkeypatch.setattr("src.worker.tasks.hh_ui_apply.fetch_pregen_letter", _fetch)
+    monkeypatch.setattr(
+        "src.worker.tasks.hh_ui_apply._resolve_cover_letter_for_apply",
+        AsyncMock(side_effect=lambda _sf, _chat, _key, vid: _fetch(_chat, _key, vid) or ""),
+    )
 
     received_specs: list[VacancyApplySpec] = []
 

@@ -5,12 +5,11 @@ Architecture
 The pipeline runs in three roles, each on its own worker process / queue:
 
 1. **Dispatcher** (``autorespond.dispatch`` on queue ``celery``): filters candidates,
-   picks resumes (bounded AI), seeds the ready-to-apply ZSET, fans out cover-letter
-   pregenerate tasks, kicks the apply pump, returns in seconds.
+   picks resumes (bounded AI), fans out cover-letter pregenerate tasks, returns in seconds.
 
 2. **Cover letter pre-gen** (``cover_letter.pregenerate_for_apply`` on queue
-   ``cover_letter``): one task per vacancy; stores the letter in Redis. Defined in
-   :mod:`src.worker.tasks.cover_letter`.
+   ``cover_letter``): one task per vacancy; stores the letter in DB + Redis, then enqueues
+   the apply unit and kicks the pump. Defined in :mod:`src.worker.tasks.cover_letter`.
 
 3. **Apply pump** (``autorespond.apply_pump`` on queue ``hh_ui``): single consumer
    that pops batches from the ZSET, runs Playwright, ticks progress. Defined in
@@ -48,7 +47,6 @@ from src.services.autorespond_pipeline_state import (
     pump_heartbeat_age_seconds,
     ready_remaining_count,
     save_pipeline_envelope,
-    seed_ready_to_apply,
 )
 from src.services.hh_ui.rate_limit import (
     current_ui_apply_count_sync,
@@ -925,6 +923,23 @@ async def _run_autorespond_async(
         await clear_autorespond_failed_counter(user.telegram_id, task_key)
         await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
 
+    if settings.hh_ui_apply_enabled and not cover_task_enabled:
+        logger.warning(
+            "autorespond_cover_letter_disabled",
+            company_id=company_id,
+            trigger=trigger,
+            user_id=user.id,
+        )
+        return {
+            "status": "cover_letter_disabled",
+            "queued": 0,
+            "skipped": pre_skipped_autorespond,
+            "failed": 0,
+            "employer_tests": 0,
+            "trigger": trigger,
+            "negotiations_sync": sync_res,
+        }
+
     # Resolve resume_id per vacancy and seed Redis state.
     if not task_key or user.telegram_id <= 0:
         # Without a chat we cannot drive the bar; still applies happen synchronously via
@@ -1001,9 +1016,6 @@ async def _run_autorespond_async(
     # Only touch pipeline state + pump when there is work to do; otherwise this is
     # a no-op run that should not leave Redis state for the recovery sweep.
     if ready_specs:
-        seed_ready_to_apply(chat_id, task_key, ready_specs)
-        if cover_task_enabled and vacancy_ids_for_pregen:
-            mark_pregen_pending(chat_id, task_key, vacancy_ids_for_pregen)
         save_pipeline_envelope(
             chat_id,
             task_key,
@@ -1015,11 +1027,10 @@ async def _run_autorespond_async(
             },
         )
 
-        from src.services.autorespond_pipeline_state import clear_pump_lock
         from src.worker.tasks.cover_letter import pregenerate_for_apply_task
-        from src.worker.tasks.hh_ui_apply import apply_pump_task
 
         if cover_task_enabled:
+            mark_pregen_pending(chat_id, task_key, vacancy_ids_for_pregen)
             for spec in ready_specs:
                 pregenerate_for_apply_task.delay(
                     task_key=task_key,
@@ -1028,14 +1039,8 @@ async def _run_autorespond_async(
                     autoparsed_vacancy_id=spec["autoparsed_vacancy_id"],
                     resume_id=spec["resume_id"],
                     cover_letter_style=cover_letter_style,
+                    apply_spec=spec,
                 )
-
-        clear_pump_lock(chat_id, task_key)
-        apply_pump_task.delay(
-            task_key=task_key,
-            chat_id=chat_id,
-            resume_envelope=resume_envelope,
-        )
 
         # Drop any leftover legacy tail/checkpoint state for this task_key.
         clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)

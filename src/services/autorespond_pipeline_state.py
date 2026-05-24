@@ -259,14 +259,14 @@ def pregen_pending_count(chat_id: int, task_key: str) -> int:
 def store_pregen_letter(
     chat_id: int, task_key: str, vacancy_id: int, letter: str
 ) -> None:
-    """Save cover letter (empty string allowed) and remove from pending in one transaction."""
+    """Save cover letter to Redis cache and remove from pending."""
     r = _sync_redis()
     cache_key = pregen_cache_key(chat_id, task_key)
     pending_key = pregen_pending_key(chat_id, task_key)
     ttl = int(settings.cover_letter_pregen_ttl_seconds)
     try:
         pipe = r.pipeline()
-        pipe.hset(cache_key, str(vacancy_id), letter or "")
+        pipe.hset(cache_key, str(vacancy_id), letter)
         pipe.expire(cache_key, ttl)
         pipe.srem(pending_key, str(vacancy_id))
         pipe.execute()
@@ -274,14 +274,21 @@ def store_pregen_letter(
         r.close()
 
 
+def release_pregen_pending(chat_id: int, task_key: str, vacancy_ids: list[int]) -> None:
+    """Drop pending markers without caching a letter (pregen failed / cancelled)."""
+    if not vacancy_ids:
+        return
+    r = _sync_redis()
+    try:
+        r.srem(pregen_pending_key(chat_id, task_key), *[str(vid) for vid in vacancy_ids])
+    finally:
+        r.close()
+
+
 def fetch_pregen_letter(
     chat_id: int, task_key: str, vacancy_id: int
 ) -> str | None:
-    """Return cached letter; ``None`` when no entry exists.
-
-    Empty string means the pre-gen task gave up (timeout / error) and the pump
-    should apply without a letter (HH allows blank cover letters).
-    """
+    """Return cached letter; ``None`` when no Redis entry exists."""
     r = _sync_redis()
     try:
         val = r.hget(pregen_cache_key(chat_id, task_key), str(vacancy_id))
@@ -309,6 +316,37 @@ def clear_pregen_state(chat_id: int, task_key: str) -> None:
         )
     finally:
         r.close()
+
+
+def enqueue_autorespond_apply_unit(
+    chat_id: int, task_key: str, apply_spec: dict[str, Any]
+) -> None:
+    """After cover letter is ready: add one apply unit and kick the pump."""
+    seed_ready_to_apply(chat_id, task_key, [apply_spec])
+    kick_apply_pump_for_pipeline(chat_id, task_key)
+
+
+def kick_apply_pump_for_pipeline(chat_id: int, task_key: str) -> None:
+    """Re-enqueue ``apply_pump`` using the saved pipeline envelope."""
+    envelope = load_pipeline_envelope(chat_id, task_key)
+    if not envelope:
+        return
+    resume_envelope = envelope.get("resume_envelope")
+    if not isinstance(resume_envelope, dict):
+        logger.warning(
+            "autorespond_kick_pump_missing_resume_envelope",
+            chat_id=chat_id,
+            task_key=task_key,
+        )
+        return
+    clear_pump_lock(chat_id, task_key)
+    from src.worker.tasks.hh_ui_apply import apply_pump_task
+
+    apply_pump_task.delay(
+        task_key=task_key,
+        chat_id=int(chat_id),
+        resume_envelope=resume_envelope,
+    )
 
 
 # ---------------------------------------------------------------------------

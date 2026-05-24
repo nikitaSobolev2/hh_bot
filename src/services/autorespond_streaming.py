@@ -5,7 +5,7 @@ Used by the manual autoparse+autorespond pipeline:
 1. Negotiations sync (orchestrator)
 2. Bootstrap: enqueue DB rows that already have compatibility scores
 3. Autoparse: detail parse + AI compat per vacancy; each ready row is enqueued immediately
-4. Apply pump + cover pregen consume the ready ZSET concurrently with parsing
+4. Apply pump consumes the ready ZSET only after cover letters are generated
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from src.services.autorespond_pipeline_state import (
     mark_pregen_pending,
     mark_streaming_parse_complete,
     save_pipeline_envelope,
-    seed_ready_to_apply,
 )
 from src.services.autorespond_progress import (
     clear_autorespond_done_counter,
@@ -265,19 +264,21 @@ class StreamingAutorespondFeed:
             "vacancy_url": normalize_hh_vacancy_url(vacancy.url, hh_id),
             "company_id": int(self.ctx.company_id),
         }
-        seed_ready_to_apply(self.ctx.chat_id, self.ctx.task_key, [spec])
-        if self._cover_task_enabled:
-            mark_pregen_pending(self.ctx.chat_id, self.ctx.task_key, [vid])
-            from src.worker.tasks.cover_letter import pregenerate_for_apply_task
+        if not self._cover_task_enabled:
+            return False
 
-            pregenerate_for_apply_task.delay(
-                task_key=self.ctx.task_key,
-                chat_id=self.ctx.chat_id,
-                user_id=self.ctx.user_id,
-                autoparsed_vacancy_id=vid,
-                resume_id=str(resume_id),
-                cover_letter_style=self._cover_letter_style,
-            )
+        mark_pregen_pending(self.ctx.chat_id, self.ctx.task_key, [vid])
+        from src.worker.tasks.cover_letter import pregenerate_for_apply_task
+
+        pregenerate_for_apply_task.delay(
+            task_key=self.ctx.task_key,
+            chat_id=self.ctx.chat_id,
+            user_id=self.ctx.user_id,
+            autoparsed_vacancy_id=vid,
+            resume_id=str(resume_id),
+            cover_letter_style=self._cover_letter_style,
+            apply_spec=spec,
+        )
 
         self._enqueued_ids.add(vid)
         self._work_units += 1
@@ -302,7 +303,6 @@ class StreamingAutorespondFeed:
                 current_done,
                 self._work_units,
             )
-        await self._kick_pump_if_needed()
         logger.info(
             "streaming_autorespond_enqueued",
             company_id=self.ctx.company_id,

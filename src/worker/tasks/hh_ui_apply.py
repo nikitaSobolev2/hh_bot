@@ -239,29 +239,25 @@ def _autorespond_progress_from_envelope(resume_envelope: dict[str, Any]) -> dict
     return ap if isinstance(ap, dict) else None
 
 
-async def _wait_for_pregen_letter(
+async def _resolve_cover_letter_for_apply(
+    session_factory: async_sessionmaker[AsyncSession],
     chat_id: int,
     task_key: str,
     autoparsed_vacancy_id: int,
-    *,
-    wait_seconds: float,
 ) -> str:
-    """Poll the pregen cache until letter arrives or ``wait_seconds`` elapses.
+    """Load cover letter from Redis cache or DB; autorespond applies require non-empty text."""
+    letter = fetch_pregen_letter(chat_id, task_key, autoparsed_vacancy_id)
+    if letter and letter.strip():
+        return letter.strip()
+    from src.repositories.autoparse import AutoparsedVacancyRepository
 
-    Returns ``""`` when no cover-letter task was scheduled (or task failed) — the
-    apply still proceeds without a letter (HH allows blank).
-    """
-    if wait_seconds <= 0:
-        existing = fetch_pregen_letter(chat_id, task_key, autoparsed_vacancy_id)
-        return existing or ""
-    deadline = time.monotonic() + wait_seconds
-    while True:
-        letter = fetch_pregen_letter(chat_id, task_key, autoparsed_vacancy_id)
-        if letter is not None:
-            return letter
-        if time.monotonic() >= deadline:
-            return ""
-        await asyncio.sleep(0.25)
+    async with session_factory() as session:
+        repo = AutoparsedVacancyRepository(session)
+        vacancy = await repo.get_by_id(autoparsed_vacancy_id)
+        db_letter = getattr(vacancy, "autorespond_cover_letter", None) if vacancy else None
+        if db_letter and db_letter.strip():
+            return db_letter.strip()
+    return ""
 
 
 async def _finalize_pump_item_async(
@@ -411,7 +407,6 @@ async def _apply_pump_async(
     soft_limit = float(settings.autorespond_apply_pump_soft_time_limit)
     grace = float(settings.autorespond_apply_pump_chain_grace_seconds)
     batch_size = int(settings.hh_ui_apply_batch_size)
-    pregen_wait = float(settings.autorespond_apply_pump_pregen_wait_per_item_seconds)
     guard = get_system_load_guard()
 
     cipher = HhTokenCipher(settings.hh_token_encryption_key)
@@ -492,15 +487,45 @@ async def _apply_pump_async(
                     continue
                 break
 
-            # Resolve cover letters from cache (each item waits up to ``pregen_wait``).
+            # Resolve cover letters (apply units enter the queue only after pregen saved one).
             specs: list[VacancyApplySpec] = []
             for spec in batch_specs:
-                letter = await _wait_for_pregen_letter(
+                letter = await _resolve_cover_letter_for_apply(
+                    session_factory,
                     int(chat_id),
                     task_key,
                     int(spec["autoparsed_vacancy_id"]),
-                    wait_seconds=pregen_wait,
                 )
+                if not letter:
+                    logger.error(
+                        "apply_pump_missing_cover_letter",
+                        chat_id=chat_id,
+                        task_key=task_key,
+                        vacancy_id=spec["autoparsed_vacancy_id"],
+                    )
+                    from src.services.autorespond_progress import (
+                        increment_autorespond_failed_sync,
+                    )
+
+                    increment_autorespond_failed_sync(int(chat_id), task_key, 1)
+                    await _finalize_pump_item_async(
+                        session_factory=session_factory,
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        locale=locale,
+                        hh_linked_account_id=hh_linked_account_id,
+                        spec=spec,
+                        result=ApplyResult(
+                            outcome=ApplyOutcome.ERROR,
+                            detail="missing_cover_letter",
+                        ),
+                        autorespond_progress=autorespond_progress,
+                        bot=bot,
+                        silent_feed=silent_feed,
+                        send_error_screenshot_to_user=send_error_screenshot_to_user,
+                    )
+                    processed += 1
+                    continue
                 specs.append(
                     VacancyApplySpec(
                         autoparsed_vacancy_id=int(spec["autoparsed_vacancy_id"]),
@@ -510,9 +535,11 @@ async def _apply_pump_async(
                             str(spec["hh_vacancy_id"]),
                         ),
                         resume_hh_id=str(spec["resume_id"]),
-                        cover_letter=letter or "",
+                        cover_letter=letter,
                     )
                 )
+            if not specs:
+                continue
 
             loop = asyncio.get_running_loop()
             done_vids: set[int] = set()

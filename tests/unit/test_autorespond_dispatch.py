@@ -154,11 +154,6 @@ async def test_dispatch_filters_capped_pre_skipped_and_seeds_ready_zset(
         monkeypatch.setattr(f"src.services.autorespond_progress.{fn}", MagicMock())
 
     # Capture pipeline state writes + delegations.
-    seeded: list[dict] = []
-    monkeypatch.setattr(
-        "src.worker.tasks.autorespond.seed_ready_to_apply",
-        lambda chat_id, task_key, items: seeded.extend(items) or len(items),
-    )
     pending_marked: list[int] = []
     monkeypatch.setattr(
         "src.worker.tasks.autorespond.mark_pregen_pending",
@@ -219,10 +214,9 @@ async def test_dispatch_filters_capped_pre_skipped_and_seeds_ready_zset(
         )
 
     assert result["status"] == "ok"
-    assert {s["autoparsed_vacancy_id"] for s in seeded} == {101}  # 102 was pre-skipped
     assert pending_marked == [101]
     assert pregen_delay.call_count == 1
-    assert pump_delay.call_count == 1
+    assert pump_delay.call_count == 0
     assert tick_mock.await_count == 1  # one pre-skip tick
     assert envelope_calls and envelope_calls[0]["resume_envelope"]["user_id"] == 7
 

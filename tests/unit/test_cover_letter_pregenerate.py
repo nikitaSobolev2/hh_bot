@@ -1,4 +1,4 @@
-"""Cover-letter pre-generation task: cache write, timeout fallback, idempotency."""
+"""Cover-letter pre-generation task: DB persist, enqueue apply, failure handling."""
 
 from __future__ import annotations
 
@@ -22,35 +22,50 @@ def _stub_cryptography(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def fake_pregen_state(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Track ``store_pregen_letter`` writes + ``pregen_letter_exists`` lookups."""
+def fake_pregen_state(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[int, str, int], str]:
+    """Track ``store_pregen_letter`` writes + ``fetch_pregen_letter`` lookups."""
     store: dict[tuple[int, str, int], str] = {}
 
     def _store(chat_id: int, task_key: str, vacancy_id: int, letter: str) -> None:
         store[(chat_id, task_key, vacancy_id)] = letter
 
+    def _fetch(chat_id: int, task_key: str, vacancy_id: int) -> str | None:
+        key = (chat_id, task_key, vacancy_id)
+        return store.get(key)
+
     def _exists(chat_id: int, task_key: str, vacancy_id: int) -> bool:
         return (chat_id, task_key, vacancy_id) in store
 
-    monkeypatch.setattr(
-        "src.worker.tasks.cover_letter.store_pregen_letter",
-        _store,
-        raising=False,
-    )
-    # Patch the pipeline-state module for in-function import.
     monkeypatch.setattr(
         "src.services.autorespond_pipeline_state.store_pregen_letter",
         _store,
     )
     monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.fetch_pregen_letter",
+        _fetch,
+    )
+    monkeypatch.setattr(
         "src.services.autorespond_pipeline_state.pregen_letter_exists",
         _exists,
+    )
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.release_pregen_pending",
+        MagicMock(),
     )
     return store
 
 
+_APPLY_SPEC = {
+    "autoparsed_vacancy_id": 99,
+    "hh_vacancy_id": "100",
+    "resume_id": "r1",
+    "vacancy_url": "https://hh.ru/vacancy/100",
+    "company_id": 1,
+}
+
+
 @pytest.mark.asyncio
-async def test_pregenerate_writes_letter_to_cache_on_success(
+async def test_pregenerate_writes_letter_to_cache_and_enqueues_apply(
     fake_pregen_state: dict,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -63,6 +78,15 @@ async def test_pregenerate_writes_letter_to_cache_on_success(
     )
     monkeypatch.setattr("src.services.ai.client.AIClient", MagicMock())
     monkeypatch.setattr("src.services.ai.client.close_ai_client", AsyncMock())
+    monkeypatch.setattr(
+        "src.worker.tasks.cover_letter._persist_autorespond_cover_letter",
+        AsyncMock(),
+    )
+    enqueue_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.enqueue_autorespond_apply_unit",
+        enqueue_mock,
+    )
 
     guard = MagicMock()
     guard.wait_if_overloaded = AsyncMock()
@@ -79,20 +103,23 @@ async def test_pregenerate_writes_letter_to_cache_on_success(
 
     result = await _pregenerate_for_apply_async(
         session_factory=MagicMock(),
+        celery_task=None,
         task_key="autorespond:1:abc",
         chat_id=42,
         user_id=7,
         autoparsed_vacancy_id=99,
         resume_id="r1",
         cover_letter_style="professional",
+        apply_spec=_APPLY_SPEC,
     )
 
     assert result["status"] == "ok"
     assert fake_pregen_state[(42, "autorespond:1:abc", 99)] == "Hello hiring manager."
+    enqueue_mock.assert_called_once_with(42, "autorespond:1:abc", _APPLY_SPEC)
 
 
 @pytest.mark.asyncio
-async def test_pregenerate_timeout_writes_empty_letter(
+async def test_pregenerate_timeout_does_not_enqueue_apply(
     fake_pregen_state: dict,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -116,6 +143,15 @@ async def test_pregenerate_timeout_writes_empty_letter(
         "src.services.autorespond_progress.is_autorespond_cancelled_sync",
         lambda *a, **k: False,
     )
+    enqueue_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.enqueue_autorespond_apply_unit",
+        enqueue_mock,
+    )
+    monkeypatch.setattr(
+        "src.worker.tasks.cover_letter._report_autorespond_pregen_failure",
+        AsyncMock(),
+    )
 
     with patch("src.worker.tasks.cover_letter.settings") as mock_settings:
         mock_settings.cover_letter_pregen_soft_time_limit = 0.05
@@ -123,16 +159,19 @@ async def test_pregenerate_timeout_writes_empty_letter(
 
         result = await _pregenerate_for_apply_async(
             session_factory=MagicMock(),
+            celery_task=None,
             task_key="autorespond:1:abc",
             chat_id=42,
             user_id=7,
             autoparsed_vacancy_id=99,
             resume_id="r1",
             cover_letter_style="professional",
+            apply_spec=_APPLY_SPEC,
         )
 
     assert result["status"] == "timeout"
-    assert fake_pregen_state[(42, "autorespond:1:abc", 99)] == ""
+    assert (42, "autorespond:1:abc", 99) not in fake_pregen_state
+    enqueue_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -147,20 +186,28 @@ async def test_pregenerate_is_idempotent_when_letter_already_cached(
         "src.worker.tasks.cover_letter.generate_cover_letter_plaintext_for_autoparsed_vacancy",
         sentinel,
     )
+    enqueue_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.enqueue_autorespond_apply_unit",
+        enqueue_mock,
+    )
 
     from src.worker.tasks.cover_letter import _pregenerate_for_apply_async
 
     result = await _pregenerate_for_apply_async(
         session_factory=MagicMock(),
+        celery_task=None,
         task_key="autorespond:1:abc",
         chat_id=42,
         user_id=7,
         autoparsed_vacancy_id=99,
         resume_id="r1",
         cover_letter_style="professional",
+        apply_spec=_APPLY_SPEC,
     )
     assert result["status"] == "cached"
     sentinel.assert_not_called()
+    enqueue_mock.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -172,17 +219,25 @@ async def test_pregenerate_cancels_when_autorespond_cancelled(
         "src.services.autorespond_progress.is_autorespond_cancelled_sync",
         lambda *a, **k: True,
     )
+    enqueue_mock = MagicMock()
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.enqueue_autorespond_apply_unit",
+        enqueue_mock,
+    )
 
     from src.worker.tasks.cover_letter import _pregenerate_for_apply_async
 
     result = await _pregenerate_for_apply_async(
         session_factory=MagicMock(),
+        celery_task=None,
         task_key="autorespond:1:abc",
         chat_id=42,
         user_id=7,
         autoparsed_vacancy_id=99,
         resume_id="r1",
         cover_letter_style="professional",
+        apply_spec=_APPLY_SPEC,
     )
     assert result["status"] == "cancelled"
-    assert fake_pregen_state[(42, "autorespond:1:abc", 99)] == ""
+    assert (42, "autorespond:1:abc", 99) not in fake_pregen_state
+    enqueue_mock.assert_not_called()

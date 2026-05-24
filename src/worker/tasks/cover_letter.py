@@ -185,38 +185,99 @@ async def generate_cover_letter_plaintext_for_autoparsed_vacancy(
             await close_ai_client(client)
 
 
+async def _persist_autorespond_cover_letter(
+    session_factory,
+    autoparsed_vacancy_id: int,
+    letter: str,
+) -> None:
+    from src.repositories.autoparse import AutoparsedVacancyRepository
+
+    async with session_factory() as session:
+        repo = AutoparsedVacancyRepository(session)
+        vacancy = await repo.get_by_id(autoparsed_vacancy_id)
+        if vacancy is None:
+            return
+        await repo.update(vacancy, autorespond_cover_letter=letter)
+        await session.commit()
+
+
+async def _report_autorespond_pregen_failure(
+    celery_task: object | None,
+    *,
+    chat_id: int,
+    task_key: str,
+) -> None:
+    from src.services.autorespond_pipeline_state import load_pipeline_envelope
+    from src.services.autorespond_progress import (
+        increment_autorespond_failed_sync,
+        tick_autorespond_bar,
+    )
+
+    envelope = load_pipeline_envelope(chat_id, task_key)
+    resume_envelope = envelope.get("resume_envelope") if envelope else None
+    if not isinstance(resume_envelope, dict):
+        return
+    ar = resume_envelope.get("autorespond_progress")
+    if not isinstance(ar, dict) or not ar.get("task_key"):
+        return
+    increment_autorespond_failed_sync(chat_id, task_key, 1)
+    if celery_task is None or not hasattr(celery_task, "create_bot"):
+        return
+    bot = celery_task.create_bot()
+    try:
+        await tick_autorespond_bar(
+            bot=bot,
+            chat_id=chat_id,
+            task_key=task_key,
+            total=int(ar.get("total") or 0),
+            locale=str(ar.get("locale") or "ru"),
+            bar_index=int(ar.get("bar_index", 0)),
+            finish_progress_task=bool(ar.get("finish_progress_task", True)),
+            streaming_autorespond=bool(ar.get("streaming_autorespond")),
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await bot.session.close()
+
+
 async def _pregenerate_for_apply_async(
     session_factory,
+    celery_task: object | None,
     task_key: str,
     chat_id: int,
     user_id: int,
     autoparsed_vacancy_id: int,
     resume_id: str,
     cover_letter_style: str,
+    apply_spec: dict | None,
 ) -> dict:
-    """Generate a cover letter for the apply pump; store in Redis cache.
-
-    Always marks the vacancy as ready (with empty letter on error / timeout) so the
-    pump never waits forever for a doomed pre-gen.
-    """
+    """Generate cover letter, persist to DB, then enqueue HH UI apply for this vacancy."""
     from src.core.system_load import get_system_load_guard
     from src.services.ai.client import AIClient, close_ai_client
     from src.services.autorespond_pipeline_state import (
+        enqueue_autorespond_apply_unit,
+        fetch_pregen_letter,
         pregen_letter_exists,
+        release_pregen_pending,
         store_pregen_letter,
     )
 
-    if pregen_letter_exists(chat_id, task_key, autoparsed_vacancy_id):
+    cached = fetch_pregen_letter(chat_id, task_key, autoparsed_vacancy_id)
+    if cached is not None and cached.strip():
+        if apply_spec:
+            enqueue_autorespond_apply_unit(chat_id, task_key, apply_spec)
         return {
             "status": "cached",
             "vacancy_id": autoparsed_vacancy_id,
             "task_key": task_key,
         }
+    if pregen_letter_exists(chat_id, task_key, autoparsed_vacancy_id):
+        release_pregen_pending(chat_id, task_key, [autoparsed_vacancy_id])
 
     from src.services.autorespond_progress import is_autorespond_cancelled_sync
 
     if is_autorespond_cancelled_sync(chat_id, task_key):
-        store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, "")
+        release_pregen_pending(chat_id, task_key, [autoparsed_vacancy_id])
         return {
             "status": "cancelled",
             "vacancy_id": autoparsed_vacancy_id,
@@ -260,7 +321,25 @@ async def _pregenerate_for_apply_async(
         with contextlib.suppress(Exception):
             await close_ai_client(ai_client)
 
-    store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, letter or "")
+    letter = (letter or "").strip()
+    if status != "ok" or not letter:
+        release_pregen_pending(chat_id, task_key, [autoparsed_vacancy_id])
+        await _report_autorespond_pregen_failure(
+            celery_task,
+            chat_id=chat_id,
+            task_key=task_key,
+        )
+        return {
+            "status": status if status != "ok" else "empty_letter",
+            "vacancy_id": autoparsed_vacancy_id,
+            "task_key": task_key,
+            "letter_chars": 0,
+        }
+
+    await _persist_autorespond_cover_letter(session_factory, autoparsed_vacancy_id, letter)
+    store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, letter)
+    if apply_spec:
+        enqueue_autorespond_apply_unit(chat_id, task_key, apply_spec)
     logger.info(
         "cover_letter_pregenerate_done",
         user_id=user_id,
@@ -268,13 +347,13 @@ async def _pregenerate_for_apply_async(
         task_key=task_key,
         vacancy_id=autoparsed_vacancy_id,
         status=status,
-        letter_chars=len(letter or ""),
+        letter_chars=len(letter),
     )
     return {
         "status": status,
         "vacancy_id": autoparsed_vacancy_id,
         "task_key": task_key,
-        "letter_chars": len(letter or ""),
+        "letter_chars": len(letter),
     }
 
 
@@ -295,27 +374,36 @@ def pregenerate_for_apply_task(
     autoparsed_vacancy_id: int,
     resume_id: str,
     cover_letter_style: str,
+    apply_spec: dict | None = None,
 ) -> dict:
-    """Pre-generate one cover letter for the apply pump; bounded + idempotent."""
+    """Pre-generate one cover letter; enqueue apply only after letter is saved."""
     from celery.exceptions import SoftTimeLimitExceeded
 
-    from src.services.autorespond_pipeline_state import store_pregen_letter
+    from src.services.autorespond_pipeline_state import release_pregen_pending
 
     try:
         return run_async(
             lambda sf: _pregenerate_for_apply_async(
                 sf,
+                self,
                 task_key,
                 chat_id,
                 user_id,
                 autoparsed_vacancy_id,
                 resume_id,
                 cover_letter_style,
+                apply_spec,
             )
         )
     except SoftTimeLimitExceeded:
-        # Soft-timeout: write empty letter so the pump never blocks waiting on us.
-        store_pregen_letter(chat_id, task_key, autoparsed_vacancy_id, "")
+        release_pregen_pending(chat_id, task_key, [autoparsed_vacancy_id])
+        run_async(
+            lambda _sf: _report_autorespond_pregen_failure(
+                self,
+                chat_id=chat_id,
+                task_key=task_key,
+            )
+        )
         logger.warning(
             "cover_letter_pregenerate_soft_timeout",
             user_id=user_id,

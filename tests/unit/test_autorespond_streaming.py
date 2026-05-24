@@ -61,7 +61,7 @@ async def test_on_autoparsed_rows_enqueues_when_compat_ready() -> None:
         vacancy_title="Backend",
     )
     feed._resume_items = [{"id": "r1"}]
-    feed._cover_task_enabled = False
+    feed._cover_task_enabled = True
 
     with (
         patch.object(feed, "_load_company_context", new=AsyncMock(return_value=True)),
@@ -70,7 +70,6 @@ async def test_on_autoparsed_rows_enqueues_when_compat_ready() -> None:
             "src.worker.tasks.autorespond._resolve_resume_for_autorespond_bounded",
             new=AsyncMock(return_value="r1"),
         ),
-        patch("src.services.autorespond_streaming.seed_ready_to_apply", return_value=1),
         patch("src.services.autorespond_streaming.save_pipeline_envelope"),
         patch(
             "src.services.autorespond_streaming.get_autorespond_done_count_sync",
@@ -79,6 +78,9 @@ async def test_on_autoparsed_rows_enqueues_when_compat_ready() -> None:
         patch(
             "src.services.autorespond_streaming.get_system_load_guard",
             return_value=MagicMock(wait_if_overloaded=AsyncMock()),
+        ),
+        patch(
+            "src.services.autorespond_streaming.mark_pregen_pending",
         ),
         patch(
             "src.services.autorespond_streaming.clear_autorespond_done_counter",
@@ -92,14 +94,16 @@ async def test_on_autoparsed_rows_enqueues_when_compat_ready() -> None:
             "src.services.autorespond_streaming.clear_autorespond_employer_test_counter",
             new_callable=AsyncMock,
         ),
-        patch.object(feed, "_kick_pump_if_needed", new=AsyncMock()) as pump_mock,
+        patch(
+            "src.worker.tasks.cover_letter.pregenerate_for_apply_task.delay",
+        ) as pregen_delay,
     ):
         enqueued = await feed.on_autoparsed_rows([_vac(vid=42)])
 
     assert enqueued == 1
     assert feed._work_units == 1
     assert 42 in feed._enqueued_ids
-    pump_mock.assert_awaited_once()
+    pregen_delay.assert_called_once()
 
 
 @pytest.mark.asyncio
