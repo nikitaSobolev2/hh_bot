@@ -5,7 +5,8 @@ Architecture
 The pipeline runs in three roles, each on its own worker process / queue:
 
 1. **Dispatcher** (``autorespond.dispatch`` on queue ``celery``): filters candidates,
-   picks resumes (bounded AI), fans out cover-letter pregenerate tasks, returns in seconds.
+   picks resumes (bounded AI), and enqueues cover-letter pregen + apply pump **per vacancy**
+   as each resume is resolved (does not wait for the full batch).
 
 2. **Cover letter pre-gen** (``cover_letter.pregenerate_for_apply`` on queue
    ``cover_letter``): one task per vacancy; stores the letter in DB + Redis, then enqueues
@@ -26,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -120,6 +122,43 @@ async def _resolve_resume_for_autorespond_bounded(
             timeout_s=settings.autorespond_resume_resolve_timeout_seconds,
         )
         return picked
+
+
+def _dispatch_enqueue_apply_unit(
+    *,
+    chat_id: int,
+    task_key: str,
+    user_id: int,
+    company_id: int,
+    resume_envelope: dict[str, Any],
+    work_units: int,
+    apply_spec: dict[str, Any],
+    cover_letter_style: str,
+    company_totals_merged: bool,
+) -> bool:
+    """Seed pipeline state for one vacancy, fan out pregen. Returns True after company totals merged."""
+    from src.worker.tasks.cover_letter import pregenerate_for_apply_task
+
+    merge_save_pipeline_envelope(
+        chat_id,
+        task_key,
+        resume_envelope=resume_envelope,
+        total_work_units=work_units if not company_totals_merged else 0,
+        company_id=company_id,
+        user_id=user_id,
+        ready_queued=1,
+    )
+    mark_pregen_pending(chat_id, task_key, [int(apply_spec["autoparsed_vacancy_id"])])
+    pregenerate_for_apply_task.delay(
+        task_key=task_key,
+        chat_id=chat_id,
+        user_id=user_id,
+        autoparsed_vacancy_id=int(apply_spec["autoparsed_vacancy_id"]),
+        resume_id=str(apply_spec["resume_id"]),
+        cover_letter_style=cover_letter_style,
+        apply_spec=apply_spec,
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -587,10 +626,10 @@ async def _run_autorespond_async(
     suppress_progress: bool = False,
     progress_task_key: str | None = None,
 ) -> dict:
-    """Filter candidates, pick resumes, seed pipeline state, kick pump, return.
+    """Filter candidates, pick resumes, enqueue pregens incrementally, kick pump, return.
 
-    The dispatcher never iterates per-vacancy work synchronously. All Playwright
-    + cover-letter work happens on other queues by the time this returns.
+    Each vacancy is handed to cover-letter pregen and the apply pump as soon as its
+    resume is resolved; Playwright runs on other queues while dispatch continues.
     """
     from src.bot.modules.autoparse import services as ap_service
     from src.core.constants import AppSettingKey
@@ -975,42 +1014,6 @@ async def _run_autorespond_async(
             "negotiations_sync": sync_res,
         }
 
-    cover_ai_client = AIClient() if len(resume_items) > 1 else None
-    ready_specs: list[dict] = []
-    vacancy_ids_for_pregen: list[int] = []
-    pre_skipped_ids: list[int] = []
-    load_guard = get_system_load_guard()
-    try:
-        for idx, vac in enumerate(capped):
-            if idx > 0 and idx % settings.autorespond_loop_progress_log_every == 0:
-                await load_guard.wait_if_overloaded("autorespond_dispatch_resume_pick")
-            if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
-                pre_skipped_ids.append(int(vac.id))
-                continue
-            resume_id = await _resolve_resume_for_autorespond_bounded(
-                cover_ai_client,
-                vac,
-                resume_items,
-                stored_autorespond_resume_id=company.autorespond_resume_id,
-            )
-            if not resume_id:
-                continue
-            url = normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id)
-            ready_specs.append(
-                {
-                    "autoparsed_vacancy_id": int(vac.id),
-                    "hh_vacancy_id": str(vac.hh_vacancy_id),
-                    "resume_id": str(resume_id),
-                    "vacancy_url": url,
-                    "company_id": int(company_id),
-                }
-            )
-            vacancy_ids_for_pregen.append(int(vac.id))
-    finally:
-        if cover_ai_client is not None:
-            with contextlib.suppress(Exception):
-                await close_ai_client(cover_ai_client)
-
     chat_id = int(user.telegram_id)
     existing_envelope = load_pipeline_envelope(chat_id, task_key)
     if is_task_group_pipeline and existing_envelope:
@@ -1043,55 +1046,84 @@ async def _run_autorespond_async(
         autorespond_progress=ar_prog,
     )
 
-    # Only touch pipeline state + pump when there is work to do; otherwise this is
-    # a no-op run that should not leave Redis state for the recovery sweep.
-    if ready_specs:
-        merge_save_pipeline_envelope(
-            chat_id,
-            task_key,
-            resume_envelope=resume_envelope,
-            total_work_units=work_units,
-            company_id=company_id,
-            user_id=user.id,
-            ready_queued=len(ready_specs),
-        )
-
-        from src.worker.tasks.cover_letter import pregenerate_for_apply_task
-
-        if cover_task_enabled:
-            mark_pregen_pending(chat_id, task_key, vacancy_ids_for_pregen)
-            for spec in ready_specs:
-                pregenerate_for_apply_task.delay(
+    cover_ai_client = AIClient() if len(resume_items) > 1 else None
+    ready_count = 0
+    company_totals_merged = False
+    pump_kicked = False
+    legacy_checkpoints_cleared = False
+    load_guard = get_system_load_guard()
+    try:
+        for idx, vac in enumerate(capped):
+            if idx > 0 and idx % settings.autorespond_loop_progress_log_every == 0:
+                await load_guard.wait_if_overloaded("autorespond_dispatch_resume_pick")
+            if vac.hh_vacancy_id in already_handled or vac.needs_employer_questions:
+                await _tick_autorespond_bar_bounded(
+                    bot=progress_bot,
+                    chat_id=chat_id,
+                    task_key=task_key,
+                    total=progress_total,
+                    locale=locale,
+                    footer_failed_line=None,
+                    title=company.vacancy_title,
+                    celery_task_id=celery_id,
+                    bar_index=progress_bar_index,
+                    finish_progress_task=not is_task_group_pipeline,
+                )
+                continue
+            resume_id = await _resolve_resume_for_autorespond_bounded(
+                cover_ai_client,
+                vac,
+                resume_items,
+                stored_autorespond_resume_id=company.autorespond_resume_id,
+            )
+            if not resume_id:
+                continue
+            if not cover_task_enabled:
+                continue
+            if not legacy_checkpoints_cleared:
+                clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
+                clear_hh_ui_resume_envelope_sync(chat_id, task_key)
+                legacy_checkpoints_cleared = True
+            apply_spec = {
+                "autoparsed_vacancy_id": int(vac.id),
+                "hh_vacancy_id": str(vac.hh_vacancy_id),
+                "resume_id": str(resume_id),
+                "vacancy_url": normalize_hh_vacancy_url(vac.url, vac.hh_vacancy_id),
+                "company_id": int(company_id),
+            }
+            company_totals_merged = _dispatch_enqueue_apply_unit(
+                chat_id=chat_id,
+                task_key=task_key,
+                user_id=user.id,
+                company_id=company_id,
+                resume_envelope=resume_envelope,
+                work_units=work_units,
+                apply_spec=apply_spec,
+                cover_letter_style=cover_letter_style,
+                company_totals_merged=company_totals_merged,
+            )
+            ready_count += 1
+            if settings.hh_ui_apply_enabled and not pump_kicked:
+                kick_apply_pump_for_pipeline(chat_id, task_key)
+                pump_kicked = True
+                logger.info(
+                    "autorespond_dispatch_pump_started",
+                    company_id=company_id,
                     task_key=task_key,
                     chat_id=chat_id,
-                    user_id=user.id,
-                    autoparsed_vacancy_id=spec["autoparsed_vacancy_id"],
-                    resume_id=spec["resume_id"],
-                    cover_letter_style=cover_letter_style,
-                    apply_spec=spec,
+                    ready_so_far=ready_count,
                 )
-
-        # Drop any leftover legacy tail/checkpoint state for this task_key.
-        clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
-        clear_hh_ui_resume_envelope_sync(chat_id, task_key)
-
-        if settings.hh_ui_apply_enabled:
-            kick_apply_pump_for_pipeline(chat_id, task_key)
-
-    # Tick the bar once for every pre-skipped vacancy so done eventually == total.
-    for _vid in pre_skipped_ids:
-        await _tick_autorespond_bar_bounded(
-            bot=progress_bot,
-            chat_id=chat_id,
-            task_key=task_key,
-            total=progress_total,
-            locale=locale,
-            footer_failed_line=None,
-            title=company.vacancy_title,
-            celery_task_id=celery_id,
-            bar_index=progress_bar_index,
-            finish_progress_task=not is_task_group_pipeline,
-        )
+            logger.info(
+                "autorespond_dispatch_enqueued",
+                company_id=company_id,
+                autoparsed_vacancy_id=int(vac.id),
+                hh_vacancy_id=str(vac.hh_vacancy_id),
+                ready_so_far=ready_count,
+            )
+    finally:
+        if cover_ai_client is not None:
+            with contextlib.suppress(Exception):
+                await close_ai_client(cover_ai_client)
 
     logger.info(
         "autorespond_dispatch_seeded",
@@ -1100,9 +1132,10 @@ async def _run_autorespond_async(
         user_id=user.id,
         chat_id=chat_id,
         task_key=task_key,
-        ready=len(ready_specs),
-        pre_skipped=len(pre_skipped_ids),
+        ready=ready_count,
+        pre_skipped=pre_skipped_autorespond,
         cover_task_enabled=cover_task_enabled,
+        pump_kicked=pump_kicked,
     )
 
     if pipeline_context is None and progress_bot:
@@ -1111,7 +1144,7 @@ async def _run_autorespond_async(
 
     return {
         "status": "ok",
-        "queued": len(ready_specs),
+        "queued": ready_count,
         "skipped": pre_skipped_autorespond,
         "failed": 0,
         "employer_tests": 0,
