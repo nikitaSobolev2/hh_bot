@@ -223,13 +223,24 @@ async def _report_autorespond_pregen_failure(
     increment_autorespond_failed_sync(chat_id, task_key, 1)
     if celery_task is None or not hasattr(celery_task, "create_bot"):
         return
+    from src.services.autorespond_pipeline_state import is_task_group_pipeline_key
+    from src.services.autorespond_progress import resolve_autorespond_tick_total
+
+    task_group = bool(ar.get("task_group")) or is_task_group_pipeline_key(task_key)
+    total = resolve_autorespond_tick_total(
+        chat_id,
+        task_key,
+        int(ar.get("total") or 0),
+        streaming=bool(ar.get("streaming_autorespond")),
+        task_group=task_group,
+    )
     bot = celery_task.create_bot()
     try:
         await tick_autorespond_bar(
             bot=bot,
             chat_id=chat_id,
             task_key=task_key,
-            total=int(ar.get("total") or 0),
+            total=total,
             locale=str(ar.get("locale") or "ru"),
             bar_index=int(ar.get("bar_index", 0)),
             finish_progress_task=bool(ar.get("finish_progress_task", True)),

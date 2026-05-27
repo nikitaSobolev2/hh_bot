@@ -43,11 +43,13 @@ from src.services.autorespond_pipeline_state import (
     clear_all_pipeline_state,
     get_pump_lock_owner_sync,
     iter_active_pipeline_envelopes,
+    kick_apply_pump_for_pipeline,
     load_pipeline_envelope,
     mark_pregen_pending,
+    merge_save_pipeline_envelope,
+    pregen_pending_count,
     pump_heartbeat_age_seconds,
     ready_remaining_count,
-    save_pipeline_envelope,
 )
 from src.services.hh_ui.rate_limit import (
     current_ui_apply_count_sync,
@@ -604,6 +606,7 @@ async def _run_autorespond_async(
         clear_autorespond_failed_counter,
         clear_hh_ui_batch_checkpoint_sync,
         clear_hh_ui_resume_envelope_sync,
+        get_autorespond_done_count_sync,
         hh_ui_batch_resume_payload,
     )
 
@@ -913,16 +916,33 @@ async def _run_autorespond_async(
                 "trigger": trigger,
                 "negotiations_sync": sync_res,
             }
-        await progress.update_bar(task_key, progress_bar_index, 0, work_units)
+        existing_envelope = load_pipeline_envelope(int(user.telegram_id), task_key)
+        if existing_envelope and is_task_group_pipeline:
+            initial_total = int(existing_envelope.get("total_work_units") or 0) + int(
+                work_units
+            )
+            initial_done = get_autorespond_done_count_sync(
+                int(user.telegram_id), task_key
+            )
+        else:
+            initial_total = int(work_units)
+            initial_done = 0
+        await progress.update_bar(
+            task_key,
+            progress_bar_index,
+            min(initial_done, initial_total),
+            initial_total,
+        )
         await progress.set_nested_step_state(task_key, "applications", "running")
         await progress.set_nested_active_step_index(task_key, 1)
         await progress.update_footer(
             task_key,
             [get_text("autorespond-progress-failed", locale, count=0)],
         )
-        await clear_autorespond_done_counter(user.telegram_id, task_key)
-        await clear_autorespond_failed_counter(user.telegram_id, task_key)
-        await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
+        if not (existing_envelope and is_task_group_pipeline):
+            await clear_autorespond_done_counter(user.telegram_id, task_key)
+            await clear_autorespond_failed_counter(user.telegram_id, task_key)
+            await clear_autorespond_employer_test_counter(user.telegram_id, task_key)
 
     if settings.hh_ui_apply_enabled and not cover_task_enabled:
         logger.warning(
@@ -992,14 +1012,23 @@ async def _run_autorespond_async(
                 await close_ai_client(cover_ai_client)
 
     chat_id = int(user.telegram_id)
+    existing_envelope = load_pipeline_envelope(chat_id, task_key)
+    if is_task_group_pipeline and existing_envelope:
+        progress_total = int(existing_envelope.get("total_work_units") or 0) + int(
+            work_units
+        )
+    else:
+        progress_total = int(work_units)
+
     ar_prog = {
         "task_key": task_key,
-        "total": work_units,
+        "total": progress_total,
         "locale": locale,
         "title": company.vacancy_title,
         "celery_task_id": celery_id,
         "bar_index": progress_bar_index,
         "finish_progress_task": not is_task_group_pipeline,
+        "task_group": is_task_group_pipeline,
     }
     resume_envelope = hh_ui_batch_resume_payload(
         user_id=user.id,
@@ -1017,15 +1046,14 @@ async def _run_autorespond_async(
     # Only touch pipeline state + pump when there is work to do; otherwise this is
     # a no-op run that should not leave Redis state for the recovery sweep.
     if ready_specs:
-        save_pipeline_envelope(
+        merge_save_pipeline_envelope(
             chat_id,
             task_key,
-            {
-                "resume_envelope": resume_envelope,
-                "total_work_units": work_units,
-                "company_id": company_id,
-                "user_id": user.id,
-            },
+            resume_envelope=resume_envelope,
+            total_work_units=work_units,
+            company_id=company_id,
+            user_id=user.id,
+            ready_queued=len(ready_specs),
         )
 
         from src.worker.tasks.cover_letter import pregenerate_for_apply_task
@@ -1047,13 +1075,16 @@ async def _run_autorespond_async(
         clear_hh_ui_batch_checkpoint_sync(chat_id, task_key)
         clear_hh_ui_resume_envelope_sync(chat_id, task_key)
 
+        if settings.hh_ui_apply_enabled:
+            kick_apply_pump_for_pipeline(chat_id, task_key)
+
     # Tick the bar once for every pre-skipped vacancy so done eventually == total.
     for _vid in pre_skipped_ids:
         await _tick_autorespond_bar_bounded(
             bot=progress_bot,
             chat_id=chat_id,
             task_key=task_key,
-            total=work_units,
+            total=progress_total,
             locale=locale,
             footer_failed_line=None,
             title=company.vacancy_title,
@@ -1250,13 +1281,15 @@ async def _run_manual_autoparse_autorespond_pipeline_async(
 
 
 def _is_pipeline_run_complete(chat_id: int, task_key: str) -> bool:
-    """True when bar counter has converged: nothing in ready set and no pregens pending."""
-    from src.services.autorespond_pipeline_state import pregen_pending_count
-
-    return (
-        ready_remaining_count(chat_id, task_key) == 0
-        and pregen_pending_count(chat_id, task_key) == 0
+    """True when the apply queue is drained and no pipeline envelope work remains."""
+    from src.services.autorespond_pipeline_state import (
+        is_pipeline_apply_queue_drained,
+        pipeline_has_pending_work,
     )
+
+    if not is_pipeline_apply_queue_drained(chat_id, task_key):
+        return False
+    return not pipeline_has_pending_work(chat_id, task_key)
 
 
 async def _recover_stalled_pipelines_async() -> dict:
@@ -1281,7 +1314,10 @@ async def _recover_stalled_pipelines_async() -> dict:
             clear_all_pipeline_state(chat_id, task_key)
             cleared += 1
             continue
-        if ready_remaining_count(chat_id, task_key) <= 0:
+        if (
+            ready_remaining_count(chat_id, task_key) <= 0
+            and pregen_pending_count(chat_id, task_key) <= 0
+        ):
             continue
         if get_pump_lock_owner_sync(chat_id, task_key):
             continue

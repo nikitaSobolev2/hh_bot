@@ -678,6 +678,17 @@ async def _apply_pump_async(
                         _maybe_log_pump_idle(reason="streaming_autoparse")
                         await asyncio.sleep(1.0)
                         continue
+                from src.services.autorespond_pipeline_state import (
+                    load_pipeline_envelope,
+                    pipeline_has_pending_work,
+                )
+
+                if load_pipeline_envelope(int(chat_id), task_key) and pipeline_has_pending_work(
+                    int(chat_id), task_key
+                ):
+                    _maybe_log_pump_idle(reason="pipeline_pending")
+                    await asyncio.sleep(pregen_wait)
+                    continue
                 break
 
             # Resolve cover letters (apply units enter the queue only after pregen saved one).
@@ -850,11 +861,13 @@ async def _apply_pump_async(
 
         # End of shift: decide whether to chain.
         release_pump_lock(int(chat_id), task_key, pump_owner)
-        if (
-            abort_reason is None
-            and not _pump_cancelled()
-            and ready_remaining_count(int(chat_id), task_key) > 0
-        ):
+        from src.services.autorespond_pipeline_state import pipeline_has_pending_work
+
+        should_chain = abort_reason is None and not _pump_cancelled() and (
+            ready_remaining_count(int(chat_id), task_key) > 0
+            or pipeline_has_pending_work(int(chat_id), task_key)
+        )
+        if should_chain:
             logger.info(
                 "apply_pump_chaining_self",
                 chat_id=chat_id,
@@ -868,23 +881,31 @@ async def _apply_pump_async(
                 chat_id=int(chat_id),
                 resume_envelope=resume_envelope,
             )
-        elif (
-            abort_reason is None
-            and not _pump_cancelled()
-            and autorespond_progress
-            and autorespond_progress.get("streaming_autorespond")
-        ):
-            from src.services.autorespond_progress import (
-                maybe_finish_streaming_autorespond_progress,
-            )
+        elif abort_reason is None and not _pump_cancelled() and autorespond_progress:
+            if autorespond_progress.get("streaming_autorespond"):
+                from src.services.autorespond_progress import (
+                    maybe_finish_streaming_autorespond_progress,
+                )
 
-            await maybe_finish_streaming_autorespond_progress(
-                bot=bot,
-                chat_id=int(chat_id),
-                task_key=task_key,
-                locale=str(autorespond_progress.get("locale") or locale),
-                bar_index=int(autorespond_progress.get("bar_index", 0)),
-            )
+                await maybe_finish_streaming_autorespond_progress(
+                    bot=bot,
+                    chat_id=int(chat_id),
+                    task_key=task_key,
+                    locale=str(autorespond_progress.get("locale") or locale),
+                    bar_index=int(autorespond_progress.get("bar_index", 0)),
+                )
+            elif autorespond_progress.get("task_group"):
+                from src.services.autorespond_progress import (
+                    maybe_finish_task_group_autorespond_progress,
+                )
+
+                await maybe_finish_task_group_autorespond_progress(
+                    bot=bot,
+                    chat_id=int(chat_id),
+                    task_key=task_key,
+                    locale=str(autorespond_progress.get("locale") or locale),
+                    bar_index=int(autorespond_progress.get("bar_index", 0)),
+                )
 
         return {
             "status": "ok",
@@ -928,8 +949,10 @@ def apply_pump_task(
             chat_id=chat_id,
             task_key=task_key,
         )
+        from src.services.autorespond_pipeline_state import pipeline_has_pending_work
+
         if (
-            ready_remaining_count(int(chat_id), task_key) > 0
+            pipeline_has_pending_work(int(chat_id), task_key)
             and not is_autorespond_cancelled_sync(int(chat_id), task_key)
             and not is_user_cancelled_sync(int(chat_id), task_key)
         ):

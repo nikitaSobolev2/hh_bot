@@ -165,8 +165,17 @@ async def test_dispatch_filters_capped_pre_skipped_and_seeds_ready_zset(
     )
     envelope_calls: list[dict] = []
     monkeypatch.setattr(
-        "src.worker.tasks.autorespond.save_pipeline_envelope",
-        lambda chat_id, task_key, env: envelope_calls.append(env),
+        "src.worker.tasks.autorespond.merge_save_pipeline_envelope",
+        lambda chat_id, task_key, **kwargs: envelope_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "src.worker.tasks.autorespond.load_pipeline_envelope",
+        lambda *a, **k: None,
+    )
+    pump_kick = MagicMock()
+    monkeypatch.setattr(
+        "src.worker.tasks.autorespond.kick_apply_pump_for_pipeline",
+        pump_kick,
     )
 
     import src.worker.tasks.cover_letter as _cover_mod

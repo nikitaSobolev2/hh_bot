@@ -112,6 +112,51 @@ def clear_pipeline_envelope(chat_id: int, task_key: str) -> None:
         r.close()
 
 
+def is_task_group_pipeline_key(task_key: str) -> bool:
+    """True for multi-company task-group runs that share one pipeline namespace."""
+    return str(task_key).startswith("taskgroup:")
+
+
+def merge_save_pipeline_envelope(
+    chat_id: int,
+    task_key: str,
+    *,
+    resume_envelope: dict[str, Any],
+    total_work_units: int,
+    company_id: int,
+    user_id: int,
+    ready_queued: int = 0,
+) -> dict[str, Any]:
+    """Persist or extend pipeline envelope (task groups accumulate work across companies)."""
+    existing = load_pipeline_envelope(chat_id, task_key)
+    if existing:
+        cumulative_total = int(existing.get("total_work_units") or 0) + int(total_work_units)
+        companies = list(existing.get("company_ids") or [])
+        if company_id not in companies:
+            companies.append(int(company_id))
+        merged: dict[str, Any] = {
+            **existing,
+            "resume_envelope": resume_envelope,
+            "total_work_units": cumulative_total,
+            "company_ids": companies,
+            "user_id": int(user_id),
+            "task_group": True,
+            "units_dispatched": int(existing.get("units_dispatched") or 0) + int(ready_queued),
+        }
+    else:
+        cumulative_total = int(total_work_units)
+        merged = {
+            "resume_envelope": resume_envelope,
+            "total_work_units": cumulative_total,
+            "company_ids": [int(company_id)],
+            "user_id": int(user_id),
+            "task_group": is_task_group_pipeline_key(task_key),
+            "units_dispatched": int(ready_queued),
+        }
+    save_pipeline_envelope(chat_id, task_key, merged)
+    return merged
+
+
 def mark_streaming_parse_complete(chat_id: int, task_key: str) -> None:
     r = _sync_redis()
     try:
@@ -490,11 +535,25 @@ def is_apply_pump_active(chat_id: int, task_key: str) -> bool:
 
 
 def pipeline_has_pending_work(chat_id: int, task_key: str) -> bool:
-    """True when a pipeline run still has ready units, in-flight pregen, or a saved envelope."""
+    """True while apply units may still be pregenerating or waiting in the ready queue."""
+    if ready_remaining_count(chat_id, task_key) > 0:
+        return True
+    if pregen_pending_count(chat_id, task_key) > 0:
+        return True
+    envelope = load_pipeline_envelope(chat_id, task_key)
+    if not envelope:
+        return False
+    dispatched = int(envelope.get("units_dispatched") or 0)
+    if dispatched <= 0:
+        return False
+    return not is_pipeline_apply_queue_drained(chat_id, task_key)
+
+
+def is_pipeline_apply_queue_drained(chat_id: int, task_key: str) -> bool:
+    """True when nothing is ready to apply and no cover letters are still generating."""
     return (
-        ready_remaining_count(chat_id, task_key) > 0
-        or pregen_pending_count(chat_id, task_key) > 0
-        or load_pipeline_envelope(chat_id, task_key) is not None
+        ready_remaining_count(chat_id, task_key) == 0
+        and pregen_pending_count(chat_id, task_key) == 0
     )
 
 

@@ -328,6 +328,89 @@ def test_iter_active_pipeline_envelopes_yields_chat_and_task(fake_redis: _FakeRe
     assert (8, "autorespond:2:xyz") in found
 
 
+def test_merge_save_pipeline_envelope_accumulates_task_group_totals(
+    fake_redis: _FakeRedis,
+) -> None:
+    from src.services.autorespond_pipeline_state import (
+        load_pipeline_envelope,
+        merge_save_pipeline_envelope,
+    )
+
+    resume_a = {"autorespond_progress": {"total": 10, "task_key": "taskgroup:x"}}
+    merge_save_pipeline_envelope(
+        7,
+        "taskgroup:x",
+        resume_envelope=resume_a,
+        total_work_units=10,
+        company_id=3,
+        user_id=42,
+        ready_queued=7,
+    )
+    resume_b = {"autorespond_progress": {"total": 23, "task_key": "taskgroup:x"}}
+    merged = merge_save_pipeline_envelope(
+        7,
+        "taskgroup:x",
+        resume_envelope=resume_b,
+        total_work_units=13,
+        company_id=2,
+        user_id=42,
+        ready_queued=5,
+    )
+
+    assert merged["total_work_units"] == 23
+    assert merged["units_dispatched"] == 12
+    assert merged["company_ids"] == [3, 2]
+    assert merged["task_group"] is True
+    loaded = load_pipeline_envelope(7, "taskgroup:x")
+    assert loaded is not None
+    assert int(loaded["total_work_units"]) == 23
+
+
+def test_pipeline_has_pending_work_true_while_ready_or_pregen(
+    fake_redis: _FakeRedis,
+) -> None:
+    from src.services.autorespond_pipeline_state import (
+        mark_pregen_pending,
+        pipeline_has_pending_work,
+        pregen_pending_count,
+        ready_remaining_count,
+        save_pipeline_envelope,
+        seed_ready_to_apply,
+    )
+
+    save_pipeline_envelope(
+        7,
+        "taskgroup:t",
+        {"total_work_units": 5, "units_dispatched": 3},
+    )
+
+    seed_ready_to_apply(
+        7,
+        "taskgroup:t",
+        [
+            {
+                "autoparsed_vacancy_id": 1,
+                "hh_vacancy_id": "h",
+                "resume_id": "r",
+                "vacancy_url": "u",
+            }
+        ],
+    )
+    assert ready_remaining_count(7, "taskgroup:t") == 1
+    assert pipeline_has_pending_work(7, "taskgroup:t") is True
+
+    mark_pregen_pending(7, "taskgroup:t", [9])
+    assert pregen_pending_count(7, "taskgroup:t") == 1
+    assert pipeline_has_pending_work(7, "taskgroup:t") is True
+
+
+def test_is_task_group_pipeline_key() -> None:
+    from src.services.autorespond_pipeline_state import is_task_group_pipeline_key
+
+    assert is_task_group_pipeline_key("taskgroup:uuid") is True
+    assert is_task_group_pipeline_key("pipeline:1:abc") is False
+
+
 def test_save_pipeline_envelope_roundtrips_json(fake_redis: _FakeRedis) -> None:
     from src.services.autorespond_pipeline_state import (
         load_pipeline_envelope,

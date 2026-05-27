@@ -55,6 +55,10 @@ async def test_recover_stalled_does_nothing_when_pump_heartbeat_fresh() -> None:
             "src.worker.tasks.autorespond.clear_all_pipeline_state",
             cleared_mock,
         ),
+        patch(
+            "src.worker.tasks.autorespond._is_pipeline_run_complete",
+            return_value=False,
+        ),
         patch("src.worker.tasks.autorespond.settings") as mock_settings,
     ):
         mock_settings.autorespond_recover_stalled_pump_grace_seconds = 90
@@ -114,6 +118,10 @@ async def test_recover_stalled_reenqueues_pump_when_heartbeat_stale() -> None:
             "src.worker.tasks.hh_ui_apply.apply_pump_task",
             MagicMock(delay=delay_mock),
         ),
+        patch(
+            "src.worker.tasks.autorespond._is_pipeline_run_complete",
+            return_value=False,
+        ),
         patch("src.worker.tasks.autorespond.settings") as mock_settings,
     ):
         mock_settings.autorespond_recover_stalled_pump_grace_seconds = 90
@@ -162,6 +170,10 @@ async def test_recover_stalled_skips_when_pump_lock_held() -> None:
         patch(
             "src.worker.tasks.hh_ui_apply.apply_pump_task",
             MagicMock(delay=delay_mock),
+        ),
+        patch(
+            "src.worker.tasks.autorespond._is_pipeline_run_complete",
+            return_value=False,
         ),
         patch("src.worker.tasks.autorespond.settings") as mock_settings,
     ):
@@ -243,6 +255,10 @@ async def test_recover_stalled_clears_state_when_run_converged() -> None:
         patch(
             "src.worker.tasks.autorespond.clear_all_pipeline_state",
             cleared_mock,
+        ),
+        patch(
+            "src.worker.tasks.autorespond._is_pipeline_run_complete",
+            return_value=True,
         ),
         patch("src.worker.tasks.autorespond.settings") as mock_settings,
     ):

@@ -100,6 +100,14 @@ def _build_async_pump_async(monkeypatch: pytest.MonkeyPatch):
         "src.services.autorespond_progress.ensure_autorespond_progress_task_state_if_missing",
         AsyncMock(),
     )
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.load_pipeline_envelope",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "src.services.autorespond_pipeline_state.pipeline_has_pending_work",
+        lambda *a, **k: False,
+    )
     return self, session_factory, bot
 
 

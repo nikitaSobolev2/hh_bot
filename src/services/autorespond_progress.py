@@ -458,10 +458,15 @@ def get_autorespond_done_count_sync(chat_id: int, task_key: str) -> int:
 
 
 def resolve_autorespond_tick_total(
-    chat_id: int, task_key: str, fallback_total: int, *, streaming: bool
+    chat_id: int,
+    task_key: str,
+    fallback_total: int,
+    *,
+    streaming: bool = False,
+    task_group: bool = False,
 ) -> int:
-    """Use pipeline envelope total while streaming so pump ticks stay in sync with enqueues."""
-    if not streaming:
+    """Use pipeline envelope cumulative total for streaming / task-group runs."""
+    if not streaming and not task_group:
         return fallback_total
     from src.services.autorespond_pipeline_state import load_pipeline_envelope
 
@@ -469,6 +474,25 @@ def resolve_autorespond_tick_total(
     if envelope:
         return max(fallback_total, int(envelope.get("total_work_units") or 0))
     return fallback_total
+
+
+def task_group_autorespond_ready_to_finish(
+    chat_id: int, task_key: str, done: int, total: int
+) -> bool:
+    """True when all task-group work units are ticked and the apply pipeline is drained."""
+    from src.services.autorespond_pipeline_state import (
+        is_pipeline_apply_queue_drained,
+        is_task_group_pipeline_key,
+        pipeline_has_pending_work,
+    )
+
+    if not is_task_group_pipeline_key(task_key):
+        return False
+    if total <= 0 or done < total:
+        return False
+    if not is_pipeline_apply_queue_drained(chat_id, task_key):
+        return False
+    return not pipeline_has_pending_work(chat_id, task_key)
 
 
 def streaming_autorespond_ready_to_finish(
@@ -487,6 +511,40 @@ def streaming_autorespond_ready_to_finish(
     if ready_remaining_count(chat_id, task_key) > 0:
         return False
     return pregen_pending_count(chat_id, task_key) <= 0
+
+
+async def maybe_finish_task_group_autorespond_progress(
+    *,
+    bot: Any,
+    chat_id: int,
+    task_key: str,
+    locale: str,
+    bar_index: int = 0,
+) -> bool:
+    """Finish task-group applications bar once all units converged and pump queue is empty."""
+    redis = create_progress_redis()
+    try:
+        from src.services.autorespond_pipeline_state import is_task_group_pipeline_key
+
+        if not is_task_group_pipeline_key(task_key):
+            return False
+        done = int(await redis.get(autorespond_done_redis_key(chat_id, task_key)) or 0)
+        total = resolve_autorespond_tick_total(
+            chat_id, task_key, 0, task_group=True
+        )
+        if not task_group_autorespond_ready_to_finish(chat_id, task_key, done, total):
+            return False
+        await finish_task_group_autorespond_progress(
+            bot=bot,
+            chat_id=chat_id,
+            task_key=task_key,
+            locale=locale,
+            bar_index=bar_index,
+            total=total,
+        )
+        return True
+    finally:
+        await redis.aclose()
 
 
 async def maybe_finish_streaming_autorespond_progress(
@@ -681,8 +739,29 @@ async def finish_task_group_autorespond_progress(
     total: int,
     shortage_note: str | None = None,
     applications_skipped: bool = False,
+    force: bool = False,
 ) -> None:
     """Complete manual pipeline / task-group bar after autorespond phase ends."""
+    from src.services.autorespond_pipeline_state import (
+        is_task_group_pipeline_key,
+        pipeline_has_pending_work,
+    )
+
+    if (
+        not force
+        and not applications_skipped
+        and is_task_group_pipeline_key(task_key)
+        and pipeline_has_pending_work(chat_id, task_key)
+    ):
+        logger.info(
+            "finish_task_group_deferred_pipeline_pending",
+            chat_id=chat_id,
+            task_key=task_key,
+            done=get_autorespond_done_count_sync(chat_id, task_key),
+            total=total,
+        )
+        return
+
     redis = create_progress_redis()
     try:
         svc = ProgressService(bot, chat_id, redis, locale)
@@ -799,8 +878,15 @@ async def tick_autorespond_bar(
     if is_user_cancelled_sync(chat_id, task_key):
         return False
 
+    from src.services.autorespond_pipeline_state import is_task_group_pipeline_key
+
+    task_group = is_task_group_pipeline_key(task_key)
     total = resolve_autorespond_tick_total(
-        chat_id, task_key, total, streaming=streaming_autorespond
+        chat_id,
+        task_key,
+        total,
+        streaming=streaming_autorespond,
+        task_group=task_group,
     )
     if total <= 0:
         return False
@@ -868,18 +954,24 @@ async def tick_autorespond_bar(
                             locale=locale,
                             bar_index=bar_index,
                             total=total,
+                            force=True,
                         )
                         return True
                     return False
-                await finish_task_group_autorespond_progress(
-                    bot=bot,
-                    chat_id=chat_id,
-                    task_key=task_key,
-                    locale=locale,
-                    bar_index=bar_index,
-                    total=total,
-                )
-                return True
+                if task_group_autorespond_ready_to_finish(
+                    chat_id, task_key, done, total
+                ):
+                    await finish_task_group_autorespond_progress(
+                        bot=bot,
+                        chat_id=chat_id,
+                        task_key=task_key,
+                        locale=locale,
+                        bar_index=bar_index,
+                        total=total,
+                        force=True,
+                    )
+                    return True
+                return False
             finish_note = None
             if failed_n > 0:
                 finish_note = get_text(
